@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Panel</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="script.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Admin Panel</h1>
+  </header>
+  <main>
+    <div id="login-section">
+      <h2>Login</h2>
+      <p>Enter the admin password to manage the store:</p>
+      <input type="password" id="admin-password" placeholder="Password">
+      <button id="login-button">Login</button>
+      <p id="login-error" class="error-message" style="display:none;color:#c00;">Incorrect password.</p>
+    </div>
+    <div id="admin-section" style="display:none;">
+      <h2>Manage Accounts</h2>
+      <form id="add-account-form">
+        <h3>Add New Account</h3>
+        <label>Name<br><input type="text" id="acc-name" required></label><br>
+        <label>Skins<br><input type="number" id="acc-skins" required></label><br>
+        <label>V‑Bucks<br><input type="number" id="acc-vbucks" required></label><br>
+        <label>Price<br><input type="text" id="acc-price" required></label><br>
+        <button type="submit">Add Account</button>
+      </form>
+      <h3>Current Inventory</h3>
+      <div id="admin-account-list" class="account-list"></div>
+    </div>
+  </main>
+  <footer>
+    <p>&copy; 2025 Account Store. All rights reserved.</p>
+  </footer>
+</body>
+</html>

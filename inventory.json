@@ -1,0 +1,26 @@
+[
+  {
+    "id": "acc1",
+    "name": "First Account",
+    "skins": 149,
+    "vbucks": 300,
+    "price": "$20.00",
+    "status": "Available"
+  },
+  {
+    "id": "acc2",
+    "name": "Second Account",
+    "skins": 166,
+    "vbucks": 600,
+    "price": "$30.00",
+    "status": "Available"
+  },
+  {
+    "id": "acc3",
+    "name": "Third Account",
+    "skins": 118,
+    "vbucks": 100,
+    "price": "$25.00",
+    "status": "Available"
+  }
+]
