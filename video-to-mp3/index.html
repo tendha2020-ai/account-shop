@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Video to MP3</title>
+  <meta name="description" content="Turn videos on your phone into MP3 audio. Runs in the browser, works offline, nothing is uploaded.">
+  <meta name="theme-color" content="#e9edf1" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0e1115" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="To MP3">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@100..125,600..800&amp;family=IBM+Plex+Mono:wght@500&amp;display=swap">
+  <link rel="stylesheet" href="style.css">
+  <script defer src="lame.min.js"></script>
+  <script defer src="mp4.js"></script>
+  <script defer src="convert.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <!-- app:start -->
+  <div class="app">
+    <header class="masthead">
+      <svg class="mark" viewBox="0 0 512 512" aria-hidden="true">
+        <rect width="512" height="512" fill="#f4a818"/>
+        <path d="M113 160 L113 352 L259 256 Z" fill="#1b1405" stroke="#1b1405" stroke-width="32" stroke-linejoin="round"/>
+        <rect x="295" y="208" width="28" height="96" rx="14" fill="#1b1405"/>
+        <rect x="341" y="164" width="28" height="184" rx="14" fill="#1b1405"/>
+        <rect x="387" y="226" width="28" height="60" rx="14" fill="#1b1405"/>
+      </svg>
+      <div>
+        <h1 class="title">Video<span class="to" aria-hidden="true">→</span><span class="sr-only"> to </span>MP3</h1>
+        <p class="edition">Phone edition</p>
+      </div>
+    </header>
+
+    <section class="picker" id="picker" aria-label="Choose videos">
+      <p class="lede">Turn videos on your phone into MP3 audio. The conversion runs right here in the browser, so your videos are never uploaded.</p>
+      <button class="pick" id="pick" type="button">
+        <span class="pick-icon" aria-hidden="true">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="13" height="14" rx="2.5"/><path d="M16 10.5 21 7.5v9l-5-3"/><path d="M9.5 9.5v5M7 12h5"/></svg>
+        </span>
+        <span class="pick-main">Choose videos</span>
+        <span class="pick-sub">From Photos or Files. You can pick several.</span>
+      </button>
+      <input class="file-input" id="file-input" type="file" multiple tabindex="-1" aria-hidden="true"
+        accept="video/*,audio/*,.mp4,.m4v,.mov,.3gp,.webm,.mkv,.m4a,.aac,.mp3,.wav,.ogg,.opus,.flac,.caf">
+      <p class="formats">MP4, MOV, WebM, M4A, WAV and more. On a computer you can also drop files onto this page.</p>
+    </section>
+
+    <section class="quality" aria-labelledby="quality-title">
+      <h2 class="label" id="quality-title">MP3 quality</h2>
+      <div class="seg" role="radiogroup" aria-labelledby="quality-title">
+        <input type="radio" name="kbps" id="kbps-128" value="128">
+        <label for="kbps-128"><span class="rate">128 <small>kbps</small></span><span class="use">Smaller</span><span class="size">≈0.96 MB/min</span></label>
+        <input type="radio" name="kbps" id="kbps-192" value="192" checked>
+        <label for="kbps-192"><span class="rate">192 <small>kbps</small></span><span class="use">Good</span><span class="size">≈1.44 MB/min</span></label>
+        <input type="radio" name="kbps" id="kbps-320" value="320">
+        <label for="kbps-320"><span class="rate">320 <small>kbps</small></span><span class="use">Best</span><span class="size">≈2.4 MB/min</span></label>
+      </div>
+    </section>
+
+    <section class="queue" aria-labelledby="queue-title">
+      <div class="queue-head">
+        <h2 class="label" id="queue-title">Your MP3s</h2>
+        <div class="queue-actions">
+          <button class="btn small" id="save-all" type="button" hidden>Save all</button>
+          <button class="btn small quiet" id="clear-list" type="button" hidden>Clear</button>
+        </div>
+      </div>
+      <p class="host-note" id="host-note" hidden></p>
+      <ol class="list" id="list"></ol>
+      <div class="empty" id="empty">
+        <div class="screen" aria-hidden="true"><span class="readout">Ready · no files</span></div>
+        <p>Converted files show up here. Keep this screen open while they convert.</p>
+      </div>
+    </section>
+
+    <section class="tips" aria-labelledby="tips-title">
+      <h2 class="label" id="tips-title">Good to know</h2>
+      <dl>
+        <div>
+          <dt>TikTok, Instagram or WhatsApp videos</dt>
+          <dd>Save the video to your phone first (Share, then Save video), then choose it here.</dd>
+        </div>
+        <div>
+          <dt>Finding your MP3</dt>
+          <dd>On iPhone, Save puts the MP3 in the Files app under Downloads. Share lets you send it straight to an app or pick Save to Files. On Android it goes to Downloads.</dd>
+        </div>
+        <div id="install-tip">
+          <dt>Keep it on your home screen</dt>
+          <dd>In Safari, tap Share, then Add to Home Screen. After the first visit it also works offline.</dd>
+        </div>
+        <div>
+          <dt>Long videos</dt>
+          <dd>A 3-minute video takes a few seconds. Very long videos (over half an hour) need a lot of memory and may not finish on older phones.</dd>
+        </div>
+      </dl>
+    </section>
+
+    <footer class="foot">
+      <p>MP3 encoding by <a href="https://lame.sourceforge.io/" target="_blank" rel="noopener">LAME</a> through <a href="https://github.com/zhuker/lamejs" target="_blank" rel="noopener">lamejs</a> (LGPL-3.0). Everything runs on your device.</p>
+    </footer>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <audio id="player" preload="none"></audio>
+  <!-- app:end -->
+  <script>
+    if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('sw.js').catch(function () {});
+      });
+    }
+  </script>
+</body>
+</html>
