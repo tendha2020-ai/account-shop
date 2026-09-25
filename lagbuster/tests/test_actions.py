@@ -29,6 +29,11 @@ def helper():
     kwargs = {"creationflags": 0x08000000} if IS_WINDOWS else {}
     proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], **kwargs)
     time.sleep(0.3)
+    try:
+        # CI runners start jobs at a lowered priority, which child processes inherit.
+        psutil.Process(proc.pid).nice(priority_value("normal"))
+    except psutil.AccessDenied:
+        pass
     yield proc
     if proc.poll() is None:
         proc.kill()
@@ -77,6 +82,8 @@ def test_journal_prune_forgets_closed_apps():
 
 
 def test_lower_priority_and_undo(helper):
+    start = int(psutil.Process(helper.pid).nice())
+    assert start == priority_value("normal")
     journal = UndoJournal(None)
     result = SetPriority("helper", [target(helper)], "below_normal").run(ActionContext(journal))
     assert result.ok, result.message
@@ -108,10 +115,11 @@ def test_close_app_that_already_exited():
 
 
 def test_pid_reuse_is_detected(helper):
+    before = int(psutil.Process(helper.pid).nice())
     wrong_time = ProcTarget(helper.pid, psutil.Process(helper.pid).create_time() - 100)
     result = SetPriority("helper", [wrong_time], "below_normal").run(ActionContext(UndoJournal(None)))
     assert result.ok and "isn't running" in result.message
-    assert int(psutil.Process(helper.pid).nice()) == priority_value("normal")
+    assert int(psutil.Process(helper.pid).nice()) == before
 
 
 class Recorder(Action):

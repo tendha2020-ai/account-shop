@@ -141,19 +141,7 @@ class ScrollFrame(ttk.Frame):
         self.columnconfigure(0, weight=1)
         self.inner.bind("<Configure>", lambda _e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
         self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfigure(self._window, width=e.width))
-        self.canvas.bind("<Enter>", self._bind_wheel)
-        self.canvas.bind("<Leave>", self._unbind_wheel)
-
-    def _bind_wheel(self, _event=None) -> None:
-        if sys.platform.startswith("linux"):
-            self.canvas.bind_all("<Button-4>", self._on_wheel)
-            self.canvas.bind_all("<Button-5>", self._on_wheel)
-        else:
-            self.canvas.bind_all("<MouseWheel>", self._on_wheel)
-
-    def _unbind_wheel(self, _event=None) -> None:
-        for sequence in ("<Button-4>", "<Button-5>", "<MouseWheel>"):
-            self.canvas.unbind_all(sequence)
+        _install_wheel_router(self.winfo_toplevel())
 
     def _on_wheel(self, event) -> None:
         if self.canvas.yview() == (0.0, 1.0):
@@ -172,6 +160,30 @@ class ScrollFrame(ttk.Frame):
 
     def scroll_to_top(self) -> None:
         self.canvas.yview_moveto(0)
+
+
+def _route_wheel(event) -> None:
+    """Scroll the ScrollFrame under the mouse pointer, wherever inside it the pointer is."""
+    try:
+        widget = event.widget.winfo_containing(event.x_root, event.y_root)
+    except (AttributeError, KeyError, tk.TclError):
+        return  # the event came from a widget that no longer exists
+    while widget is not None:
+        if isinstance(widget, ScrollFrame):
+            widget._on_wheel(event)
+            return
+        widget = widget.master
+
+
+def _install_wheel_router(root: tk.Misc) -> None:
+    if getattr(root, "_lagbuster_wheel_router", False):
+        return
+    root._lagbuster_wheel_router = True  # type: ignore[attr-defined]
+    for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+        root.bind_all(sequence, _route_wheel, add="+")
+        # Tk's combobox changes its value on mouse-wheel; while scrolling a list that would
+        # silently change a choice the user made, so the wheel scrolls the page instead.
+        root.unbind_class("TCombobox", sequence)
 
 
 def badge(master, theme: Theme, text: str, color: str, background: str | None = None) -> tk.Label:

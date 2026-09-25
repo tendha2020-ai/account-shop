@@ -225,6 +225,11 @@ def run_selftest(report_path: str | None = None) -> int:
         try:
             time.sleep(0.5)
             target = _target(helper)
+            try:
+                # Build servers run jobs at a lowered priority that child processes inherit.
+                psutil.Process(helper.pid).nice(priority_value("normal"))
+            except psutil.AccessDenied:
+                pass
             journal = UndoJournal(None)
             context = ActionContext(journal)
             result = SetPriority("helper", [target], "below_normal").run(context)

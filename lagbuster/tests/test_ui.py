@@ -83,3 +83,41 @@ def test_real_ui_starts_and_measures(root, tmp_path):
     assert app.dashboard.cpu.value_label.cget("text").endswith("%")
     assert app.errors == []
     app.close()
+
+
+def _find(widget, kind):
+    for child in widget.winfo_children():
+        if isinstance(child, kind):
+            return child
+        found = _find(child, kind)
+        if found is not None:
+            return found
+    return None
+
+
+def test_mouse_wheel_scrolls_the_list_and_never_changes_a_dropdown(root, tmp_path):
+    import types
+
+    from tkinter import ttk
+
+    from lagbuster.ui import widgets
+
+    app = LagBusterApp(root, demo=True, data_dir=tmp_path)
+    root.deiconify()
+    root.geometry("1100x740+0+0")
+    app.notebook.select(app.boost)
+    app.boost._scan_done(app.scan_worker(None))
+    pump(root, 0.6)
+    row = next(r for r in app.boost.rows if len(r.s.actions) > 1)
+    combo = _find(row, ttk.Combobox)
+    assert combo is not None
+    assert root.bind_class("TCombobox", "<MouseWheel>") == ""
+    value, view = combo.get(), app.boost.list.canvas.yview()
+    event = types.SimpleNamespace(
+        widget=combo, x_root=combo.winfo_rootx() + 5, y_root=combo.winfo_rooty() + 5, num=5, delta=-120
+    )
+    widgets._route_wheel(event)
+    pump(root, 0.1)
+    assert app.boost.list.canvas.yview() != view, "the list should scroll"
+    assert combo.get() == value, "the dropdown choice must not change"
+    app.close()
