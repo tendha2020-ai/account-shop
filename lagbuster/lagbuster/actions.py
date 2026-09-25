@@ -535,8 +535,8 @@ class TrimMemory(Action):
                 pass
         time.sleep(0.8)
         freed = max(0, psutil.virtual_memory().available - before)
-        return ActionResult(
-            True,
-            f"Asked {trimmed} background processes to hand back unused memory - "
-            f"about {fmt_bytes(freed)} of RAM is free again.",
-        )
+        message = f"Asked {trimmed} background processes to hand back memory they weren't using."
+        # Windows may first write some of it to disk, so the gain can show up a bit later.
+        if freed >= 50 * 1024 * 1024:
+            message += f" About {fmt_bytes(freed)} of RAM is free again."
+        return ActionResult(True, message)
