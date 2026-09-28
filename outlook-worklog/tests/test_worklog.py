@@ -91,3 +91,11 @@ def test_meeting_item_without_to():
 
     assert worklog._get(Meeting(), "To", "x") == "x"
     assert worklog._recipients(Meeting()) == "Sara Ali; Omar Khan"
+
+
+def test_default_color_categories_ignored():
+    rules = json.loads((HERE.parent / "rules.json").read_text(encoding="utf-8"))
+    e = worklog.Email(subject="Internal audit findings", date="2026-03-01T10:00:00", sender="me", to="x",
+                      body="audit compliance", folder="Sent", from_me=True, categories="Red Category, Dark Blue Category")
+    t = worklog.build_threads([e], rules, 1)[0]
+    assert t.category == "Governance & Compliance"

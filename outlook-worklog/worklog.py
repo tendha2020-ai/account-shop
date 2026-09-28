@@ -44,6 +44,7 @@ OL_MEETING_CLASSES = {53, 54, 55, 56, 57}  # meeting request/cancel/response ite
 
 SUBJECT_PREFIX_RE = re.compile(
     r"^\s*((re|fw|fwd|aw|wg|sv|vs|rv|tr|urgent|important|action required|reminder|fyi)\s*(\[\d+\])?\s*:\s*)+", re.I)
+DEFAULT_COLOR_CATEGORY_RE = re.compile(r"^(dark\s+)?[a-z]+\s+category$", re.I)
 QUOTE_MARKERS = [
     re.compile(r"^-{2,}\s*Original Message\s*-{2,}", re.I | re.M),
     re.compile(r"^From:\s.+$", re.M),
@@ -327,7 +328,9 @@ def is_noise(e: Email, rules: dict) -> bool:
 
 def classify(thread: Thread, rules: dict) -> str:
     # 1) Outlook categories you assigned yourself always win.
-    tagged = Counter(c.strip() for e in thread.emails for c in e.categories.split(",") if c.strip())
+    # Outlook's unrenamed colour tags ("Red Category") say nothing about the work - ignore them.
+    tagged = Counter(c.strip() for e in thread.emails for c in re.split(r"[,;]", e.categories)
+                     if c.strip() and not DEFAULT_COLOR_CATEGORY_RE.match(c.strip()))
     if tagged:
         return tagged.most_common(1)[0][0]
     # 2) Keyword scoring.
