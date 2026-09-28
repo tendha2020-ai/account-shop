@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Neon Pulse</title>
+  <link rel="stylesheet" href="game.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+  <script defer src="game.js"></script>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="board"></canvas>
+    <button id="pauseBtn" class="hidden" aria-label="Pause">&#10074;&#10074;</button>
+
+    <div id="menu" class="overlay">
+      <h1>NEON<span>PULSE</span></h1>
+      <p class="sub">4-lane rhythm game</p>
+      <div class="diffs" role="radiogroup" aria-label="Difficulty">
+        <button type="button" data-diff="easy">EASY<small>Lv.5</small></button>
+        <button type="button" data-diff="normal">NORMAL<small>Lv.12</small></button>
+        <button type="button" data-diff="hard">HARD<small>Lv.22</small></button>
+      </div>
+      <p class="best" id="best"></p>
+      <button type="button" id="startBtn" class="primary">PLAY</button>
+      <button type="button" id="versusBtn" class="hidden">PLAY WITH A FRIEND</button>
+      <details class="settings">
+        <summary>Settings</summary>
+        <label>Note speed <input type="range" id="speed" min="1" max="10" step="0.5"> <output id="speedOut"></output></label>
+        <label>Audio offset <input type="range" id="offset" min="-150" max="150" step="5"> <output id="offsetOut"></output></label>
+        <label class="check"><input type="checkbox" id="hitsound"> Hit sounds</label>
+      </details>
+      <p class="help">Keys <kbd>D</kbd> <kbd>F</kbd> <kbd>J</kbd> <kbd>K</kbd> &middot; or tap the lanes<br>Hold long notes until they end &middot; <kbd>Esc</kbd> pauses</p>
+      <a href="index.html" class="back">&larr; Back to store</a>
+    </div>
+
+    <div id="versus" class="overlay hidden">
+      <h2>VERSUS</h2>
+      <p class="vs-status" id="vsStatus">Connecting&hellip;</p>
+      <label class="nick" for="nick">Your name <input id="nick" maxlength="16" autocomplete="off" spellcheck="false"></label>
+      <div id="vsCode" class="vs-code hidden">
+        <button type="button" id="createRoomBtn" class="primary">CREATE ROOM</button>
+        <p class="or">or join your friend's room</p>
+        <div class="join-row">
+          <input id="codeInput" maxlength="5" placeholder="CODE" autocapitalize="characters" autocomplete="off" spellcheck="false" aria-label="Room code">
+          <button type="button" id="joinRoomBtn">JOIN</button>
+        </div>
+      </div>
+      <div id="vsRoom" class="vs-room hidden">
+        <p class="room-label">ROOM CODE</p>
+        <p class="room-code" id="roomCode"></p>
+        <div class="room-actions">
+          <button type="button" id="copyInviteBtn">COPY INVITE LINK</button>
+          <button type="button" id="leaveRoomBtn">LEAVE ROOM</button>
+        </div>
+      </div>
+      <div class="diffs" role="radiogroup" aria-label="Match difficulty">
+        <button type="button" data-diff="easy">EASY<small>Lv.5</small></button>
+        <button type="button" data-diff="normal">NORMAL<small>Lv.12</small></button>
+        <button type="button" data-diff="hard">HARD<small>Lv.22</small></button>
+      </div>
+      <ul class="players" id="vsPlayers"></ul>
+      <p class="help" id="vsHelp">Share this page with your friend. When they open it and tap Play with a friend, they appear in this list. Either of you can start the match.</p>
+      <button type="button" id="vsStartBtn" class="primary" disabled>START MATCH</button>
+      <button type="button" id="vsBackBtn">BACK</button>
+    </div>
+
+    <div id="pause" class="overlay hidden">
+      <h2>PAUSED</h2>
+      <button type="button" id="resumeBtn" class="primary">RESUME</button>
+      <button type="button" id="restartBtn">RESTART</button>
+      <button type="button" id="quitBtn">QUIT</button>
+    </div>
+
+    <div id="results" class="overlay hidden">
+      <p class="res-diff" id="resDiff"></p>
+      <div class="rank" id="resRank"></div>
+      <p class="badge" id="resBadge"></p>
+      <p class="res-score" id="resScore"></p>
+      <p class="new-best hidden" id="resBest">NEW BEST!</p>
+      <div id="resVs" class="res-vs hidden">
+        <p class="verdict" id="vsVerdict"></p>
+        <ul class="players" id="resPlayers"></ul>
+      </div>
+      <table class="counts">
+        <tr><th class="perfect">PERFECT</th><td id="cPerfect"></td></tr>
+        <tr><th class="great">GREAT</th><td id="cGreat"></td></tr>
+        <tr><th class="good">GOOD</th><td id="cGood"></td></tr>
+        <tr><th class="miss">MISS</th><td id="cMiss"></td></tr>
+        <tr><th>MAX COMBO</th><td id="cCombo"></td></tr>
+        <tr><th>ACCURACY</th><td id="cAcc"></td></tr>
+      </table>
+      <button type="button" id="retryBtn" class="primary">RETRY</button>
+      <button type="button" id="menuBtn">MENU</button>
+    </div>
+  </div>
+</body>
+</html>
