@@ -304,7 +304,7 @@
   // ---------- Game state ----------
   let game = null;
 
-  function newGame(diffKey) {
+  function newGame(diffKey, versus) {
     const chart = buildChart(diffKey);
     const holds = chart.filter((n) => n.end !== null).length;
     const lastEnd = chart.reduce((m, n) => Math.max(m, n.end ?? n.t), 0);
@@ -325,6 +325,7 @@
       judgement: null,
       paused: false,
       finished: false,
+      versus: !!versus,
     };
   }
 
@@ -333,11 +334,11 @@
     return actx.currentTime - game.t0 - settings.offset / 1000 - latency;
   }
 
-  function startGame(diffKey) {
+  function startGame(diffKey, versus) {
     initAudio();
     actx.resume();
     resetBus();
-    game = newGame(diffKey);
+    game = newGame(diffKey, versus);
     game.t0 = actx.currentTime + LEAD_IN;
     effects.length = 0;
     particles.length = 0;
@@ -372,6 +373,7 @@
     game = null;
     mode = 'menu';
     pauseBtn.classList.add('hidden');
+    leaveVersus();
     refreshMenu();
     showOnly(menuEl);
   }
@@ -472,6 +474,11 @@
     }
     while (game.firstLive < chart.length && chart[game.firstLive].done) game.firstLive++;
 
+    if (game.versus && performance.now() - vs.lastSent > 250) {
+      vs.lastSent = performance.now();
+      setPresence({ mode: 'playing', score: game.score, combo: game.combo, progress: Math.min(1, Math.max(0, now / song.length)) });
+    }
+
     if (now > game.endTime) finishGame();
   }
 
@@ -513,6 +520,12 @@
     $('cMiss').textContent = c.MISS;
     $('cCombo').textContent = game.maxCombo;
     $('cAcc').textContent = ((100 * game.weightSum) / game.totalUnits).toFixed(2) + '%';
+    $('resVs').classList.toggle('hidden', !game.versus);
+    $('retryBtn').textContent = game.versus ? 'REMATCH' : 'RETRY';
+    if (game.versus) {
+      setPresence({ mode: 'done', score: game.score, combo: 0, progress: 1, fc: fullCombo });
+      renderVersusResults();
+    }
     showOnly(resultsEl);
   }
 
@@ -868,6 +881,20 @@
     g.textAlign = 'right';
     g.fillText(`${d.name}  Lv.${d.lv}`, W - pad, 72);
 
+    if (game.versus) {
+      let y = 72 + W * 0.06;
+      g.font = `700 ${Math.round(W * 0.032)}px "Segoe UI", Arial, sans-serif`;
+      for (const o of matchPlayers().filter((p) => !p.me).slice(0, 3)) {
+        g.fillStyle = o.score > game.score ? '#ff9ae6' : '#7ff6ff';
+        g.fillText(`${o.nick}  ${String(o.score).padStart(7, '0')}`, W - pad, y);
+        g.fillStyle = 'rgba(255, 255, 255, 0.15)';
+        g.fillRect(W - pad - W * 0.3, y + 5, W * 0.3, 3);
+        g.fillStyle = '#ff9ae6';
+        g.fillRect(W - pad - W * 0.3, y + 5, W * 0.3 * o.progress, 3);
+        y += W * 0.065;
+      }
+    }
+
     g.textAlign = 'center';
     if (game.combo >= 2) {
       g.fillStyle = 'rgba(255, 255, 255, 0.92)';
@@ -1001,13 +1028,14 @@
   const pauseEl = $('pause');
   const resultsEl = $('results');
   const pauseBtn = $('pauseBtn');
+  const versusEl = $('versus');
 
   function showOnly(el) {
-    for (const o of [menuEl, pauseEl, resultsEl]) o.classList.toggle('hidden', o !== el);
+    for (const o of [menuEl, versusEl, pauseEl, resultsEl]) o.classList.toggle('hidden', o !== el);
   }
 
   function refreshMenu() {
-    for (const b of menuEl.querySelectorAll('[data-diff]')) {
+    for (const b of document.querySelectorAll('[data-diff]')) {
       const active = b.dataset.diff === settings.diff;
       b.classList.toggle('active', active);
       b.setAttribute('aria-checked', active ? 'true' : 'false');
@@ -1019,7 +1047,7 @@
       : 'No score yet';
   }
 
-  for (const b of menuEl.querySelectorAll('[data-diff]')) {
+  for (const b of document.querySelectorAll('[data-diff]')) {
     b.addEventListener('click', () => {
       settings.diff = b.dataset.diff;
       store.set('diff', settings.diff);
@@ -1056,9 +1084,230 @@
   $('resumeBtn').addEventListener('click', resumeGame);
   $('restartBtn').addEventListener('click', () => startGame(game.diff));
   $('quitBtn').addEventListener('click', quitToMenu);
-  $('retryBtn').addEventListener('click', () => startGame(game.diff));
+  $('retryBtn').addEventListener('click', () => {
+    if (game && game.versus) openVersus();
+    else startGame(game.diff);
+  });
   $('menuBtn').addEventListener('click', quitToMenu);
   pauseBtn.addEventListener('click', pauseGame);
+
+  // ---------- Versus (online, via the viewer's room) ----------
+  // Only presence is used: every player publishes their own state, and a
+  // match starts when someone in the lobby sets a fresh `start` on theirs.
+  const COUNTDOWN_MS = 4000;
+  const vs = {
+    room: null,
+    unavailable: false,
+    inLobby: false,
+    matchId: null,
+    handled: new Set(),
+    lastSent: 0,
+    timer: null,
+    seen: new Map(),
+    nick: String(store.get('nick', '') || 'Player ' + Math.floor(100 + Math.random() * 900)).slice(0, 16),
+  };
+  const nickEl = $('nick');
+  nickEl.value = vs.nick;
+
+  function setPresence(patch) {
+    if (!vs.room) return;
+    vs.room.presence(patch).catch(() => {});
+  }
+
+  const cleanNick = (v) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 16) : 'Player');
+  const cleanScore = (v) => (Number.isFinite(v) ? Math.max(0, Math.min(1e6, Math.round(v))) : 0);
+
+  function peerList() {
+    if (!vs.room) return [];
+    return vs.room.peers().filter((p) => p.kind === 'viewer' && p.presence && typeof p.presence.nick === 'string');
+  }
+
+  function matchPlayers() {
+    return peerList()
+      .filter((p) => vs.matchId && p.presence.match === vs.matchId)
+      .map((p) => ({
+        peer: p.peer,
+        me: p.sameTab,
+        nick: cleanNick(p.presence.nick),
+        score: p.sameTab && game ? game.score : cleanScore(p.presence.score),
+        progress: Math.max(0, Math.min(1, Number(p.presence.progress) || 0)),
+        done: p.presence.mode === 'done',
+        fc: !!p.presence.fc,
+      }))
+      .sort((a, b) => b.score - a.score);
+  }
+
+  const STATE_LABELS = { menu: 'In menu', lobby: 'Ready', countdown: 'Starting', playing: 'Playing', done: 'Finished' };
+
+  function renderLobby() {
+    const list = $('vsPlayers');
+    list.textContent = '';
+    const peers = peerList();
+    for (const p of peers) {
+      const li = document.createElement('li');
+      if (p.sameTab) li.className = 'me';
+      const who = document.createElement('span');
+      who.className = 'who';
+      who.textContent = cleanNick(p.presence.nick) + (p.sameTab ? ' (you)' : '');
+      const st = document.createElement('span');
+      st.className = 'state';
+      st.textContent = STATE_LABELS[p.presence.mode] || 'Here';
+      li.append(who, st);
+      list.append(li);
+    }
+    const others = peers.filter((p) => !p.sameTab && p.presence.mode === 'lobby');
+    const startBtn = $('vsStartBtn');
+    if (vs.unavailable) {
+      $('vsStatus').textContent = 'Online play is not available in this view.';
+      $('vsHelp').textContent = 'Open this page on claude.ai while signed in. Your friend needs access too: share it with them from the Share menu.';
+      startBtn.disabled = true;
+    } else if (!vs.room || !vs.room.connected()) {
+      $('vsStatus').textContent = 'Connecting\u2026';
+      startBtn.disabled = true;
+    } else if (vs.timer) {
+      startBtn.disabled = true;
+    } else {
+      $('vsStatus').textContent = others.length ? `${others.length} friend${others.length > 1 ? 's' : ''} ready` : 'Waiting for a friend\u2026';
+      startBtn.disabled = others.length === 0;
+    }
+  }
+
+  function renderVersusResults() {
+    if (!game || !game.versus) return;
+    // Remember everyone seen in this match so a player who heads back to the
+    // lobby for a rematch keeps their final score here.
+    for (const p of matchPlayers()) vs.seen.set(p.peer, p);
+    const current = new Set(matchPlayers().map((p) => p.peer));
+    const players = [...vs.seen.values()]
+      .filter((p) => current.has(p.peer) || p.done)
+      .map((p) => (p.me ? { ...p, score: game.score, done: true } : p))
+      .sort((a, b) => b.score - a.score);
+    const list = $('resPlayers');
+    list.textContent = '';
+    players.forEach((p, i) => {
+      const li = document.createElement('li');
+      if (p.me) li.className = 'me';
+      const who = document.createElement('span');
+      who.className = 'who';
+      who.textContent = `${i + 1}. ${p.nick}${p.me ? ' (you)' : ''}`;
+      const st = document.createElement('span');
+      st.className = 'state';
+      st.textContent = p.me || p.done ? String(p.score).padStart(7, '0') : `playing ${Math.round(p.progress * 100)}%`;
+      li.append(who, st);
+      list.append(li);
+    });
+    const others = players.filter((p) => !p.me);
+    let verdict;
+    if (!others.length) verdict = 'YOUR FRIEND LEFT';
+    else if (others.some((p) => !p.done)) verdict = 'WAITING FOR RESULTS';
+    else {
+      const best = Math.max(...others.map((p) => p.score));
+      verdict = game.score > best ? 'YOU WIN!' : game.score === best ? 'DRAW' : 'YOU LOSE';
+    }
+    $('vsVerdict').textContent = verdict;
+  }
+
+  function onPeers() {
+    if (vs.inLobby && !vs.timer) {
+      for (const p of peerList()) {
+        const st = p.presence.start;
+        if (p.sameTab || p.presence.mode !== 'countdown' || !st || typeof st.id !== 'string') continue;
+        if (vs.handled.has(st.id) || !DIFFS[st.diff]) continue;
+        // updatedAt is on our own clock, so no cross-device clock sync is needed.
+        const left = Math.max(0, Math.min(COUNTDOWN_MS, COUNTDOWN_MS - (Date.now() - p.updatedAt)));
+        scheduleMatch(st.id, st.diff, left, false);
+        break;
+      }
+    }
+    if (mode === 'menu' && !versusEl.classList.contains('hidden')) renderLobby();
+    if (mode === 'results') renderVersusResults();
+  }
+
+  function scheduleMatch(id, diff, delay, isStarter) {
+    vs.handled.add(id);
+    vs.matchId = id;
+    vs.seen.clear();
+    settings.diff = diff;
+    refreshMenu();
+    const patch = { mode: 'countdown', match: id, diff, score: 0, combo: 0, progress: 0, fc: null };
+    patch.start = isStarter ? { id, diff } : null;
+    setPresence(patch);
+    const startAt = performance.now() + delay;
+    const tick = () => {
+      const left = startAt - performance.now();
+      if (left <= 0) {
+        vs.timer = null;
+        vs.inLobby = false;
+        setPresence({ mode: 'playing', start: null });
+        startGame(diff, true);
+        return;
+      }
+      $('vsStatus').textContent = `${DIFFS[diff].name} match starts in ${Math.ceil(left / 1000)}\u2026`;
+      vs.timer = setTimeout(tick, Math.min(250, left));
+    };
+    vs.timer = setTimeout(tick, 0);
+    renderLobby();
+  }
+
+  function openVersus() {
+    initAudio();
+    actx.resume();
+    if (game) resetBus();
+    game = null;
+    mode = 'menu';
+    pauseBtn.classList.add('hidden');
+    vs.inLobby = true;
+    vs.matchId = null;
+    setPresence({ nick: vs.nick, mode: 'lobby', match: null, start: null, score: 0, combo: 0, progress: 0, fc: null });
+    refreshMenu();
+    showOnly(versusEl);
+    renderLobby();
+  }
+
+  function leaveVersus() {
+    if (vs.timer) clearTimeout(vs.timer);
+    vs.timer = null;
+    vs.inLobby = false;
+    vs.matchId = null;
+    setPresence({ mode: 'menu', match: null, start: null });
+  }
+
+  $('versusBtn').addEventListener('click', openVersus);
+  $('vsBackBtn').addEventListener('click', () => {
+    leaveVersus();
+    refreshMenu();
+    showOnly(menuEl);
+  });
+  $('vsStartBtn').addEventListener('click', () => {
+    if (vs.timer || !vs.room) return;
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    scheduleMatch(id, settings.diff, COUNTDOWN_MS, true);
+  });
+  nickEl.addEventListener('input', () => {
+    vs.nick = nickEl.value.trim().slice(0, 16) || 'Player';
+    store.set('nick', vs.nick);
+    setPresence({ nick: vs.nick });
+  });
+
+  function versusUnavailable() {
+    vs.room = null;
+    vs.unavailable = true;
+    renderLobby();
+  }
+
+  if (window.claude && typeof window.claude.use === 'function') {
+    $('versusBtn').classList.remove('hidden');
+    window.claude
+      .use('room')
+      .then((room) => {
+        if (!room) return versusUnavailable();
+        vs.room = room;
+        room.onPeers(onPeers, versusUnavailable);
+        room.onConnection(() => renderLobby(), versusUnavailable);
+        setPresence({ nick: vs.nick, mode: vs.inLobby ? 'lobby' : 'menu' });
+      })
+      .catch(versusUnavailable);
+  }
 
   window.addEventListener('resize', resize);
   resize();

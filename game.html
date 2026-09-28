@@ -22,6 +22,7 @@
       </div>
       <p class="best" id="best"></p>
       <button type="button" id="startBtn" class="primary">PLAY</button>
+      <button type="button" id="versusBtn" class="hidden">PLAY WITH A FRIEND</button>
       <details class="settings">
         <summary>Settings</summary>
         <label>Note speed <input type="range" id="speed" min="1" max="10" step="0.5"> <output id="speedOut"></output></label>
@@ -30,6 +31,21 @@
       </details>
       <p class="help">Keys <kbd>D</kbd> <kbd>F</kbd> <kbd>J</kbd> <kbd>K</kbd> &middot; or tap the lanes<br>Hold long notes until they end &middot; <kbd>Esc</kbd> pauses</p>
       <a href="index.html" class="back">&larr; Back to store</a>
+    </div>
+
+    <div id="versus" class="overlay hidden">
+      <h2>VERSUS</h2>
+      <p class="vs-status" id="vsStatus">Connecting&hellip;</p>
+      <label class="nick" for="nick">Your name <input id="nick" maxlength="16" autocomplete="off" spellcheck="false"></label>
+      <div class="diffs" role="radiogroup" aria-label="Match difficulty">
+        <button type="button" data-diff="easy">EASY<small>Lv.5</small></button>
+        <button type="button" data-diff="normal">NORMAL<small>Lv.12</small></button>
+        <button type="button" data-diff="hard">HARD<small>Lv.22</small></button>
+      </div>
+      <ul class="players" id="vsPlayers"></ul>
+      <p class="help" id="vsHelp">Share this page with your friend. When they open it and tap Play with a friend, they appear in this list. Either of you can start the match.</p>
+      <button type="button" id="vsStartBtn" class="primary" disabled>START MATCH</button>
+      <button type="button" id="vsBackBtn">BACK</button>
     </div>
 
     <div id="pause" class="overlay hidden">
@@ -45,6 +61,10 @@
       <p class="badge" id="resBadge"></p>
       <p class="res-score" id="resScore"></p>
       <p class="new-best hidden" id="resBest">NEW BEST!</p>
+      <div id="resVs" class="res-vs hidden">
+        <p class="verdict" id="vsVerdict"></p>
+        <ul class="players" id="resPlayers"></ul>
+      </div>
       <table class="counts">
         <tr><th class="perfect">PERFECT</th><td id="cPerfect"></td></tr>
         <tr><th class="great">GREAT</th><td id="cGreat"></td></tr>

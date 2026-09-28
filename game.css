@@ -272,3 +272,89 @@ kbd {
 .counts .great { color: #ff8ad8; }
 .counts .good { color: #8dff9a; }
 .counts .miss { color: #9aa4b5; }
+
+.vs-status {
+  margin: 0;
+  min-height: 1.2em;
+  font-size: 0.9rem;
+  color: #9ff7ff;
+}
+
+.nick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+}
+
+.nick input {
+  width: 160px;
+  padding: 8px 10px;
+  border: 1px solid rgba(150, 220, 255, 0.55);
+  border-radius: 8px;
+  background: rgba(20, 10, 50, 0.7);
+  color: #eaf6ff;
+  font: inherit;
+}
+
+.players {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: min(100%, 300px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.players li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid rgba(150, 220, 255, 0.25);
+  border-radius: 8px;
+  background: rgba(30, 18, 80, 0.55);
+  font-size: 0.9rem;
+}
+
+.players li.me {
+  border-color: #7ff6ff;
+}
+
+.players .who {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.players .state {
+  flex-shrink: 0;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+
+.overlay button:disabled {
+  opacity: 0.45;
+  cursor: default;
+  box-shadow: none;
+}
+
+.res-vs {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.verdict {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 900;
+  font-style: italic;
+  letter-spacing: 0.1em;
+  color: #fff;
+  text-shadow: 0 0 16px #ff9ae6;
+}
