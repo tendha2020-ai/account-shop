@@ -77,3 +77,17 @@ def test_pick_mailbox_and_folders():
     # _default_folder falls back to folder names when root.Store is unavailable
     assert worklog._resolve_folder(work, "Inbox/Projects").Name == "Projects"
     assert worklog._resolve_folder(work, "Sent Items").Name == "Sent Items"
+
+
+def test_meeting_item_without_to():
+    class Recips:
+        Count = 2
+
+        def Item(self, i):
+            return type("R", (), {"Name": ["Sara Ali", "Omar Khan"][i - 1]})()
+
+    class Meeting:  # like Outlook's MeetingItem: no .To attribute
+        Recipients = Recips()
+
+    assert worklog._get(Meeting(), "To", "x") == "x"
+    assert worklog._recipients(Meeting()) == "Sara Ali; Omar Khan"

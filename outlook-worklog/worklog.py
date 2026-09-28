@@ -210,6 +210,25 @@ def _resolve_folder(root, path: str):
     return folder
 
 
+def _get(item, name: str, default=None):
+    """Read an Outlook property; meeting items and reports lack some (e.g. .To)."""
+    try:
+        return getattr(item, name)
+    except Exception:
+        return default
+
+
+def _recipients(item) -> str:
+    to = _get(item, "To")
+    if to:
+        return to
+    try:  # meeting requests/responses have Recipients but no .To
+        r = item.Recipients
+        return "; ".join(r.Item(i).Name for i in range(1, r.Count + 1))
+    except Exception:
+        return ""
+
+
 def _walk(folder, include_sub: bool):
     yield folder
     if include_sub:
@@ -251,18 +270,19 @@ def scan_outlook(folders: list[str], start: datetime, end: datetime,
                 continue
             total = items.Count
             print(f"  Scanning {folder.FolderPath}  ({total} items)")
+            skipped: Counter[str] = Counter()
             for idx in range(1, total + 1):
                 try:
                     item = items.Item(idx)
-                    cls = item.Class
+                    cls = _get(item, "Class", 0)
                     if cls != OL_MAIL_ITEM and cls not in OL_MEETING_CLASSES:
                         continue
-                    when = item.SentOn if is_sent else item.ReceivedTime
-                    sender = item.SenderName or ""
-                    try:
-                        sender_addr = (item.SenderEmailAddress or "").lower()
-                    except Exception:
-                        sender_addr = ""
+                    when = _get(item, "SentOn" if is_sent else "ReceivedTime") or _get(item, "CreationTime")
+                    if when is None:
+                        skipped["no date"] += 1
+                        continue
+                    sender = _get(item, "SenderName", "") or ""
+                    sender_addr = (_get(item, "SenderEmailAddress", "") or "").lower()
                     from_me = is_sent or sender.strip().lower() == me_name or sender_addr in my_addrs
                     attachments = []
                     try:
@@ -271,22 +291,25 @@ def scan_outlook(folders: list[str], start: datetime, end: datetime,
                     except Exception:
                         pass
                     emails.append(Email(
-                        subject=item.Subject or "",
+                        subject=_get(item, "Subject", "") or "",
                         date=_naive(when).isoformat(),
                         sender=sender if not from_me else "me",
-                        to=item.To or "",
-                        body=strip_quoted(item.Body or "")[:body_chars],
+                        to=_recipients(item),
+                        body=strip_quoted(_get(item, "Body", "") or "")[:body_chars],
                         folder=folder.FolderPath,
                         from_me=bool(from_me),
-                        categories=item.Categories or "",
+                        categories=_get(item, "Categories", "") or "",
                         attachments=attachments,
                         is_meeting=cls in OL_MEETING_CLASSES,
-                        conversation=getattr(item, "ConversationTopic", "") or "",
+                        conversation=_get(item, "ConversationTopic", "") or "",
                     ))
                 except Exception as exc:  # corrupt/unsupported item - keep going
-                    print(f"    - skipped one item: {exc}")
+                    skipped[str(exc)[:80]] += 1
                 if idx % 500 == 0:
                     print(f"    ...{idx}/{total}")
+            if skipped:
+                print(f"    ({sum(skipped.values())} items skipped: "
+                      + "; ".join(f"{n}x {why}" for why, n in skipped.most_common(3)) + ")")
     return emails
 
 
