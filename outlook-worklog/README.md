@@ -12,7 +12,10 @@ use the optional `--ai` flag.
 
 ## Setup (one time)
 
-1. Install Python 3.10 or newer from https://www.python.org/downloads/ and tick **"Add Python to PATH"**.
+1. Check whether Python is installed: open **Command Prompt** (press Start, type `cmd`, press Enter)
+   and run `python --version`. If it prints `Python 3.10` or higher, skip to step 2. If it says
+   "not recognized" or opens the Microsoft Store, install Python from https://www.python.org/downloads/,
+   tick **"Add Python to PATH"** during setup, then close and reopen Command Prompt and check again.
 2. Copy this `outlook-worklog` folder to your work PC.
 3. In a terminal in that folder, run: `pip install pywin32`
 
@@ -26,6 +29,17 @@ python worklog.py --start 2025-10-01 --end 2026-09-30   :: a custom review perio
 python worklog.py --folders "Sent Items" "Inbox" --subfolders   :: include your filed sub-folders
 python worklog.py --folders "Sent Items" "Inbox/Projects/Alpha"  :: specific folders
 ```
+
+### More than one account in Outlook?
+
+List the mailboxes, then scan only your work one:
+
+```bat
+python worklog.py --list-mailboxes
+python worklog.py --mailbox "you@company.com" --subfolders
+```
+
+Part of the name is enough (`--mailbox company`). Without `--mailbox`, your default mailbox is scanned.
 
 If Outlook shows a security prompt ("A program is trying to access e-mail
 information"), choose **Allow** for 10 minutes.

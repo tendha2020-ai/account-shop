@@ -43,3 +43,37 @@ def test_end_to_end(tmp_path):
     for name in ("worklog.html", "worklog.md", "worklog.csv"):
         assert (tmp_path / name).stat().st_size > 0
     assert "Recognition" in (tmp_path / "worklog.md").read_text(encoding="utf-8")
+
+
+class _Folders:
+    def __init__(self, items):
+        self._items = items
+        self.Count = len(items)
+
+    def Item(self, key):
+        if isinstance(key, int):
+            return self._items[key - 1]
+        for f in self._items:
+            if f.Name.lower() == key.lower():
+                return f
+        raise KeyError(key)
+
+
+class _Folder:
+    def __init__(self, name, children=()):
+        self.Name = name
+        self.Folders = _Folders(list(children))
+
+
+def test_pick_mailbox_and_folders():
+    personal = _Folder("me@gmail.com", [_Folder("Inbox"), _Folder("Sent Items")])
+    work = _Folder("me@company.com", [_Folder("Inbox", [_Folder("Projects")]), _Folder("Sent Items")])
+
+    class NS:
+        Folders = _Folders([personal, work])
+
+    assert worklog._pick_mailbox(NS, "ME@company.com") is work
+    assert worklog._pick_mailbox(NS, "company") is work  # partial match
+    # _default_folder falls back to folder names when root.Store is unavailable
+    assert worklog._resolve_folder(work, "Inbox/Projects").Name == "Projects"
+    assert worklog._resolve_folder(work, "Sent Items").Name == "Sent Items"

@@ -156,28 +156,56 @@ def _naive(dt) -> datetime:
     return datetime(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second)
 
 
-def _resolve_folder(ns, path: str):
-    """'Inbox', 'Sent Items', 'Inbox/Projects/Alpha', or 'Mailbox Name/Inbox/...'."""
-    lowered = path.strip().strip("/").lower()
-    if lowered in ("inbox",):
-        return ns.GetDefaultFolder(OL_FOLDER_INBOX)
-    if lowered in ("sent", "sent items"):
-        return ns.GetDefaultFolder(OL_FOLDER_SENT)
-    parts = [p for p in path.strip("/").split("/") if p]
+def _open_outlook():
+    try:
+        import win32com.client  # type: ignore
+    except ImportError:
+        sys.exit("pywin32 is not installed. Run:  pip install pywin32\n"
+                 "(Scanning needs Windows + classic Outlook. On other machines use --from-json.)")
+    return win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
+
+
+def list_mailboxes() -> None:
+    ns = _open_outlook()
+    default = ns.GetDefaultFolder(OL_FOLDER_INBOX).Parent.Name
+    print("Mailboxes in Outlook (use one with --mailbox):")
+    for i in range(1, ns.Folders.Count + 1):
+        name = ns.Folders.Item(i).Name
+        print(f'  "{name}"' + ("   <- default" if name == default else ""))
+
+
+def _pick_mailbox(ns, name: str | None):
+    """Top folder of the chosen mailbox; the default one if no name is given."""
+    if not name:
+        return ns.GetDefaultFolder(OL_FOLDER_INBOX).Parent
+    stores = [ns.Folders.Item(i) for i in range(1, ns.Folders.Count + 1)]
+    want = name.strip().lower()
+    for match in (lambda n: n == want, lambda n: want in n):  # exact first, then partial
+        found = [f for f in stores if match(f.Name.lower())]
+        if found:
+            return found[0]
+    names = ", ".join(f'"{f.Name}"' for f in stores)
+    sys.exit(f'No mailbox matching "{name}". Available: {names}')
+
+
+def _default_folder(root, kind: int):
+    try:
+        return root.Store.GetDefaultFolder(kind)
+    except Exception:  # older Outlook / some shared mailboxes
+        return root.Folders.Item("Inbox" if kind == OL_FOLDER_INBOX else "Sent Items")
+
+
+def _resolve_folder(root, path: str):
+    """'Inbox', 'Sent Items', 'Inbox/Projects/Alpha' or any top-level folder, inside mailbox `root`."""
+    parts = [p for p in path.strip().strip("/").split("/") if p]
     first = parts[0].lower()
     if first == "inbox":
-        folder, rest = ns.GetDefaultFolder(OL_FOLDER_INBOX), parts[1:]
+        folder = _default_folder(root, OL_FOLDER_INBOX)
     elif first in ("sent", "sent items"):
-        folder, rest = ns.GetDefaultFolder(OL_FOLDER_SENT), parts[1:]
+        folder = _default_folder(root, OL_FOLDER_SENT)
     else:
-        # Try as a top-level folder of the default mailbox, then as a store name.
-        root = ns.GetDefaultFolder(OL_FOLDER_INBOX).Parent
-        folder, rest = root, parts
-        try:
-            root.Folders.Item(parts[0])
-        except Exception:
-            folder, rest = ns.Folders.Item(parts[0]), parts[1:]
-    for name in rest:
+        folder = root.Folders.Item(parts[0])
+    for name in parts[1:]:
         folder = folder.Folders.Item(name)
     return folder
 
@@ -190,28 +218,25 @@ def _walk(folder, include_sub: bool):
 
 
 def scan_outlook(folders: list[str], start: datetime, end: datetime,
-                 include_sub: bool, body_chars: int) -> list[Email]:
-    try:
-        import win32com.client  # type: ignore
-    except ImportError:
-        sys.exit("pywin32 is not installed. Run:  pip install pywin32\n"
-                 "(Scanning needs Windows + classic Outlook. On other machines use --from-json.)")
-
-    outlook = win32com.client.Dispatch("Outlook.Application")
-    ns = outlook.GetNamespace("MAPI")
+                 include_sub: bool, body_chars: int, mailbox: str | None = None) -> list[Email]:
+    ns = _open_outlook()
+    root = _pick_mailbox(ns, mailbox)
+    print(f"Mailbox: {root.Name}")
     me_name = (ns.CurrentUser.Name or "").strip().lower()
     try:
         me_addr = (ns.CurrentUser.AddressEntry.GetExchangeUser().PrimarySmtpAddress or "").lower()
     except Exception:
         me_addr = (ns.CurrentUser.Address or "").lower()
-    sent_id = ns.GetDefaultFolder(OL_FOLDER_SENT).EntryID
+    # The mailbox name is usually its email address, so it identifies "me" too.
+    my_addrs = {a for a in (me_addr, root.Name.strip().lower()) if a}
+    sent_id = _default_folder(root, OL_FOLDER_SENT).EntryID
 
     # Outlook's Restrict wants a locale-ish US date string.
     fmt = "%m/%d/%Y %I:%M %p"
     emails: list[Email] = []
     for path in folders:
         try:
-            base = _resolve_folder(ns, path)
+            base = _resolve_folder(root, path)
         except Exception as exc:
             print(f"  ! Could not open folder '{path}': {exc}")
             continue
@@ -238,7 +263,7 @@ def scan_outlook(folders: list[str], start: datetime, end: datetime,
                         sender_addr = (item.SenderEmailAddress or "").lower()
                     except Exception:
                         sender_addr = ""
-                    from_me = is_sent or sender.strip().lower() == me_name or (me_addr and sender_addr == me_addr)
+                    from_me = is_sent or sender.strip().lower() == me_name or sender_addr in my_addrs
                     attachments = []
                     try:
                         for a in range(1, item.Attachments.Count + 1):
@@ -520,6 +545,8 @@ def main(argv: list[str] | None = None) -> None:
                     help="first day, YYYY-MM-DD (default: 1 Jan this year)")
     ap.add_argument("--end", type=parse_date, default=None,
                     help="last day inclusive, YYYY-MM-DD (default: today)")
+    ap.add_argument("--mailbox", help='which Outlook mailbox to scan, e.g. "you@company.com" (default: your main one)')
+    ap.add_argument("--list-mailboxes", action="store_true", help="show the mailboxes in Outlook and exit")
     ap.add_argument("--folders", nargs="+", default=["Sent Items", "Inbox"],
                     help='Outlook folders to scan, e.g. "Sent Items" "Inbox" "Inbox/Projects"')
     ap.add_argument("--subfolders", action="store_true", help="also scan subfolders of each folder")
@@ -535,6 +562,10 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--role", default="", help='your job title, used by --ai (e.g. "Data Analyst")')
     args = ap.parse_args(argv)
 
+    if args.list_mailboxes:
+        list_mailboxes()
+        return
+
     end = (args.end or today).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
     start = args.start
     rules = json.loads(args.rules.read_text(encoding="utf-8"))
@@ -546,7 +577,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"Loaded {len(emails)} emails from {args.from_json}")
     else:
         print(f"Scanning Outlook {start:%Y-%m-%d} to {end - timedelta(days=1):%Y-%m-%d} ...")
-        emails = scan_outlook(args.folders, start, end, args.subfolders, args.body_chars)
+        emails = scan_outlook(args.folders, start, end, args.subfolders, args.body_chars, args.mailbox)
         cache = args.out / "emails.json"
         cache.write_text(json.dumps([asdict(e) for e in emails], indent=1), encoding="utf-8")
         print(f"Scanned {len(emails)} emails (cached to {cache})")
