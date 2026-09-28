@@ -48,7 +48,8 @@ information"), choose **Allow** for 10 minutes.
 
 | File | Use it for |
 |---|---|
-| `worklog.html` | The main report: stats, a monthly activity chart, praise received, and every thread by category (click a thread to expand it) |
+| `review_draft.md` | **A self-review draft** with your top 10 pieces of work, contributions by area, recognition and collaboration. Fill in the `[brackets]` with results and numbers |
+| `worklog.html` | The main report, with an **Insights** section (focus areas, busiest months, key collaborators, after-hours work, top 10 pieces of work): stats, a monthly activity chart, praise received, and every thread by category (click a thread to expand it) |
 | `worklog.md` | The same content to paste into Word, OneNote or your HR review form |
 | `worklog.csv` | One row per thread for Excel, with an empty **Review notes** column for adding impact and metrics |
 | `emails.json` | A cache of the scan, used by `--from-json` below |

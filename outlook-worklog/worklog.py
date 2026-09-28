@@ -416,6 +416,104 @@ def _by_category(threads: list[Thread]) -> dict[str, list[Thread]]:
     return dict(sorted(cats.items(), key=lambda kv: (kv[0] == "Other", -sum(t.my_count for t in kv[1]))))
 
 
+def _importance(t: Thread) -> float:
+    """Rough 'how big was this piece of work' score for ranking highlights."""
+    days = (t.last - t.first).days
+    return (2 * t.my_count + len(t.emails) + 5 * len(t.recognition)
+            + min(days, 60) / 10 + 2 * bool(t.attachments) + len(t.people) / 2)
+
+
+def compute_insights(threads: list[Thread]) -> dict:
+    mine = [e for t in threads for e in t.emails if e.from_me]
+    dates = [datetime.fromisoformat(e.date) for e in mine]
+    months = Counter(d.strftime("%B %Y") for d in dates)
+    after_hours = sum(d.weekday() >= 5 or d.hour < 7 or d.hour >= 19 for d in dates)
+    cats = _by_category(threads)
+    total = max(len(threads), 1)
+    collaborators: Counter[str] = Counter()
+    for t in threads:
+        for p in set(t.people):
+            if p.lower() != "me":
+                collaborators[p] += 1
+    praisers = {r.split(" (")[0] for t in threads for r in t.recognition}
+    return {
+        "sent": len(mine),
+        "threads": len(threads),
+        "busiest": months.most_common(3),
+        "focus": [(c, len(ts), round(100 * len(ts) / total)) for c, ts in list(cats.items())[:4]],
+        "top": sorted(threads, key=_importance, reverse=True)[:10],
+        "collaborators": collaborators.most_common(8),
+        "after_hours": after_hours,
+        "after_hours_pct": round(100 * after_hours / max(len(mine), 1)),
+        "files": len({a for t in threads for a in t.attachments}),
+        "praise_count": sum(len(t.recognition) for t in threads),
+        "praisers": len(praisers),
+    }
+
+
+def insight_sentences(ins: dict) -> list[str]:
+    out = [f"You handled **{ins['threads']} pieces of work** and sent **{ins['sent']} emails**, "
+           f"and shared **{ins['files']} files** (reports, documents, trackers)."]
+    if ins["focus"]:
+        out.append("Your time went mainly to " + ", ".join(
+            f"**{c}** ({pct}%)" for c, _, pct in ins["focus"]) + ".")
+    if ins["busiest"]:
+        out.append("Busiest months: " + ", ".join(f"{m} ({n} emails sent)" for m, n in ins["busiest"])
+                   + ". Check what you delivered then; those are often your strongest examples.")
+    if ins["collaborators"]:
+        out.append("You worked most closely with " + ", ".join(
+            f"{p} ({n} threads)" for p, n in ins["collaborators"][:5]) + ". This shows cross-team collaboration.")
+    if ins["after_hours"]:
+        out.append(f"{ins['after_hours']} emails ({ins['after_hours_pct']}%) were sent early, late or at weekends. "
+                   "Mention urgent deadlines or incidents you covered, if relevant.")
+    if ins["praise_count"]:
+        out.append(f"You received **{ins['praise_count']} thank-yous / praise** from {ins['praisers']} different people. "
+                   "Quote the best 2-3 in your review.")
+    return out
+
+
+def write_review_draft(threads: list[Thread], path: Path, start: datetime, end: datetime) -> None:
+    """A fill-in-the-blanks self-review built from the evidence in your email."""
+    ins = compute_insights(threads)
+    cats = _by_category(threads)
+    L = [f"# Self-review draft ({start:%b %Y} - {(end - timedelta(days=1)):%b %Y})", "",
+         "_Built from your email. Replace every [bracket] with a real result, number or outcome, "
+         "then delete what you don't need._", "",
+         "## 1. Summary of my year", "",
+         f"This year I delivered {ins['threads']} pieces of work across "
+         + ", ".join(c for c, _, _ in ins["focus"][:3]) + ". "
+         "[Add 1-2 sentences: the biggest thing you achieved and why it mattered to the team/business.]", "",
+         "## 2. Key accomplishments", "",
+         "_Format: what I did -> for whom -> result. Numbers make it strong: hours saved, % faster, "
+         "errors reduced, money saved, deadlines met._", ""]
+    for t in ins["top"]:
+        what = t.my_highlights(1, 180)
+        L.append(f"- **{t.title}** ({_period(t)}, {t.first:%Y})")
+        L.append(f"  - What I did: {what[0] if what else '[describe your role]'}")
+        if t.people:
+            L.append(f"  - Worked with: {', '.join(t.people[:4])}")
+        if t.attachments:
+            L.append(f"  - Delivered: {', '.join(t.attachments[:3])}")
+        L.append("  - Result / impact: [e.g. saved X hours a week, delivered on time, reduced errors by X%]")
+    L += ["", "## 3. Contributions by area", ""]
+    for cat, ts in list(cats.items())[:6]:
+        best = sorted(ts, key=_importance, reverse=True)[:3]
+        L.append(f"- **{cat}** ({len(ts)} items): " + "; ".join(t.title for t in best)
+                 + ". [One line on the overall outcome.]")
+    praise = [r for t in threads for r in t.recognition]
+    if praise:
+        L += ["", "## 4. Recognition received", ""] + [f"- {r}" for r in praise[:6]]
+    if ins["collaborators"]:
+        L += ["", "## 5. Collaboration", "",
+              "I worked closely with " + ", ".join(p for p, _ in ins["collaborators"][:6])
+              + ". [Add an example where working together made a difference.]"]
+    L += ["", "## 6. Goals for next year", "",
+          "- [Skill to grow, e.g. a certification or tool]",
+          "- [Bigger responsibility you want, e.g. lead a project]",
+          "- [Improvement you want to deliver, e.g. automate a manual process]", ""]
+    path.write_text("\n".join(L), encoding="utf-8")
+
+
 def write_markdown(threads: list[Thread], path: Path, start: datetime, end: datetime) -> None:
     cats = _by_category(threads)
     total_sent = sum(t.my_count for t in threads)
@@ -425,6 +523,12 @@ def write_markdown(threads: list[Thread], path: Path, start: datetime, end: date
              "## Summary by category", "", "| Category | Threads | Emails I sent |", "|---|---:|---:|"]
     for cat, ts in cats.items():
         lines.append(f"| {cat} | {len(ts)} | {sum(t.my_count for t in ts)} |")
+
+    ins = compute_insights(threads)
+    lines += ["", "## Insights", ""] + [f"- {x}" for x in insight_sentences(ins)]
+    lines += ["", "## Top 10 pieces of work", ""]
+    lines += [f"{i}. **{t.title}** ({t.category}, {_period(t)}): {t.my_count} emails sent, {len(t.emails)} total"
+              for i, t in enumerate(ins["top"], 1)]
 
     praise = [r for t in threads for r in t.recognition]
     if praise:
@@ -479,6 +583,15 @@ def write_html(threads: list[Thread], path: Path, start: datetime, end: datetime
                 f'<p class="meta">With: {esc(", ".join(t.people)) or "-"}</p><ul>{extra}</ul></details>')
         sections.append(f'<section><h2>{esc(cat)} <span class="count">{len(ts)}</span></h2>{"".join(rows)}</section>')
 
+    ins = compute_insights(threads)
+    md_bold = lambda x: re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", esc(x))
+    insights_html = ('<section><h2>Insights</h2><ul>'
+                     + "".join(f"<li>{md_bold(x)}</li>" for x in insight_sentences(ins))
+                     + '</ul><h2 style="margin-top:14px">Top 10 pieces of work</h2><ol>'
+                     + "".join(f'<li><b>{esc(t.title)}</b> <span class="meta">{esc(t.category)} · {esc(_period(t))} · '
+                               f'{t.my_count} sent / {len(t.emails)} total</span></li>' for t in ins["top"])
+                     + "</ol></section>")
+
     praise_html = ""
     if praise:
         praise_html = ('<section class="praise-box"><h2>Recognition &amp; thanks received</h2><ul>'
@@ -507,7 +620,7 @@ details{{border-top:1px solid var(--line);padding:6px 0}} summary{{cursor:pointe
 <div class="stat"><b>{sum(t.my_count for t in threads)}</b>emails I sent</div>
 <div class="stat"><b>{len(cats)}</b>categories</div><div class="stat"><b>{len(praise)}</b>thank-yous</div></div>
 <div class="meta">Threads started per month</div><div class="chart">{bars}</div>
-{praise_html}{"".join(sections)}
+{insights_html}{praise_html}{"".join(sections)}
 </main></body></html>"""
     path.write_text(page, encoding="utf-8")
 
@@ -612,13 +725,14 @@ def main(argv: list[str] | None = None) -> None:
     write_csv(threads, args.out / "worklog.csv")
     write_markdown(threads, args.out / "worklog.md", start, end)
     write_html(threads, args.out / "worklog.html", start, end)
+    write_review_draft(threads, args.out / "review_draft.md", start, end)
     print(f"\n{len(threads)} work threads written to {args.out}:")
     for cat, ts in _by_category(threads).items():
         print(f"  {cat:<28} {len(ts):>4} threads")
     if args.ai:
         ai_summary(threads, args.out / "ai_summary.md", args.model, args.role)
         print(f"  AI summary: {args.out / 'ai_summary.md'}")
-    print(f"\nOpen {args.out / 'worklog.html'} to review.")
+    print(f"\nOpen {args.out / 'worklog.html'} to review, and {args.out / 'review_draft.md'} for your self-review draft.")
 
 
 if __name__ == "__main__":

@@ -40,7 +40,7 @@ def test_grouping_and_categories():
 def test_end_to_end(tmp_path):
     worklog.main(["--from-json", str(HERE / "sample_emails.json"), "--start", "2026-01-01",
                   "--end", "2026-12-31", "--out", str(tmp_path)])
-    for name in ("worklog.html", "worklog.md", "worklog.csv"):
+    for name in ("worklog.html", "worklog.md", "worklog.csv", "review_draft.md"):
         assert (tmp_path / name).stat().st_size > 0
     assert "Recognition" in (tmp_path / "worklog.md").read_text(encoding="utf-8")
 
