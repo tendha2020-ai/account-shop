@@ -1098,6 +1098,8 @@
   const vs = {
     room: null,
     unavailable: false,
+    codeMode: false,
+    code: null,
     inLobby: false,
     matchId: null,
     handled: new Set(),
@@ -1157,7 +1159,20 @@
     }
     const others = peers.filter((p) => !p.sameTab && p.presence.mode === 'lobby');
     const startBtn = $('vsStartBtn');
-    if (vs.unavailable) {
+    const needRoom = vs.codeMode && !vs.room;
+    $('vsCode').classList.toggle('hidden', !needRoom);
+    $('vsRoom').classList.toggle('hidden', !(vs.codeMode && vs.room));
+    list.classList.toggle('hidden', needRoom);
+    startBtn.classList.toggle('hidden', needRoom);
+    if (vs.codeMode) {
+      $('roomCode').textContent = vs.code || '';
+      $('vsHelp').textContent = vs.room
+        ? 'Send your friend this code or the invite link. When they join, either of you can start the match.'
+        : 'Create a room and send your friend the code, or type the code they sent you. No account needed.';
+    }
+    if (needRoom) {
+      $('vsStatus').textContent = 'Play online with a room code';
+    } else if (vs.unavailable) {
       $('vsStatus').textContent = 'Online play is not available in this view.';
       $('vsHelp').textContent = 'Open this page on claude.ai while signed in. Your friend needs access too: share it with them from the Share menu.';
       startBtn.disabled = true;
@@ -1289,6 +1304,232 @@
     setPresence({ nick: vs.nick });
   });
 
+  // ---------- Room codes (outside claude.ai) ----------
+  // Players who share a code meet on public MQTT relays. We connect to two
+  // relays at once and merge what arrives, so one relay being down (or two
+  // players reaching different ones) doesn't split the room. Each player
+  // publishes their presence; others drop anyone silent for a few seconds.
+  const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  const BROKERS = window.__NP_BROKERS || ['wss://broker.hivemq.com:8884/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
+  const HEARTBEAT_MS = 2000;
+  const PEER_TIMEOUT_MS = 7000;
+
+  function createCodeRoom(code) {
+    const me = Math.random().toString(36).slice(2, 12);
+    const topicBase = `neonpulse/v1/${code}/p/`;
+    const others = new Map();
+    const peerHandlers = [];
+    const connHandlers = [];
+    let mine = {};
+    let mineAt = Date.now();
+    let snapshot = Object.freeze([]);
+    let publishTimer = null;
+    let wasConnected = false;
+    let closed = false;
+
+    const clients = BROKERS.map((url) =>
+      window.mqtt.connect(url, {
+        clean: true,
+        connectTimeout: 8000,
+        reconnectPeriod: 3000,
+        will: { topic: topicBase + me, payload: JSON.stringify({ id: me, bye: true }), qos: 0, retain: false },
+      }),
+    );
+
+    const connected = () => clients.some((c) => c.connected);
+    const rebuild = () => {
+      const list = [{ peer: me, presence: mine, updatedAt: mineAt }, ...others.values()].map((p) =>
+        Object.freeze({ peer: p.peer, by: null, isMe: p.peer === me, sameTab: p.peer === me, kind: 'viewer', guest: false, presence: Object.freeze({ ...p.presence }), updatedAt: p.updatedAt }),
+      );
+      snapshot = Object.freeze(list);
+      const change = { peers: snapshot, joined: [], left: [], updated: [] };
+      for (const h of peerHandlers) h(change);
+    };
+    const connChanged = () => {
+      const now = connected();
+      if (now === wasConnected) return;
+      wasConnected = now;
+      if (now) publish();
+      for (const h of connHandlers) h(now);
+    };
+    const publish = () => {
+      publishTimer = null;
+      if (closed) return;
+      const payload = JSON.stringify({ id: me, p: mine });
+      for (const c of clients) if (c.connected) c.publish(topicBase + me, payload, { qos: 0 });
+    };
+    const schedulePublish = () => {
+      if (!publishTimer) publishTimer = setTimeout(publish, 60);
+    };
+
+    for (const c of clients) {
+      c.on('connect', () => {
+        c.subscribe(topicBase + '+', { qos: 0 });
+        connChanged();
+      });
+      c.on('close', connChanged);
+      c.on('offline', connChanged);
+      c.on('error', () => {});
+      c.on('message', (topic, buf) => {
+        if (buf.length > 4096) return;
+        let msg;
+        try {
+          msg = JSON.parse(buf.toString());
+        } catch (e) {
+          return;
+        }
+        if (!msg || typeof msg.id !== 'string' || msg.id === me || topic !== topicBase + msg.id) return;
+        if (msg.bye) {
+          if (others.delete(msg.id)) rebuild();
+          return;
+        }
+        if (!msg.p || typeof msg.p !== 'object' || Array.isArray(msg.p)) return;
+        const prev = others.get(msg.id);
+        const text = JSON.stringify(msg.p);
+        if (prev && prev.text === text) {
+          prev.seen = Date.now();
+          return;
+        }
+        const isNew = !prev;
+        others.set(msg.id, { peer: msg.id, presence: msg.p, text, updatedAt: Date.now(), seen: Date.now() });
+        if (isNew) publish(); // let a newcomer see us right away
+        rebuild();
+      });
+    }
+
+    const beat = setInterval(() => {
+      publish();
+      let dropped = false;
+      for (const [id, p] of others) {
+        if (Date.now() - p.seen > PEER_TIMEOUT_MS) {
+          others.delete(id);
+          dropped = true;
+        }
+      }
+      if (dropped) rebuild();
+    }, HEARTBEAT_MS);
+
+    rebuild();
+    return {
+      presence(patch) {
+        for (const k of Object.keys(patch)) {
+          if (patch[k] === null) delete mine[k];
+          else mine[k] = patch[k];
+        }
+        mine = { ...mine };
+        mineAt = Date.now();
+        rebuild();
+        schedulePublish();
+        return Promise.resolve();
+      },
+      peers: () => snapshot,
+      onPeers(h) {
+        peerHandlers.push(h);
+        return () => peerHandlers.splice(peerHandlers.indexOf(h), 1);
+      },
+      connected,
+      onConnection(h) {
+        connHandlers.push(h);
+        setTimeout(() => h(connected()), 0);
+        return () => connHandlers.splice(connHandlers.indexOf(h), 1);
+      },
+      leave() {
+        closed = true;
+        clearInterval(beat);
+        const bye = JSON.stringify({ id: me, bye: true });
+        for (const c of clients) {
+          if (c.connected) c.publish(topicBase + me, bye, { qos: 0 });
+          c.end(false);
+        }
+      },
+    };
+  }
+
+  function newCode() {
+    let code = '';
+    const bytes = crypto.getRandomValues(new Uint8Array(5));
+    for (const b of bytes) code += CODE_CHARS[b % CODE_CHARS.length];
+    return code;
+  }
+
+  const normalizeCode = (v) => String(v || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
+
+  function enterCodeRoom(code) {
+    initAudio();
+    actx.resume();
+    if (vs.room) vs.room.leave();
+    vs.code = code;
+    vs.room = createCodeRoom(code);
+    vs.room.onPeers(onPeers);
+    vs.room.onConnection(() => renderLobby());
+    setPresence({ nick: vs.nick, mode: 'lobby', match: null, start: null, score: 0, combo: 0, progress: 0, fc: null });
+    try {
+      history.replaceState(null, '', '#' + code);
+    } catch (e) {
+      // Some embeds refuse history changes; the code is still on screen.
+    }
+    renderLobby();
+  }
+
+  function leaveCodeRoom() {
+    leaveVersus();
+    if (vs.room) vs.room.leave();
+    vs.room = null;
+    vs.code = null;
+    try {
+      history.replaceState(null, '', location.pathname + location.search);
+    } catch (e) {
+      // Ignore; nothing depends on the address bar.
+    }
+    renderLobby();
+  }
+
+  function setupCodeMode() {
+    vs.codeMode = true;
+    $('versusBtn').classList.remove('hidden');
+    const codeInput = $('codeInput');
+    codeInput.addEventListener('input', () => {
+      codeInput.value = normalizeCode(codeInput.value);
+    });
+    const join = () => {
+      const code = normalizeCode(codeInput.value);
+      if (code.length !== 5) {
+        $('vsStatus').textContent = 'Room codes have 5 letters or numbers.';
+        codeInput.focus();
+        return;
+      }
+      enterCodeRoom(code);
+    };
+    $('joinRoomBtn').addEventListener('click', join);
+    codeInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') join();
+    });
+    $('createRoomBtn').addEventListener('click', () => enterCodeRoom(newCode()));
+    $('leaveRoomBtn').addEventListener('click', leaveCodeRoom);
+    $('copyInviteBtn').addEventListener('click', () => {
+      const link = location.origin + location.pathname + '#' + vs.code;
+      const btn = $('copyInviteBtn');
+      const done = (ok) => {
+        btn.textContent = ok ? 'LINK COPIED' : link;
+        setTimeout(() => (btn.textContent = 'COPY INVITE LINK'), 2500);
+      };
+      if (navigator.clipboard) navigator.clipboard.writeText(link).then(() => done(true), () => done(false));
+      else done(false);
+    });
+
+    // Opening an invite link (game.html#CODE) goes straight to the join screen.
+    const fromLink = normalizeCode(location.hash.slice(1));
+    if (fromLink.length === 5) {
+      codeInput.value = fromLink;
+      mode = 'menu';
+      vs.inLobby = true;
+      refreshMenu();
+      showOnly(versusEl);
+      renderLobby();
+      $('vsStatus').textContent = `Tap JOIN to enter room ${fromLink}`;
+    }
+  }
+
   function versusUnavailable() {
     vs.room = null;
     vs.unavailable = true;
@@ -1307,6 +1548,8 @@
         setPresence({ nick: vs.nick, mode: vs.inLobby ? 'lobby' : 'menu' });
       })
       .catch(versusUnavailable);
+  } else if (window.mqtt && typeof window.mqtt.connect === 'function') {
+    setupCodeMode();
   }
 
   window.addEventListener('resize', resize);
