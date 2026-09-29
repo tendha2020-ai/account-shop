@@ -517,3 +517,36 @@ kbd {
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+.online-songs {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.join-row input[type="search"] {
+  width: 190px;
+  letter-spacing: normal;
+  text-transform: none;
+  text-align: left;
+  font-weight: 500;
+  font-size: 0.95rem;
+}
+
+#searchResults {
+  max-height: 38vh;
+}
+
+#songList {
+  max-height: 26vh;
+}
+
+.song-btn .song-art {
+  grid-row: 1 / 3;
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  object-fit: cover;
+}

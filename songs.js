@@ -431,5 +431,81 @@ window.NeonSongs = (() => {
     }));
   }
 
-  return { analyze, fingerprint, list, getBytes, save, remove, ANALYSIS_VERSION };
+  // ---------- Online previews (Apple's public search API) ----------
+  // Official 30-second previews; both the search and the audio allow
+  // cross-origin requests, so the game can analyse them like a local file.
+  const TOP_HITS = [
+    ['Attention', 'Charlie Puth'],
+    ['Shape of You', 'Ed Sheeran'],
+    ['Blinding Lights', 'The Weeknd'],
+    ['Levitating', 'Dua Lipa'],
+    ['Uptown Funk', 'Mark Ronson'],
+    ['Believer', 'Imagine Dragons'],
+    ['Stay', 'The Kid LAROI'],
+    ['bad guy', 'Billie Eilish'],
+    ['Señorita', 'Shawn Mendes'],
+    ['Faded', 'Alan Walker'],
+    ['Counting Stars', 'OneRepublic'],
+    ['Havana', 'Camila Cabello'],
+    ['Cheap Thrills', 'Sia'],
+    ['As It Was', 'Harry Styles'],
+    ['Flowers', 'Miley Cyrus'],
+    ['Dance Monkey', 'Tones and I'],
+    ['Closer', 'The Chainsmokers'],
+    ['Starboy', 'The Weeknd'],
+    ['Rockabye', 'Clean Bandit'],
+    ['Perfect', 'Ed Sheeran'],
+  ];
+
+  const toResult = (x) => ({
+    itunesId: x.trackId,
+    title: x.trackName,
+    artist: x.artistName,
+    art: x.artworkUrl100 || '',
+    previewUrl: x.previewUrl,
+  });
+
+  async function itunes(path) {
+    const res = await fetch('https://itunes.apple.com/' + path);
+    if (!res.ok) throw new Error('search_failed');
+    const data = await res.json();
+    return (data.results || []).filter((x) => x.kind === 'song' && x.previewUrl).map(toResult);
+  }
+
+  const search = (term, limit = 15) =>
+    itunes(`search?media=music&entity=song&limit=${limit}&term=${encodeURIComponent(term)}`);
+
+  const norm = (v) => v.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+
+  // The original recording: exact title (ignoring "(feat. …)"), right artist,
+  // and not a remix, live, acoustic or sped-up version.
+  function bestMatch(results, title, artist) {
+    const t = norm(title);
+    const a = norm(artist);
+    const plain = (r) => norm(r.title.replace(/\s*[([].*$/, ''));
+    const alt = /remix|live|acoustic|sped|slowed|instrumental|karaoke|version|mix\b/i;
+    return (
+      results.find((r) => plain(r) === t && norm(r.artist).includes(a) && !alt.test(r.title)) ||
+      results.find((r) => plain(r) === t && norm(r.artist).includes(a)) ||
+      results.find((r) => norm(r.artist).includes(a)) ||
+      null
+    );
+  }
+
+  // One request per hit keeps each entry the best match for its own title.
+  const topHits = () =>
+    Promise.all(TOP_HITS.map(([title, artist]) => search(`${title} ${artist}`, 10).then((r) => bestMatch(r, title, artist), () => null))).then((r) =>
+      r.filter(Boolean),
+    );
+
+  const lookup = (id) => itunes(`lookup?id=${encodeURIComponent(id)}`).then((r) => r[0] || null);
+
+  async function fetchPreview(url) {
+    if (!/^https:\/\/[a-z0-9.-]+\.apple\.com\//i.test(url)) throw new Error('bad_url');
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('download_failed');
+    return res.arrayBuffer();
+  }
+
+  return { analyze, fingerprint, list, getBytes, save, remove, search, topHits, lookup, fetchPreview, ANALYSIS_VERSION };
 })();

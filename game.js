@@ -1136,7 +1136,9 @@
 
   const fmtTime = (sec) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
   const trackMeta = (t) => `${Math.round(t.bpm)} BPM \u00b7 ${fmtTime(t.length)}`;
-  const songInfo = () => ({ id: track.id, title: track.title });
+  const songInfo = () => (track.itunesId ? { id: track.id, title: track.title, itunesId: track.itunesId } : { id: track.id, title: track.title });
+  // Apple previews need cross-site requests, which claude.ai pages block.
+  const ONLINE_SONGS = !!(window.NeonSongs && window.NeonSongs.search) && !(window.claude && typeof window.claude.use === 'function');
   const songStatus = (text) => ($('songStatus').textContent = text);
 
   function refreshSongLabels() {
@@ -1145,7 +1147,7 @@
   }
 
   function metaToTrack(m) {
-    return { id: m.id, title: m.title, kind: 'file', bpm: m.analysis.bpm, beat: m.analysis.beat, firstBeat: m.analysis.firstBeat, length: m.analysis.duration, charts: m.analysis.charts };
+    return { id: m.id, title: m.title, itunesId: m.itunesId || null, kind: 'file', bpm: m.analysis.bpm, beat: m.analysis.beat, firstBeat: m.analysis.firstBeat, length: m.analysis.duration, charts: m.analysis.charts };
   }
 
   async function selectTrack(id) {
@@ -1235,6 +1237,8 @@
     songStatus('');
     renderSongList();
     showOnly(songsEl);
+    if (ONLINE_SONGS && !searchResults) loadSearch('');
+    else renderSearchResults();
   }
 
   const cleanTitle = (name) => name.replace(/\.[a-z0-9]{2,5}$/i, '').replace(/[_]+/g, ' ').trim().slice(0, 60) || 'My song';
@@ -1248,20 +1252,7 @@
     addLabel.classList.add('busy');
     try {
       const bytes = await file.arrayBuffer();
-      const id = await window.NeonSongs.fingerprint(bytes);
-      let meta = library.find((m) => m.id === id);
-      if (!meta) {
-        const analysis = await window.NeonSongs.analyze(bytes, (stage) => songStatus(`${stage}\u2026`));
-        meta = { id, title: cleanTitle(file.name), addedAt: Date.now(), analysis };
-        const saved = await window.NeonSongs.save(meta, bytes);
-        if (!saved) sessionBytes.set(id, bytes);
-        library = [meta, ...library.filter((m) => m.id !== id)];
-      }
-      const ok = await selectTrack(id);
-      if (ok) {
-        const n = meta.analysis.charts.normal.length;
-        songStatus(`Added "${meta.title}": ${Math.round(meta.analysis.bpm)} BPM, ${n} notes on Normal.`);
-      }
+      await addSongBytes(bytes, { title: cleanTitle(file.name) }, true);
     } catch (e) {
       songStatus(
         e && e.message === 'too_short'
@@ -1271,6 +1262,122 @@
     } finally {
       addLabel.classList.remove('busy');
     }
+  }
+
+  // Analyse and save a song (unless already saved); optionally switch to it.
+  async function addSongBytes(bytes, info, select) {
+    const id = await window.NeonSongs.fingerprint(bytes);
+    let meta = library.find((m) => m.id === id);
+    if (!meta) {
+      const analysis = await window.NeonSongs.analyze(bytes, (stage) => select && songStatus(`${stage}\u2026`));
+      meta = { id, title: info.title, addedAt: Date.now(), analysis };
+      if (info.itunesId) meta.itunesId = info.itunesId;
+      const saved = await window.NeonSongs.save(meta, bytes);
+      if (!saved) sessionBytes.set(id, bytes);
+      library = [meta, ...library.filter((m) => m.id !== id)];
+      renderSongList();
+      renderSearchResults();
+    }
+    if (select && (await selectTrack(id))) {
+      const n = meta.analysis.charts.normal.length;
+      songStatus(`Added "${meta.title}": ${Math.round(meta.analysis.bpm)} BPM, ${n} notes on Normal.`);
+    }
+    return meta;
+  }
+
+  // ---------- Top hits and search (Apple's 30-second previews) ----------
+  let searchResults = null;
+  const fetching = new Map(); // itunesId -> Promise<meta>
+  const prefetching = new Set(); // itunesIds being fetched for a friend's lobby song
+
+  const previewTitle = (r) => `${r.title} \u2014 ${r.artist}`.slice(0, 60);
+
+  function addPreview(r, select) {
+    const have = library.find((m) => m.itunesId === r.itunesId);
+    if (have) return select ? selectTrack(have.id).then(() => have) : Promise.resolve(have);
+    if (!fetching.has(r.itunesId)) {
+      const job = window.NeonSongs.fetchPreview(r.previewUrl)
+        .then((bytes) => addSongBytes(bytes, { title: previewTitle(r), itunesId: r.itunesId }, false))
+        .finally(() => fetching.delete(r.itunesId));
+      fetching.set(r.itunesId, job);
+    }
+    return fetching.get(r.itunesId).then(async (meta) => {
+      if (select) await selectTrack(meta.id);
+      return meta;
+    });
+  }
+
+  function renderSearchResults() {
+    if (!ONLINE_SONGS || !searchResults) return;
+    const ul = $('searchResults');
+    ul.textContent = '';
+    if (!searchResults.length) {
+      const li = document.createElement('li');
+      li.className = 'help';
+      li.textContent = 'No songs with a preview matched. Try the song title and artist.';
+      ul.append(li);
+      return;
+    }
+    for (const r of searchResults) {
+      const saved = library.find((m) => m.itunesId === r.itunesId);
+      const li = document.createElement('li');
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'song-btn' + (saved && saved.id === track.id ? ' active' : '');
+      if (r.art) {
+        const img = document.createElement('img');
+        img.className = 'song-art';
+        img.alt = '';
+        img.src = r.art;
+        btn.append(img);
+      } else {
+        const label = document.createElement('span');
+        label.className = 'song-label';
+        label.textContent = '\u266a';
+        btn.append(label);
+      }
+      const title = document.createElement('span');
+      title.className = 'song-title';
+      title.textContent = r.title;
+      const meta = document.createElement('span');
+      meta.className = 'song-meta';
+      meta.textContent = saved ? `${r.artist} \u00b7 saved` : r.artist;
+      btn.append(title, meta);
+      btn.addEventListener('click', async () => {
+        initAudio();
+        actx.resume();
+        songStatus(`Getting "${r.title}"\u2026`);
+        try {
+          const m = await addPreview(r, true);
+          songStatus(`Ready: "${r.title}", ${Math.round(m.analysis.bpm)} BPM, ${m.analysis.charts.normal.length} notes on Normal.`);
+        } catch (e) {
+          songStatus(`Could not get "${r.title}". Check your connection and try again.`);
+        }
+      });
+      li.append(btn);
+      ul.append(li);
+    }
+  }
+
+  async function loadSearch(term) {
+    $('searchLabel').textContent = term ? `RESULTS FOR "${term.slice(0, 40)}"` : 'TOP HITS \u00b7 30-second previews';
+    songStatus(term ? 'Searching\u2026' : 'Loading top hits\u2026');
+    try {
+      searchResults = term ? await window.NeonSongs.search(term) : await window.NeonSongs.topHits();
+      songStatus('');
+    } catch (e) {
+      searchResults = [];
+      songStatus('Song search is not reachable right now. You can still add a song file.');
+    }
+    renderSearchResults();
+  }
+
+  if (ONLINE_SONGS) {
+    $('onlineSongs').classList.remove('hidden');
+    $('songSearchForm').addEventListener('submit', (e) => {
+      e.preventDefault();
+      loadSearch($('songSearch').value.trim());
+    });
   }
 
   for (const b of document.querySelectorAll('[data-open-songs]')) b.addEventListener('click', openSongs);
@@ -1449,11 +1556,36 @@
           selectTrack(songId).then((ok) => {
             if (ok && vs.inLobby && !vs.timer) scheduleMatch(st.id, st.diff, leftAt(), false);
           });
+        } else if (ONLINE_SONGS && st.song && Number.isSafeInteger(st.song.itunesId)) {
+          // A top hit or searched preview: fetch the same preview and join.
+          vs.notice = 'Getting the song\u2026';
+          window.NeonSongs.lookup(st.song.itunesId)
+            .then((r) => (r ? addPreview(r, true) : Promise.reject(new Error('missing'))))
+            .then((m) => {
+              if (m.id === songId && vs.inLobby && !vs.timer) scheduleMatch(st.id, st.diff, leftAt(), false);
+            })
+            .catch(() => {
+              vs.notice = 'Could not get your friend\u2019s song. Check your connection.';
+              renderLobby();
+            });
         } else {
           const title = st.song && typeof st.song.title === 'string' ? st.song.title.slice(0, 60) : 'a song';
           vs.notice = `${cleanNick(p.presence.nick)} started "${title}". Add the same song file to play it together.`;
         }
         break;
+      }
+    }
+    if (ONLINE_SONGS && vs.inLobby) {
+      for (const p of peerList()) {
+        const sg = p.presence.song;
+        if (p.sameTab || !sg || !Number.isSafeInteger(sg.itunesId) || prefetching.has(sg.itunesId)) continue;
+        if (library.some((m) => m.itunesId === sg.itunesId)) continue;
+        // Get a friend's song ahead of the match so it can start on time.
+        prefetching.add(sg.itunesId);
+        window.NeonSongs.lookup(sg.itunesId)
+          .then((r) => (r ? addPreview(r, false) : null))
+          .catch(() => {})
+          .finally(() => prefetching.delete(sg.itunesId));
       }
     }
     if (mode === 'menu' && !versusEl.classList.contains('hidden')) renderLobby();
