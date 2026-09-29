@@ -152,19 +152,28 @@
 
   const song = buildSong();
 
-  function buildChart(diffKey) {
+  // The song being played: the built-in synth track, or one the player added
+  // (see songs.js), whose notes come from analysing the audio file.
+  const BUILTIN = { id: 'builtin', title: 'Neon Pulse', kind: 'synth', bpm: BPM, beat: BEAT, firstBeat: 0, length: song.length };
+  let track = BUILTIN;
+
+  function buildChart(diffKey, trk = track) {
     const d = DIFFS[diffKey];
-    const notes = song.melody
-      .filter((n) => n.slot % d.step === 0 && (!n.double || d.doubles))
-      .map((n) => ({
-        t: n.t,
-        end: n.hold ? n.t + n.dur : null,
-        lane: n.lane,
-        judged: false,
-        holding: false,
-        done: false,
-        pair: false,
-      }));
+    const source =
+      trk.kind === 'file'
+        ? trk.charts[diffKey]
+        : song.melody
+            .filter((n) => n.slot % d.step === 0 && (!n.double || d.doubles))
+            .map((n) => ({ t: n.t, end: n.hold ? n.t + n.dur : null, lane: n.lane }));
+    const notes = source.map((n) => ({
+      t: n.t,
+      end: n.end,
+      lane: n.lane,
+      judged: false,
+      holding: false,
+      done: false,
+      pair: false,
+    }));
     notes.sort((a, b) => a.t - b.t || a.lane - b.lane);
     for (let i = 1; i < notes.length; i++) {
       if (Math.abs(notes[i].t - notes[i - 1].t) < 1e-6) {
@@ -194,7 +203,17 @@
   }
 
   // Swapping the bus silences anything already scheduled (used on restart/quit).
+  let musicSource = null;
+
   function resetBus() {
+    if (musicSource) {
+      try {
+        musicSource.stop();
+      } catch (e) {
+        // Already stopped.
+      }
+      musicSource = null;
+    }
     if (bus) bus.disconnect();
     bus = actx.createGain();
     bus.gain.value = 0.55;
@@ -312,7 +331,8 @@
       diff: diffKey,
       chart,
       totalUnits: chart.length + holds,
-      endTime: Math.max(lastEnd, song.length) + 1.5,
+      endTime: Math.max(lastEnd, track.length) + 1.5,
+      track,
       firstLive: 0,
       schedIdx: 0,
       t0: 0,
@@ -340,6 +360,12 @@
     resetBus();
     game = newGame(diffKey, versus);
     game.t0 = actx.currentTime + LEAD_IN;
+    if (track.kind === 'file') {
+      musicSource = actx.createBufferSource();
+      musicSource.buffer = track.buffer;
+      musicSource.connect(bus);
+      musicSource.start(game.t0);
+    }
     effects.length = 0;
     particles.length = 0;
     laneHeld.fill(0);
@@ -445,7 +471,7 @@
 
     // Schedule audio slightly ahead of the playhead.
     const horizon = actx.currentTime + 0.25;
-    while (game.schedIdx < song.audio.length) {
+    while (game.track.kind === 'synth' && game.schedIdx < song.audio.length) {
       const ev = song.audio[game.schedIdx];
       const at = game.t0 + ev.t;
       if (at > horizon) break;
@@ -476,11 +502,14 @@
 
     if (game.versus && performance.now() - vs.lastSent > 250) {
       vs.lastSent = performance.now();
-      setPresence({ mode: 'playing', score: game.score, combo: game.combo, progress: Math.min(1, Math.max(0, now / song.length)) });
+      setPresence({ mode: 'playing', score: game.score, combo: game.combo, progress: Math.min(1, Math.max(0, now / game.track.length)) });
     }
 
     if (now > game.endTime) finishGame();
   }
+
+  // The built-in song keeps its original keys so earlier best scores survive.
+  const bestKey = (diff, trk) => (trk.id === 'builtin' ? diff : `${trk.id}:${diff}`);
 
   function rankFor(score) {
     if (score >= 1e6) return 'SSS';
@@ -501,15 +530,16 @@
     const allPerfect = c.PERFECT === game.totalUnits;
     const fullCombo = c.MISS === 0;
     const bests = store.get('best', {});
-    const prev = bests[game.diff];
+    const key = bestKey(game.diff, game.track);
+    const prev = bests[key];
     const isNewBest = !prev || game.score > prev.score;
     if (isNewBest) {
-      bests[game.diff] = { score: game.score, rank, fc: fullCombo, ap: allPerfect };
+      bests[key] = { score: game.score, rank, fc: fullCombo, ap: allPerfect };
       store.set('best', bests);
     }
 
     const d = DIFFS[game.diff];
-    $('resDiff').textContent = `${d.name}  Lv.${d.lv}`;
+    $('resDiff').textContent = `${game.track.title} \u00b7 ${d.name}`;
     $('resRank').textContent = rank;
     $('resBadge').textContent = allPerfect ? 'ALL PERFECT' : fullCombo ? 'FULL COMBO' : '';
     $('resScore').textContent = String(game.score).padStart(7, '0');
@@ -600,7 +630,9 @@
   }
 
   function drawBackground(now) {
-    const pulse = Math.exp(-((((now % BEAT) + BEAT) % BEAT) / BEAT) * 5);
+    const trk = game ? game.track : track;
+    const phase = now - trk.firstBeat;
+    const pulse = Math.exp(-((((phase % trk.beat) + trk.beat) % trk.beat) / trk.beat) * 5);
     const bg = g.createLinearGradient(0, 0, 0, H);
     bg.addColorStop(0, '#0a0520');
     bg.addColorStop(0.55, '#1a0b45');
@@ -666,9 +698,11 @@
     // Bar lines scrolling toward the player.
     if (mode === 'play' || mode === 'results') {
       const A = approach();
-      const firstBar = Math.max(0, Math.floor(now / BAR));
-      for (let b = firstBar; b <= firstBar + Math.ceil(A / BAR) + 1; b++) {
-        const p = 1 - (b * BAR - now) / A;
+      const trk = game.track;
+      const barLen = trk.beat * 4;
+      const firstBar = Math.max(0, Math.floor((now - trk.firstBeat) / barLen));
+      for (let b = firstBar; b <= firstBar + Math.ceil(A / barLen) + 1; b++) {
+        const p = 1 - (trk.firstBeat + b * barLen - now) / A;
         if (p < 0 || p > 1) continue;
         const n = depthToN(p);
         g.strokeStyle = 'rgba(170, 200, 255, 0.18)';
@@ -866,7 +900,7 @@
 
     // Song progress.
     const barW = W * 0.42;
-    const prog = Math.min(1, Math.max(0, now / song.length));
+    const prog = Math.min(1, Math.max(0, now / game.track.length));
     g.fillStyle = 'rgba(255, 255, 255, 0.15)';
     g.fillRect(pad, pad + W * 0.12, barW, 4);
     g.fillStyle = '#7ff6ff';
@@ -1030,8 +1064,10 @@
   const pauseBtn = $('pauseBtn');
   const versusEl = $('versus');
 
+  const songsEl = $('songs');
+
   function showOnly(el) {
-    for (const o of [menuEl, versusEl, pauseEl, resultsEl]) o.classList.toggle('hidden', o !== el);
+    for (const o of [menuEl, versusEl, songsEl, pauseEl, resultsEl]) o.classList.toggle('hidden', o !== el);
   }
 
   function refreshMenu() {
@@ -1041,7 +1077,7 @@
       b.setAttribute('aria-checked', active ? 'true' : 'false');
       b.setAttribute('role', 'radio');
     }
-    const best = store.get('best', {})[settings.diff];
+    const best = store.get('best', {})[bestKey(settings.diff, track)];
     $('best').textContent = best
       ? `Best: ${String(best.score).padStart(7, '0')}  ${best.rank}${best.ap ? '  · ALL PERFECT' : best.fc ? '  · FULL COMBO' : ''}`
       : 'No score yet';
@@ -1091,6 +1127,179 @@
   $('menuBtn').addEventListener('click', quitToMenu);
   pauseBtn.addEventListener('click', pauseGame);
 
+  // ---------- Songs ----------
+  let library = []; // saved songs' metadata, newest first
+  const sessionBytes = new Map(); // songs added this visit that storage refused
+  let songsReturn = menuEl;
+  let decodedId = null;
+  let decodedBuffer = null;
+
+  const fmtTime = (sec) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
+  const trackMeta = (t) => `${Math.round(t.bpm)} BPM \u00b7 ${fmtTime(t.length)}`;
+  const songInfo = () => ({ id: track.id, title: track.title });
+  const songStatus = (text) => ($('songStatus').textContent = text);
+
+  function refreshSongLabels() {
+    for (const el of document.querySelectorAll('[data-song-title]')) el.textContent = track.title;
+    for (const el of document.querySelectorAll('[data-song-meta]')) el.textContent = trackMeta(track);
+  }
+
+  function metaToTrack(m) {
+    return { id: m.id, title: m.title, kind: 'file', bpm: m.analysis.bpm, beat: m.analysis.beat, firstBeat: m.analysis.firstBeat, length: m.analysis.duration, charts: m.analysis.charts };
+  }
+
+  async function selectTrack(id) {
+    if (id === 'builtin') {
+      track = BUILTIN;
+    } else {
+      const meta = library.find((m) => m.id === id);
+      if (!meta) return false;
+      if (decodedId !== id) {
+        songStatus('Loading song\u2026');
+        try {
+          initAudio();
+          const bytes = sessionBytes.get(id) || (await window.NeonSongs.getBytes(id));
+          if (!bytes) throw new Error('missing');
+          decodedBuffer = await actx.decodeAudioData(bytes.slice(0));
+          decodedId = id;
+        } catch (e) {
+          songStatus('This song could not be loaded. Delete it and add the file again.');
+          return false;
+        }
+        songStatus('');
+      }
+      track = { ...metaToTrack(meta), buffer: decodedBuffer };
+    }
+    store.set('track', track.id);
+    refreshSongLabels();
+    refreshMenu();
+    renderSongList();
+    if (vs.inLobby) setPresence({ song: songInfo() });
+    return true;
+  }
+
+  function renderSongList() {
+    const ul = $('songList');
+    ul.textContent = '';
+    for (const t of [BUILTIN, ...library.map(metaToTrack)]) {
+      const li = document.createElement('li');
+      const pick = document.createElement('button');
+      pick.type = 'button';
+      pick.className = 'song-btn' + (t.id === track.id ? ' active' : '');
+      const label = document.createElement('span');
+      label.className = 'song-label';
+      label.textContent = t.id === track.id ? '\u25b6' : '';
+      const title = document.createElement('span');
+      title.className = 'song-title';
+      title.textContent = t.title;
+      const meta = document.createElement('span');
+      meta.className = 'song-meta';
+      meta.textContent = t.id === 'builtin' ? `${trackMeta(t)} \u00b7 built in` : trackMeta(t);
+      pick.append(label, title, meta);
+      pick.addEventListener('click', () => selectTrack(t.id));
+      li.append(pick);
+      if (t.id !== 'builtin') {
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'song-del';
+        del.textContent = 'DELETE';
+        del.setAttribute('aria-label', `Delete ${t.title}`);
+        del.addEventListener('click', async () => {
+          // Two taps: the first arms the button, the second deletes.
+          if (!del.dataset.armed) {
+            del.dataset.armed = '1';
+            del.textContent = 'SURE?';
+            setTimeout(() => {
+              if (del.isConnected) {
+                delete del.dataset.armed;
+                del.textContent = 'DELETE';
+              }
+            }, 3000);
+            return;
+          }
+          await window.NeonSongs.remove(t.id);
+          sessionBytes.delete(t.id);
+          library = library.filter((m) => m.id !== t.id);
+          if (track.id === t.id) await selectTrack('builtin');
+          renderSongList();
+          songStatus(`Deleted "${t.title}".`);
+        });
+        li.append(del);
+      }
+      ul.append(li);
+    }
+  }
+
+  function openSongs() {
+    songsReturn = versusEl.classList.contains('hidden') ? menuEl : versusEl;
+    songStatus('');
+    renderSongList();
+    showOnly(songsEl);
+  }
+
+  const cleanTitle = (name) => name.replace(/\.[a-z0-9]{2,5}$/i, '').replace(/[_]+/g, ' ').trim().slice(0, 60) || 'My song';
+
+  async function addSongFile(file) {
+    const addLabel = document.querySelector('.add-song');
+    if (file.size > 80 * 1024 * 1024) {
+      songStatus('That file is over 80 MB. Pick a smaller song file.');
+      return;
+    }
+    addLabel.classList.add('busy');
+    try {
+      const bytes = await file.arrayBuffer();
+      const id = await window.NeonSongs.fingerprint(bytes);
+      let meta = library.find((m) => m.id === id);
+      if (!meta) {
+        const analysis = await window.NeonSongs.analyze(bytes, (stage) => songStatus(`${stage}\u2026`));
+        meta = { id, title: cleanTitle(file.name), addedAt: Date.now(), analysis };
+        const saved = await window.NeonSongs.save(meta, bytes);
+        if (!saved) sessionBytes.set(id, bytes);
+        library = [meta, ...library.filter((m) => m.id !== id)];
+      }
+      const ok = await selectTrack(id);
+      if (ok) {
+        const n = meta.analysis.charts.normal.length;
+        songStatus(`Added "${meta.title}": ${Math.round(meta.analysis.bpm)} BPM, ${n} notes on Normal.`);
+      }
+    } catch (e) {
+      songStatus(
+        e && e.message === 'too_short'
+          ? 'That song is shorter than 15 seconds. Pick a longer one.'
+          : 'This file could not be read as music. Try an MP3, M4A or WAV file.',
+      );
+    } finally {
+      addLabel.classList.remove('busy');
+    }
+  }
+
+  for (const b of document.querySelectorAll('[data-open-songs]')) b.addEventListener('click', openSongs);
+  $('songsBackBtn').addEventListener('click', () => {
+    refreshMenu();
+    showOnly(songsReturn);
+    if (songsReturn === versusEl) renderLobby();
+  });
+  $('songFile').addEventListener('change', (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    initAudio();
+    actx.resume();
+    addSongFile(file);
+  });
+
+  if (window.NeonSongs) {
+    window.NeonSongs.list().then((list) => {
+      library = list;
+      renderSongList();
+      const saved = store.get('track', 'builtin');
+      if (saved !== 'builtin' && library.some((m) => m.id === saved)) selectTrack(saved);
+    });
+  } else {
+    for (const b of document.querySelectorAll('[data-open-songs]')) b.classList.add('hidden');
+  }
+  refreshSongLabels();
+
   // ---------- Versus (online, via the viewer's room) ----------
   // Only presence is used: every player publishes their own state, and a
   // match starts when someone in the lobby sets a fresh `start` on theirs.
@@ -1099,6 +1308,7 @@
     room: null,
     unavailable: false,
     codeMode: false,
+    notice: '',
     code: null,
     inLobby: false,
     matchId: null,
@@ -1182,7 +1392,7 @@
     } else if (vs.timer) {
       startBtn.disabled = true;
     } else {
-      $('vsStatus').textContent = others.length ? `${others.length} friend${others.length > 1 ? 's' : ''} ready` : 'Waiting for a friend\u2026';
+      $('vsStatus').textContent = vs.notice || (others.length ? `${others.length} friend${others.length > 1 ? 's' : ''} ready` : 'Waiting for a friend\u2026');
       startBtn.disabled = others.length === 0;
     }
   }
@@ -1228,9 +1438,21 @@
         const st = p.presence.start;
         if (p.sameTab || p.presence.mode !== 'countdown' || !st || typeof st.id !== 'string') continue;
         if (vs.handled.has(st.id) || !DIFFS[st.diff]) continue;
+        vs.handled.add(st.id);
         // updatedAt is on our own clock, so no cross-device clock sync is needed.
-        const left = Math.max(0, Math.min(COUNTDOWN_MS, COUNTDOWN_MS - (Date.now() - p.updatedAt)));
-        scheduleMatch(st.id, st.diff, left, false);
+        const startedAt = p.updatedAt;
+        const leftAt = () => Math.max(0, Math.min(COUNTDOWN_MS, COUNTDOWN_MS - (Date.now() - startedAt)));
+        const songId = st.song && typeof st.song.id === 'string' ? st.song.id : 'builtin';
+        if (songId === track.id) {
+          scheduleMatch(st.id, st.diff, leftAt(), false);
+        } else if (songId === 'builtin' || library.some((m) => m.id === songId)) {
+          selectTrack(songId).then((ok) => {
+            if (ok && vs.inLobby && !vs.timer) scheduleMatch(st.id, st.diff, leftAt(), false);
+          });
+        } else {
+          const title = st.song && typeof st.song.title === 'string' ? st.song.title.slice(0, 60) : 'a song';
+          vs.notice = `${cleanNick(p.presence.nick)} started "${title}". Add the same song file to play it together.`;
+        }
         break;
       }
     }
@@ -1240,12 +1462,13 @@
 
   function scheduleMatch(id, diff, delay, isStarter) {
     vs.handled.add(id);
+    vs.notice = '';
     vs.matchId = id;
     vs.seen.clear();
     settings.diff = diff;
     refreshMenu();
     const patch = { mode: 'countdown', match: id, diff, score: 0, combo: 0, progress: 0, fc: null };
-    patch.start = isStarter ? { id, diff } : null;
+    patch.start = isStarter ? { id, diff, song: { id: track.id, title: track.title } } : null;
     setPresence(patch);
     const startAt = performance.now() + delay;
     const tick = () => {
@@ -1272,8 +1495,9 @@
     mode = 'menu';
     pauseBtn.classList.add('hidden');
     vs.inLobby = true;
+    vs.notice = '';
     vs.matchId = null;
-    setPresence({ nick: vs.nick, mode: 'lobby', match: null, start: null, score: 0, combo: 0, progress: 0, fc: null });
+    setPresence({ nick: vs.nick, mode: 'lobby', match: null, start: null, score: 0, combo: 0, progress: 0, fc: null, song: songInfo() });
     refreshMenu();
     showOnly(versusEl);
     renderLobby();
@@ -1462,7 +1686,7 @@
     vs.room = createCodeRoom(code);
     vs.room.onPeers(onPeers);
     vs.room.onConnection(() => renderLobby());
-    setPresence({ nick: vs.nick, mode: 'lobby', match: null, start: null, score: 0, combo: 0, progress: 0, fc: null });
+    setPresence({ nick: vs.nick, mode: 'lobby', match: null, start: null, score: 0, combo: 0, progress: 0, fc: null, song: songInfo() });
     try {
       history.replaceState(null, '', '#' + code);
     } catch (e) {
@@ -1563,6 +1787,8 @@
     buildChart,
     song,
     now: () => (game && actx ? songNow() : 0),
+    selectTrack: (id) => selectTrack(id),
+    get track() { return track; },
     get game() { return game; },
     get mode() { return mode; },
   };
