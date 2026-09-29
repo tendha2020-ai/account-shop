@@ -6,6 +6,7 @@
   <title>Neon Pulse</title>
   <link rel="stylesheet" href="game.css">
   <script defer src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+  <script defer src="songs.js"></script>
   <script defer src="game.js"></script>
 </head>
 <body>
@@ -21,6 +22,11 @@
         <button type="button" data-diff="normal">NORMAL<small>Lv.12</small></button>
         <button type="button" data-diff="hard">HARD<small>Lv.22</small></button>
       </div>
+      <button type="button" class="song-btn" data-open-songs aria-label="Change song">
+        <span class="song-label">SONG</span>
+        <span class="song-title" data-song-title>Neon Pulse</span>
+        <span class="song-meta" data-song-meta></span>
+      </button>
       <p class="best" id="best"></p>
       <button type="button" id="startBtn" class="primary">PLAY</button>
       <button type="button" id="versusBtn" class="hidden">PLAY WITH A FRIEND</button>
@@ -59,10 +65,34 @@
         <button type="button" data-diff="normal">NORMAL<small>Lv.12</small></button>
         <button type="button" data-diff="hard">HARD<small>Lv.22</small></button>
       </div>
+      <button type="button" class="song-btn" data-open-songs aria-label="Change song">
+        <span class="song-label">SONG</span>
+        <span class="song-title" data-song-title>Neon Pulse</span>
+        <span class="song-meta" data-song-meta></span>
+      </button>
       <ul class="players" id="vsPlayers"></ul>
       <p class="help" id="vsHelp">Share this page with your friend. When they open it and tap Play with a friend, they appear in this list. Either of you can start the match.</p>
       <button type="button" id="vsStartBtn" class="primary" disabled>START MATCH</button>
       <button type="button" id="vsBackBtn">BACK</button>
+    </div>
+
+    <div id="songs" class="overlay hidden">
+      <h2>SONGS</h2>
+      <div id="onlineSongs" class="online-songs hidden">
+        <form class="join-row" id="songSearchForm" role="search">
+          <input id="songSearch" type="search" placeholder="Search any song" autocomplete="off" aria-label="Search songs">
+          <button type="submit">SEARCH</button>
+        </form>
+        <p class="or" id="searchLabel">TOP HITS &middot; 30-second previews</p>
+        <ul class="song-list" id="searchResults"></ul>
+        <p class="or">MY SONGS</p>
+      </div>
+      <ul class="song-list" id="songList"></ul>
+      <label class="add-song" for="songFile">+ ADD A SONG FILE</label>
+      <input type="file" id="songFile" accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.flac" class="visually-hidden">
+      <p class="vs-status" id="songStatus" aria-live="polite"></p>
+      <p class="help">Tap a hit to play its official 30-second preview, or add a full song file from your phone (MP3, M4A, WAV and more). The game listens to the song and builds notes from its beats: bass on the left lanes, vocals and synths in the middle, hats and cymbals on the right. Your songs stay saved in this browser.</p>
+      <button type="button" id="songsBackBtn" class="primary">DONE</button>
     </div>
 
     <div id="pause" class="overlay hidden">
