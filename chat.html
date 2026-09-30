@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Messages</title>
+  <link rel="stylesheet" href="chat.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+  <script defer src="chat.js"></script>
+</head>
+<body>
+  <div id="app" class="app">
+    <aside class="sidebar" aria-label="Chats">
+      <header class="side-head">
+        <h1>Messages</h1>
+        <span id="conn" class="conn" data-state="connecting" title="Connecting…"><span class="dot"></span><span id="connText">Connecting…</span></span>
+      </header>
+      <button type="button" id="profileBtn" class="profile">
+        <span class="avatar" id="meAvatar"></span>
+        <span class="profile-text"><strong id="meName"></strong><small>Edit your name</small></span>
+      </button>
+      <div class="side-actions">
+        <button type="button" id="newChatBtn" class="primary">New chat</button>
+        <button type="button" id="joinChatBtn">Join with link</button>
+      </div>
+      <ul id="chatList" class="chat-list"></ul>
+      <p id="noChats" class="no-chats">No chats yet. Start one and send the invite link to someone you know.</p>
+      <a href="index.html" class="back-link">&larr; Back to store</a>
+    </aside>
+
+    <section class="conv" aria-live="polite">
+      <div id="welcome" class="welcome">
+        <h2>Private chats with people you know</h2>
+        <ol>
+          <li>Tap <strong>New chat</strong> and give it a name.</li>
+          <li>Send the invite link to your friend or family (WhatsApp, SMS, email…).</li>
+          <li>When they open it, you can message each other right here in the browser.</li>
+        </ol>
+        <p class="fine">No account needed. Messages are end-to-end encrypted with a key that only lives in the invite link, and your history is kept in this browser.</p>
+      </div>
+
+      <div id="chatView" class="chat-view hidden">
+        <header class="conv-head">
+          <button type="button" id="backBtn" class="icon-btn back" aria-label="Back to chats">&larr;</button>
+          <div class="conv-title">
+            <h2 id="chatTitle"></h2>
+            <p id="chatSub"></p>
+          </div>
+          <button type="button" id="inviteBtn">Invite</button>
+          <details class="menu" id="menuDetails">
+            <summary class="icon-btn" aria-label="Chat options">&#8942;</summary>
+            <div class="menu-list">
+              <button type="button" id="renameBtn">Rename chat</button>
+              <button type="button" id="leaveBtn" class="danger">Leave chat</button>
+            </div>
+          </details>
+        </header>
+        <div id="messages" class="messages" tabindex="0" aria-label="Messages"></div>
+        <p id="typing" class="typing"></p>
+        <form id="composer" class="composer" autocomplete="off">
+          <textarea id="input" rows="1" maxlength="2000" placeholder="Write a message" aria-label="Message"></textarea>
+          <button type="submit" id="sendBtn" class="primary" disabled>Send</button>
+        </form>
+      </div>
+    </section>
+  </div>
+
+  <dialog id="profileDlg">
+    <form method="dialog" id="profileForm">
+      <h2>Your name</h2>
+      <p class="fine">This is how people in your chats will see you.</p>
+      <input id="nameInput" maxlength="32" required placeholder="e.g. Sara" autocomplete="nickname">
+      <div id="notifyRow" class="notify-row hidden">
+        <button type="button" id="notifyBtn">Turn on notifications</button>
+        <small>Get a pop-up when a message arrives and this tab is in the background.</small>
+      </div>
+      <div class="dlg-actions">
+        <button type="button" id="profileCancel" value="cancel">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="newDlg">
+    <form method="dialog" id="newForm">
+      <h2>New chat</h2>
+      <p class="fine">Name it after the person or group, e.g. "Mom" or "Football team".</p>
+      <input id="newTitle" maxlength="40" required placeholder="Chat name">
+      <div class="dlg-actions">
+        <button type="button" data-close>Cancel</button>
+        <button type="submit" class="primary">Create</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="joinDlg">
+    <form method="dialog" id="joinForm">
+      <h2 id="joinHeading">Join a chat</h2>
+      <p class="fine" id="joinText">Paste the invite link someone sent you.</p>
+      <input id="joinInput" placeholder="Invite link" spellcheck="false">
+      <label id="joinNameRow" class="hidden">Your name <input id="joinName" maxlength="32" placeholder="e.g. Sara" autocomplete="nickname"></label>
+      <p id="joinError" class="error" role="alert"></p>
+      <div class="dlg-actions">
+        <button type="button" data-close>Cancel</button>
+        <button type="submit" class="primary">Join</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="inviteDlg">
+    <form method="dialog">
+      <h2>Invite to <span id="inviteTitle"></span></h2>
+      <p class="fine">Send this link to the people you want in this chat. <strong>Anyone who has the link can read and send messages here</strong>, so only share it with people you know.</p>
+      <input id="inviteLink" readonly spellcheck="false" aria-label="Invite link">
+      <div class="dlg-actions">
+        <button type="button" id="shareBtn" class="hidden">Share…</button>
+        <button type="button" id="copyBtn">Copy link</button>
+        <button type="submit" class="primary">Done</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="renameDlg">
+    <form method="dialog" id="renameForm">
+      <h2>Rename chat</h2>
+      <p class="fine">Only changes the name on your device.</p>
+      <input id="renameInput" maxlength="40" required>
+      <div class="dlg-actions">
+        <button type="button" data-close>Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <noscript><p class="noscript">Messages needs JavaScript to run.</p></noscript>
+</body>
+</html>
