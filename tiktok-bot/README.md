@@ -18,6 +18,7 @@ dashboard in your browser, and viewers see it through an on-stream overlay.
 | **Goals** | Progress bars for likes, diamonds and follows, shown on the overlay. You can edit them live. |
 | **Timed announcements** | Repeating messages (e.g. "tap follow!") that only run while chat is active. |
 | **Q&A** | Questions from TikTok's Q&A feature are collected on the dashboard. |
+| **AI replies** | Optional. Claude answers viewer questions (`!ask …`, chat messages ending in `?`, and TikTok Q&A) in one short sentence, using the info you give it about your stream. See [AI replies](#ai-replies-optional). |
 | **Stats** | Viewers, peak viewers, likes, diamonds, follows, shares, chats, uptime, top gifters. A JSON summary is saved to `data/` when the stream ends. |
 | **Auto-connect** | Waits for you to go live and reconnects by itself if the connection drops. |
 
@@ -90,6 +91,37 @@ Messages are queued with a minimum gap (`minSecondsBetweenMessages`) so the acco
 > Real bans, blocks and comment deletions still have to be done in the TikTok app. Assign a human
 > moderator there too.
 
+## AI replies (optional)
+
+The bot can answer viewers' questions with Claude (Anthropic's AI). For example, a viewer types
+`what phone do you use?` and the bot replies `@Ana Sam streams with an iPhone 15! 📱`.
+
+1. Create an API key at [console.anthropic.com](https://console.anthropic.com). Each answer is a small paid API call.
+2. Give the bot the key, either way:
+   - as an environment variable: `ANTHROPIC_API_KEY=sk-ant-... npm start` (Windows PowerShell: `$env:ANTHROPIC_API_KEY="sk-ant-..."; npm start`)
+   - or in `config.json` under `ai.apiKey`
+3. In `config.json`, set `ai.enabled` to `true` and write about yourself in `ai.about`: your name, what you stream,
+   your schedule, your setup, your socials. **The bot only knows what you put here.** If a question isn't covered,
+   it says you can answer it yourself, instead of making something up.
+4. Restart the bot. You can turn AI replies on and off live from the dashboard.
+
+What gets answered:
+- `!ask <question>`: always (while AI replies are on)
+- any chat message that ends in `?` (set `answerQuestions` to `false` to turn this off)
+- questions sent with TikTok's Q&A feature
+
+Built-in limits keep it from spamming chat or your bill:
+- one answer at a time, at least `minSecondsBetweenReplies` apart (default 8 s)
+- each viewer can get one answer every `userCooldownSeconds` (default 60 s)
+- at most `maxRepliesPerStream` answers per stream (default 200)
+
+Safety: messages hidden by moderation are never sent to the AI. The AI treats chat only as questions to answer
+(viewers can't give it orders). Replies that contain links or banned words are dropped. Rude or spam messages get
+no reply.
+
+The default model is `claude-opus-5-5` at `low` effort, which suits short chat answers. You can change `model` and
+`effort` in `config.json`.
+
 ## Configuration
 
 Everything is in `config.json`. Text templates can use `{user}`, and gift templates can also use `{gift}`,
@@ -109,6 +141,7 @@ Everything is in `config.json`. Text templates can use `{user}`, and gift templa
 | `goals` | Starting targets for likes, diamonds and follows (`0` hides a goal) |
 | `timers` / `timerMinChatLines` | Repeating announcements and how much chat activity is needed between them |
 | `moderation` | Banned words, link/caps/repeat/flood rules, strikes before a mute, mute length, trusted users |
+| `ai` | AI replies: on/off, API key, what the bot knows about you (`about`), and its limits |
 | `overlay` | How long alerts stay on screen, and default TTS |
 
 On the dashboard you can turn each feature on or off live, hide a message from the overlay,
@@ -122,13 +155,14 @@ tiktok-bot/
 ├── src/
 │   ├── server.js      web server, WebSocket hub, dashboard actions, TikTok chat outbox
 │   ├── bot.js         all bot logic (commands, moderation, goals, polls, queue, timers)
+│   ├── ai.js          AI replies with Claude (rate limits, reply safety checks)
 │   ├── tiktok.js      TikTok LIVE connection with wait-for-live + auto-reconnect
 │   ├── normalize.js   turns raw TikTok events into simple objects
 │   └── simulator.js   fake events for `npm run demo`
 ├── public/
 │   ├── dashboard.html/.css/.js   control panel
 │   └── overlay.html              OBS browser source
-└── test/bot.test.js   run with `npm test`
+└── test/            run with `npm test`
 ```
 
 ## Troubleshooting
@@ -139,4 +173,7 @@ tiktok-bot/
   or add an `EULER_API_KEY`.
 - **The overlay shows nothing**: check that the bot is running and that the URL is exactly
   `http://localhost:3000/overlay`. Click a **Test alerts** button on the dashboard.
+- **AI doesn't reply**: check that "AI replies to questions" is on in the dashboard. If the dashboard says it needs
+  an API key, set `ANTHROPIC_API_KEY` and restart. Questions also need to end in `?` (or start with `!ask`), and the
+  cooldowns above apply.
 - **No sound in OBS**: tick "Control audio via OBS" on the Browser Source and unmute it in the mixer.

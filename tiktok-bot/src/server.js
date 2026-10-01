@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { Bot } from './bot.js';
 import { Simulator } from './simulator.js';
+import { AiResponder } from './ai.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PUBLIC = path.join(ROOT, 'public');
@@ -30,6 +31,7 @@ const userArg = args.find((a) => a.startsWith('--user='));
 if (userArg) config.tiktokUsername = userArg.slice(7);
 
 const bot = new Bot(config);
+const ai = new AiResponder(config);
 const link = DEMO ? new Simulator() : new (await import('./tiktok.js')).TikTokLink(config);
 
 // ---- WebSocket hub ----------------------------------------------------------
@@ -95,14 +97,36 @@ async function drainOutbox() {
 }
 
 link.on('event', (ev) => bot.handle(ev));
+
+bot.on('aiQuestion', async (q) => {
+  const reply = await ai.answer(q, bot.aiContext());
+  if (reply) bot.say(reply, 'ai');
+});
+ai.on('warn', (msg) => log(msg));
+ai.on('status', () => broadcast({ type: 'status', status: statusPayload() }));
+
+function statusPayload(extra = {}) {
+  return {
+    status: link.status,
+    detail: link.detail,
+    username: link.username || config.tiktokUsername,
+    ...extra,
+    canSend: link.canSend(),
+    demo: DEMO,
+    ai: ai.status,
+  };
+}
 link.on('status', (status) => {
   log(`status: ${status.status}${status.detail ? ` (${status.detail})` : ''}`);
-  broadcast({ type: 'status', status: { ...status, canSend: link.canSend(), demo: DEMO } });
+  broadcast({ type: 'status', status: statusPayload(status) });
 });
 // A reconnect to the same room keeps the stats; a new stream starts fresh.
 let lastRoomId = null;
 link.on('connected', (state) => {
-  if (state?.roomId !== lastRoomId) bot.resetSession();
+  if (state?.roomId !== lastRoomId) {
+    bot.resetSession();
+    ai.resetStream();
+  }
   lastRoomId = state?.roomId;
 });
 link.on('warn', (msg) => log(`warning: ${msg}`));
@@ -201,7 +225,7 @@ wss.on('connection', (ws, req) => {
     type: 'hello',
     role,
     state: bot.snapshot(),
-    status: { status: link.status, detail: link.detail, username: link.username || config.tiktokUsername, canSend: link.canSend(), demo: DEMO },
+    status: statusPayload(),
     feed: recentFeed.slice(-100),
     says: recentSays.slice(-20),
     overlay: config.overlay || {},

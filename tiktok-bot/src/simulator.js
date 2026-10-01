@@ -6,7 +6,7 @@ import { EventEmitter } from 'node:events';
 const NAMES = ['luna.dance', 'gamerjoe', 'sk8r_mia', 'chefkai', 'nova_x', 'ben.tok', 'ava_sings', 'max.builds', 'zoe.art', 'leo_live'];
 const CHAT = ['hiii 👋', 'love this stream!', 'where are you from?', 'first time here', 'lol 😂', 'this is so cool',
   '!commands', '!discord', '!uptime', '!top', '!join', '!goal', 'what game is this?', '🔥🔥🔥', 'FREE FOLLOWERS at scam.xyz',
-  'THIS IS THE BEST STREAM EVER OMG', '1', '2'];
+  'THIS IS THE BEST STREAM EVER OMG', '1', '2', '!ask what phone do you stream with', 'when do you go live again?'];
 const GIFTS = [
   { giftName: 'Rose', diamonds: 1 }, { giftName: 'TikTok', diamonds: 1 }, { giftName: 'Finger Heart', diamonds: 5 },
   { giftName: 'Doughnut', diamonds: 30 }, { giftName: 'Hand Hearts', diamonds: 100 }, { giftName: 'Galaxy', diamonds: 1000 },

@@ -93,6 +93,10 @@ function renderStatus() {
   pill.textContent = status.demo && status.status === 'connected' ? 'demo' : (status.status || 'offline');
   pill.className = `pill ${status.status || ''}`;
   $('status-detail').textContent = [status.username && `@${status.username}`, status.detail].filter(Boolean).join(' · ');
+  const aiHint = $('ai-hint');
+  if (aiHint) aiHint.textContent = status.ai === 'no-key'
+    ? 'AI replies need an Anthropic API key — see README.'
+    : 'AI answers !ask and questions ending in "?".';
   $('say-hint').textContent = status.canSend
     ? 'Bot messages are shown on the overlay and posted to your TikTok chat.'
     : 'Bot messages are shown on the overlay (and read aloud if TTS is on). Posting into TikTok chat is optional — see README.';
@@ -172,6 +176,7 @@ const TOGGLES = {
   commands: 'Chat commands (!discord, !join…)',
   moderation: 'Auto-moderation',
   timers: 'Timed announcements',
+  ai: 'AI replies to questions',
 };
 function renderToggles() {
   $('toggles').replaceChildren(...Object.entries(TOGGLES).map(([key, label]) => {

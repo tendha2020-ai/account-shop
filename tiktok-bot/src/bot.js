@@ -27,6 +27,7 @@ export class Bot extends EventEmitter {
       moderation: config.moderation?.enabled !== false,
       timers: true,
       commands: true,
+      ai: config.ai?.enabled === true,
     };
     this.goals = {
       likes: config.goals?.likes || 0,
@@ -105,6 +106,17 @@ export class Bot extends EventEmitter {
       return item;
     }
     const prefix = this.config.commandPrefix || '!';
+    if (this.settings.ai) {
+      const ask = new RegExp(`^${escapeRegex(prefix)}ask\\s+(.+)`, 'i').exec(trimmed);
+      if (ask) {
+        this.emit('aiQuestion', { user, text: ask[1] });
+        this.changed();
+        return item;
+      }
+      if (this.config.ai?.answerQuestions && !trimmed.startsWith(prefix) && trimmed.length >= 8 && /\?\s*$/.test(trimmed)) {
+        this.emit('aiQuestion', { user, text: trimmed });
+      }
+    }
     if (this.settings.commands && trimmed.startsWith(prefix)) this.command(user, trimmed.slice(prefix.length));
     this.changed();
     return item;
@@ -183,6 +195,7 @@ export class Bot extends EventEmitter {
     this.questions.push({ id: ++this.feedId, user, text, ts: this.now() });
     if (this.questions.length > 50) this.questions.shift();
     this.feed('question', user, text);
+    if (this.settings.ai) this.emit('aiQuestion', { user, text });
     this.changed();
   }
 
@@ -256,6 +269,7 @@ export class Bot extends EventEmitter {
       commands: () => {
         const custom = Object.keys(this.config.commands || {});
         const p = this.config.commandPrefix || '!';
+        if (this.settings.ai) custom.push('ask');
         return `Commands: ${[...custom, 'uptime', 'top', 'goal', 'join', 'leave', 'queue'].map((c) => p + c).join(' ')}`;
       },
       uptime: () => `Live for ${formatDuration(t - this.startedAt)}.`,
@@ -443,6 +457,20 @@ export class Bot extends EventEmitter {
   }
 
   // ---- views ---------------------------------------------------------------
+
+  // A few live facts so AI replies can answer "how long have you been live?" etc.
+  aiContext() {
+    const s = this.stats;
+    const top = this.topGifters(1)[0];
+    return [
+      `live for ${formatDuration(this.now() - this.startedAt)}`,
+      `${s.viewers} viewers`,
+      `${s.likes} likes`,
+      this.goalText(),
+      top ? `top gifter ${top.user.nickname}` : '',
+      this.queue.length ? `${this.queue.length} in the !join queue` : '',
+    ].filter(Boolean).join(', ');
+  }
 
   topGifters(n = 10) {
     return [...this.gifters.values()].sort((a, b) => b.diamonds - a.diamonds).slice(0, n);

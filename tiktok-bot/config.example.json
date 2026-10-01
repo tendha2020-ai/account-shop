@@ -74,6 +74,20 @@
     "trustedUsers": []
   },
 
+  "ai": {
+    "enabled": false,
+    "apiKey": "",
+    "botName": "LiveBot",
+    "about": "Streamer: (your name). Streams: (what you do on live, e.g. Fortnite and chill chats). Schedule: Mon / Wed / Fri at 8pm. Setup: (phone, mic, lights). Type !discord for the community.",
+    "answerQuestions": true,
+    "model": "claude-opus-5-5",
+    "effort": "low",
+    "maxReplyChars": 150,
+    "minSecondsBetweenReplies": 8,
+    "userCooldownSeconds": 60,
+    "maxRepliesPerStream": 200
+  },
+
   "overlay": {
     "alertSeconds": 6,
     "tts": false
