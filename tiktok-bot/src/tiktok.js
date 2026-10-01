@@ -29,7 +29,10 @@ export class TikTokLink extends EventEmitter {
 
   buildOptions() {
     const send = this.config.sendToTikTokChat || {};
-    const opts = { enableExtendedGiftInfo: true };
+    // Extended gift info needs a paid signing plan, and gift names and values
+    // already arrive with each gift event, so leave it off.
+    // Initial data replays recent chat; skip it so the bot doesn't answer old messages.
+    const opts = { enableExtendedGiftInfo: false, processInitialData: false };
     const apiKey = process.env.EULER_API_KEY || send.signApiKey;
     if (apiKey) opts.signApiKey = apiKey;
     const sessionId = process.env.TIKTOK_SESSION_ID || send.sessionId;
@@ -73,6 +76,7 @@ export class TikTokLink extends EventEmitter {
       const closed = new Promise((resolve) => conn.once(ControlEvent.DISCONNECTED, resolve));
       try {
         this.setStatus('connecting');
+        conn.startedAt = Date.now();
         const state = await conn.connect();
         if (signal.aborted) { // stop() or a new start() ran while connecting
           await conn.disconnect().catch(() => {});
@@ -101,6 +105,10 @@ export class TikTokLink extends EventEmitter {
 
   wire(conn) {
     const pass = (event, fn) => conn.on(event, (d) => {
+      // TikTok replays older comments when you join; only react to recent ones.
+      // (A minute of slack allows for this computer's clock being a bit off.)
+      const sentAt = Number(d?.common?.createTime) || 0;
+      if (sentAt && sentAt < conn.startedAt - 60_000) return;
       try { this.emit('event', fn(d)); } catch (err) { this.emit('warn', `bad ${event} payload: ${err.message}`); }
     });
     pass(WebcastEvent.CHAT, N.chat);

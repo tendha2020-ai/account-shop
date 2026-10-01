@@ -22,7 +22,7 @@ const DEMO = args.includes('--demo');
 function loadConfig() {
   const own = path.join(ROOT, 'config.json');
   const file = fs.existsSync(own) ? own : path.join(ROOT, 'config.example.json');
-  if (file !== own) console.warn('⚠  config.json not found — using config.example.json. Copy it to config.json and edit it.');
+  if (file !== own) console.log('Using settings from config.example.json (copy it to config.json to keep private changes out of git).');
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 

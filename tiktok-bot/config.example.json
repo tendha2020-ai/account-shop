@@ -1,5 +1,5 @@
 {
-  "tiktokUsername": "your_tiktok_username",
+  "tiktokUsername": "tendha2",
 
   "server": { "host": "127.0.0.1", "port": 3000 },
 
@@ -21,16 +21,17 @@
   "commandCooldownSeconds": 10,
   "userCooldownSeconds": 20,
   "commands": {
-    "discord": "Join the community: https://discord.gg/your-invite",
-    "socials": "Follow me on Instagram @yourname and YouTube @yourname",
-    "rules": "Be kind, no spam, no self-promo. Have fun!",
-    "schedule": "I go live Mon / Wed / Fri at 8pm."
+    "snap": "Add me on Snapchat: Tendha6 👻",
+    "socials": "TikTok: @tendha2 · Snapchat: Tendha6 👻",
+    "game": "We're playing Fortnite! 🎮 Type !join to get in the queue and squad up.",
+    "music": "Music is life 🎵 Drop your song recommendations in chat!",
+    "rules": "Be kind, no spam, no self-promo. Have fun! 🙌"
   },
 
   "welcome": {
     "firstChat": true,
     "onJoin": false,
-    "message": "Welcome {user}! 👋",
+    "message": "Welcome {user}! 👋 We're playing Fortnite, pull up 🎮",
     "minSecondsBetween": 15
   },
 
@@ -56,14 +57,15 @@
   },
 
   "timers": [
-    { "everyMinutes": 10, "message": "Enjoying the stream? Tap follow so you don't miss the next one!" },
-    { "everyMinutes": 15, "message": "Type !commands to see what I can do." }
+    { "everyMinutes": 10, "message": "Enjoying the Fortnite grind? Tap follow so you don't miss the next live! 🎮" },
+    { "everyMinutes": 15, "message": "Add me on Snapchat: Tendha6 👻" },
+    { "everyMinutes": 20, "message": "Want to play with me? Type !join to get in the queue. Type !commands for more." }
   ],
   "timerMinChatLines": 5,
 
   "moderation": {
     "enabled": true,
-    "bannedWords": ["scam", "free followers"],
+    "bannedWords": ["scam", "free followers", "free vbucks", "free v-bucks"],
     "blockLinks": true,
     "maxCapsRatio": 0.75,
     "repeatLimit": 3,
@@ -71,14 +73,14 @@
     "strikesBeforeMute": 3,
     "muteMinutes": 10,
     "warnMessage": "@{user} please keep the chat friendly ({reason}).",
-    "trustedUsers": []
+    "trustedUsers": ["tendha2"]
   },
 
   "ai": {
-    "enabled": false,
+    "enabled": true,
     "apiKey": "",
-    "botName": "LiveBot",
-    "about": "Streamer: (your name). Streams: (what you do on live, e.g. Fortnite and chill chats). Schedule: Mon / Wed / Fri at 8pm. Setup: (phone, mic, lights). Type !discord for the community.",
+    "botName": "Tendha's bot",
+    "about": "Streamer: Tendha (TikTok @tendha2, display name 'TENDHA Runs You'). Mainly streams Fortnite. Loves music, so viewers can share song recommendations in chat. Snapchat: Tendha6. Viewers can type !join to get in the queue to play Fortnite with Tendha, and !commands to see all commands.",
     "answerQuestions": true,
     "model": "claude-opus-5-5",
     "effort": "low",

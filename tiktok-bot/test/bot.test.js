@@ -186,3 +186,16 @@ test('normalize handles legacy payloads', () => {
   assert.equal(N.like({ user, likeCount: 3, totalLikeCount: 9 }).total, 9);
   assert.equal(N.viewers({ viewerCount: 42 }).count, 42);
 });
+
+test('the streamer is never welcomed, moderated or auto-answered', () => {
+  const { bot, says } = setup({ tiktokUsername: '@Host_Name', ai: { answerQuestions: true } });
+  bot.settings.ai = true;
+  const asked = [];
+  bot.on('aiQuestion', (q) => asked.push(q.text));
+  assert.equal(bot.handle(chat('host_name', 'THIS IS A SCAM LOL')).hidden, false);
+  bot.handle(chat('host_name', 'who is ready to play?'));
+  assert.deepEqual(says, []);
+  assert.deepEqual(asked, []);
+  bot.handle(chat('host_name', '!discord'));
+  assert.deepEqual(says, ['Join: discord.gg/x']);
+});

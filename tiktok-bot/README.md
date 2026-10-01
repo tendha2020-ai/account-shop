@@ -37,10 +37,14 @@ Then open **http://localhost:3000** for the dashboard and **http://localhost:300
 When you're ready to use it for real:
 
 ```bash
-cp config.example.json config.json   # on Windows: copy config.example.json config.json
-# edit config.json and set "tiktokUsername" to your username (without @)
 npm start
 ```
+
+It's already set up for **@tendha2** (Fortnite, music, Snapchat `Tendha6`). All settings are in
+`config.example.json`. To change them without touching the shared file, copy it to `config.json`
+(on Windows: `copy config.example.json config.json`) and edit that. If `config.json` exists, the bot uses it instead.
+Put API keys and cookies only in `config.json` or in environment variables, never in `config.example.json`
+(`config.json` is never uploaded to GitHub).
 
 Start the bot before or after you go live. If you aren't live yet, it waits and connects
 when your stream starts.
@@ -74,7 +78,7 @@ safest setup.
 
 To have the bot also **type into TikTok chat**, the library needs a logged-in session:
 
-1. Get a free API key at [eulerstream.com](https://www.eulerstream.com). This is the signing service the library uses.
+1. Get an API key **with a paid plan** at [eulerstream.com](https://www.eulerstream.com). This is the signing service the library uses, and posting to chat is a paid feature there.
 2. Log in to tiktok.com in your browser. Open DevTools → Application → Cookies and copy the values of
    `sessionid` and `tt-target-idc`. **Use a separate bot account, not your main account.**
 3. Put these values in `config.json` under `sendToTikTokChat` and set `"enabled": true`.

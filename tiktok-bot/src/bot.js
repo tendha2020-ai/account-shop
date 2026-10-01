@@ -80,10 +80,15 @@ export class Bot extends EventEmitter {
     }
   }
 
+  isHost(user) {
+    return String(this.config.tiktokUsername || '').replace(/^@/, '').toLowerCase() === user.username.toLowerCase();
+  }
+
   onChat({ user, text }) {
     const s = this.stats;
     s.chats++;
-    const mod = this.moderate(user, text);
+    const host = this.isHost(user);
+    const mod = host ? { hidden: false } : this.moderate(user, text);
     const item = this.feed('chat', user, text, mod);
     const c = this.chatters.get(user.username) || { user, messages: 0 };
     c.messages++;
@@ -95,7 +100,7 @@ export class Bot extends EventEmitter {
     }
     this.chatSinceTimer++;
 
-    if (!this.seen.has(user.username)) {
+    if (!host && !this.seen.has(user.username)) {
       this.seen.add(user.username);
       if (this.settings.welcome && this.config.welcome?.firstChat) this.welcome(user);
     }
@@ -113,7 +118,7 @@ export class Bot extends EventEmitter {
         this.changed();
         return item;
       }
-      if (this.config.ai?.answerQuestions && !trimmed.startsWith(prefix) && trimmed.length >= 8 && /\?\s*$/.test(trimmed)) {
+      if (this.config.ai?.answerQuestions && !host && !trimmed.startsWith(prefix) && trimmed.length >= 8 && /\?\s*$/.test(trimmed)) {
         this.emit('aiQuestion', { user, text: trimmed });
       }
     }

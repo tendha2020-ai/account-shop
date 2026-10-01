@@ -173,7 +173,7 @@ function renderGoals() {
 const TOGGLES = {
   autoThanks: 'Thank gifts, follows & shares',
   welcome: 'Welcome new chatters',
-  commands: 'Chat commands (!discord, !join…)',
+  commands: 'Chat commands (!commands, !join…)',
   moderation: 'Auto-moderation',
   timers: 'Timed announcements',
   ai: 'AI replies to questions',
