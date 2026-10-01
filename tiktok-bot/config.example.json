@@ -1,0 +1,81 @@
+{
+  "tiktokUsername": "your_tiktok_username",
+
+  "server": { "host": "127.0.0.1", "port": 3000 },
+
+  "connection": {
+    "autoReconnect": true,
+    "reconnectDelaySeconds": 15,
+    "waitForLiveSeconds": 60
+  },
+
+  "sendToTikTokChat": {
+    "enabled": false,
+    "minSecondsBetweenMessages": 4,
+    "signApiKey": "",
+    "sessionId": "",
+    "ttTargetIdc": ""
+  },
+
+  "commandPrefix": "!",
+  "commandCooldownSeconds": 10,
+  "userCooldownSeconds": 20,
+  "commands": {
+    "discord": "Join the community: https://discord.gg/your-invite",
+    "socials": "Follow me on Instagram @yourname and YouTube @yourname",
+    "rules": "Be kind, no spam, no self-promo. Have fun!",
+    "schedule": "I go live Mon / Wed / Fri at 8pm."
+  },
+
+  "welcome": {
+    "firstChat": true,
+    "onJoin": false,
+    "message": "Welcome {user}! 👋",
+    "minSecondsBetween": 15
+  },
+
+  "thanks": {
+    "follow": "Thanks for the follow, {user}! ❤️",
+    "share": "Thanks for sharing the live, {user}! 🙌",
+    "gift": "Thank you {user} for {count}x {gift}! 🎁",
+    "giftMinDiamonds": 1
+  },
+
+  "giftRules": [
+    { "gift": "Rose", "message": "🌹 {user} sent {count} rose(s)! Thank you!" },
+    { "minDiamonds": 100, "message": "🔥 HUGE! {user} sent {gift} x{count} — thank you so much!" }
+  ],
+
+  "likeMilestone": 1000,
+  "likeMilestoneMessage": "We just hit {total} likes! Keep tapping! 💖",
+
+  "goals": {
+    "likes": 10000,
+    "diamonds": 1000,
+    "follows": 50
+  },
+
+  "timers": [
+    { "everyMinutes": 10, "message": "Enjoying the stream? Tap follow so you don't miss the next one!" },
+    { "everyMinutes": 15, "message": "Type !commands to see what I can do." }
+  ],
+  "timerMinChatLines": 5,
+
+  "moderation": {
+    "enabled": true,
+    "bannedWords": ["scam", "free followers"],
+    "blockLinks": true,
+    "maxCapsRatio": 0.75,
+    "repeatLimit": 3,
+    "floodMessagesPer10s": 6,
+    "strikesBeforeMute": 3,
+    "muteMinutes": 10,
+    "warnMessage": "@{user} please keep the chat friendly ({reason}).",
+    "trustedUsers": []
+  },
+
+  "overlay": {
+    "alertSeconds": 6,
+    "tts": false
+  }
+}
