@@ -51,10 +51,22 @@ when your stream starts.
 
 ## Adding the overlay to your stream
 
-**OBS / Streamlabs / TikTok LIVE Studio:** add a **Browser Source** with these settings:
+**TikTok LIVE Studio (PC):**
+1. Start the bot first (`npm start`).
+2. In LIVE Studio, click **Add Source** → **Link**.
+3. Paste `http://localhost:3000/overlay` and click **OK**.
+4. Drag the corners of the new source so it covers the whole screen. Keep it above your game capture.
+5. On the dashboard, click a **Test alerts** button. An alert should appear in LIVE Studio.
+
+To place each part separately, add more Link sources. For example, use `http://localhost:3000/overlay?show=alerts`
+for alerts only and `http://localhost:3000/overlay?show=goals` for goal bars only. Each one can then be moved around the
+screen (for example, away from your Fortnite minimap). If a Link source shows up as a tiny box or stays blank,
+resize it to fill the screen. If that doesn't help, use OBS (below) and send it to LIVE Studio with OBS Virtual Camera.
+
+**OBS / Streamlabs:** add a **Browser Source** with these settings:
 
 - URL: `http://localhost:3000/overlay`
-- Size: `1080 x 1920` for a vertical stream (or `1920 x 1080` for landscape)
+- Size: `1920 x 1080` for a landscape stream like a PC game, or `1080 x 1920` for a vertical stream
 
 You can choose which widgets are shown, or add each widget as its own source so you can place it anywhere:
 
