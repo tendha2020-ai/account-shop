@@ -1,0 +1,21 @@
+{
+  "name": "tiktok-live-bot",
+  "version": "1.0.0",
+  "description": "A bot that manages your TikTok LIVE: alerts, chat commands, moderation, goals, polls, viewer queue, dashboard and OBS overlay.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "demo": "node src/server.js --demo",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
+    "tiktok-live-connector": "^2.5.0",
+    "ws": "^8.18.0"
+  },
+  "license": "MIT"
+}
