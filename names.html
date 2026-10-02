@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Name Lab</title>
+  <link rel="stylesheet" href="names.css">
+  <script defer src="names.js"></script>
+</head>
+<body>
+  <header class="top">
+    <a href="index.html" class="back">&larr; Store</a>
+    <h1>Name Lab</h1>
+    <p class="tag">Epic Games name finder, fancy font changer, symbols &amp; logo maker</p>
+  </header>
+
+  <section class="bench" aria-label="Your name">
+    <label for="base" class="bench-label">Your name</label>
+    <div class="bench-row">
+      <input id="base" type="text" maxlength="64" spellcheck="false" autocomplete="off" placeholder="Type a name… e.g. Shadow">
+      <button type="button" id="copyBase" class="btn primary">Copy</button>
+      <button type="button" id="surprise" class="btn">Surprise me</button>
+      <button type="button" id="clearBase" class="btn ghost" aria-label="Clear">&times;</button>
+    </div>
+    <div class="bench-meta">
+      <span id="baseCount" class="count">0/16</span>
+      <span id="baseBadge" class="badge">—</span>
+      <span class="hint">Epic display names: 3–16 characters. Letters, numbers, space, <code>-</code> <code>_</code> <code>.</code> are safest.</span>
+    </div>
+  </section>
+
+  <nav class="tabs" role="tablist" aria-label="Tools">
+    <button type="button" role="tab" data-tab="finder">Name Finder</button>
+    <button type="button" role="tab" data-tab="fonts">Fonts</button>
+    <button type="button" role="tab" data-tab="decorate">Decorate</button>
+    <button type="button" role="tab" data-tab="symbols">Symbols</button>
+    <button type="button" role="tab" data-tab="logo">Logo Fonts</button>
+    <button type="button" role="tab" data-tab="saved">Saved <span id="savedCount" class="pill">0</span></button>
+  </nav>
+
+  <main>
+    <!-- Name finder -->
+    <section class="panel" id="panel-finder" role="tabpanel">
+      <form id="genForm" class="gen-form" autocomplete="off">
+        <label class="field wide">
+          <span>Keywords <small>(optional – your name, nickname, favourite thing)</small></span>
+          <input id="keywords" type="text" placeholder="e.g. alex, wolf, pizza">
+        </label>
+        <fieldset class="field wide">
+          <legend>Vibe</legend>
+          <div id="vibes" class="chips"></div>
+        </fieldset>
+        <label class="field">
+          <span>Separator</span>
+          <select id="sep">
+            <option value="">None (CamelCase)</option>
+            <option value="_">Underscore _</option>
+            <option value=".">Dot .</option>
+            <option value="-">Dash -</option>
+            <option value=" ">Space</option>
+            <option value="mix">Mix it up</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Capitals</span>
+          <select id="caps">
+            <option value="camel">CamelCase</option>
+            <option value="lower">lowercase</option>
+            <option value="upper">UPPERCASE</option>
+            <option value="alt">aLtErNaTe</option>
+            <option value="mix">Mix it up</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Numbers</span>
+          <select id="nums">
+            <option value="none">No numbers</option>
+            <option value="some" selected>Sometimes</option>
+            <option value="always">Always</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Length</span>
+          <span class="range">
+            <input id="minLen" type="number" min="3" max="16" value="3" aria-label="Minimum length">
+            <span>to</span>
+            <input id="maxLen" type="number" min="3" max="16" value="16" aria-label="Maximum length">
+          </span>
+        </label>
+        <label class="field check">
+          <input id="leet" type="checkbox">
+          <span>L33t sp34k sometimes</span>
+        </label>
+        <label class="field check">
+          <input id="decor" type="checkbox" checked>
+          <span>Prefixes &amp; tags (iTz, TTV, YT…)</span>
+        </label>
+        <div class="field wide actions">
+          <button type="submit" class="btn primary big">Generate names</button>
+          <button type="button" id="moreNames" class="btn">+ More</button>
+        </div>
+      </form>
+      <p class="note">Tip: we can’t look up whether a name is taken on Epic — copy one you like and try it in your
+        <a href="https://www.epicgames.com/account/personal" target="_blank" rel="noopener">Epic account settings</a>.</p>
+      <div id="genResults" class="results"></div>
+    </section>
+
+    <!-- Fonts -->
+    <section class="panel" id="panel-fonts" role="tabpanel" hidden>
+      <div class="toolbar">
+        <input id="fontSearch" type="search" placeholder="Search styles… (bold, bubble, upside…)">
+        <label class="check"><input id="safeOnly" type="checkbox"> Epic-safe only</label>
+      </div>
+      <p class="note">Tap any style to copy it. Fancy Unicode looks great on Discord, TikTok, Instagram and many games — Epic may reject some of it.</p>
+      <div id="fontList" class="cards"></div>
+    </section>
+
+    <!-- Decorate -->
+    <section class="panel" id="panel-decorate" role="tabpanel" hidden>
+      <div class="toolbar">
+        <label class="field inline">
+          <span>Font</span>
+          <select id="decoFont"></select>
+        </label>
+        <button type="button" id="decoRandom" class="btn">Random font</button>
+      </div>
+      <div id="decoList" class="cards"></div>
+    </section>
+
+    <!-- Symbols -->
+    <section class="panel" id="panel-symbols" role="tabpanel" hidden>
+      <div class="toolbar">
+        <span>Tap a symbol to</span>
+        <div class="seg" role="radiogroup" aria-label="Symbol action">
+          <button type="button" data-mode="insert" class="on" role="radio" aria-checked="true">Add to name</button>
+          <button type="button" data-mode="copy" role="radio" aria-checked="false">Copy</button>
+        </div>
+      </div>
+      <div id="symbolList"></div>
+    </section>
+
+    <!-- Logo fonts -->
+    <section class="panel" id="panel-logo" role="tabpanel" hidden>
+      <div class="toolbar wrap">
+        <label class="field inline"><span>Effect</span>
+          <select id="logoFx">
+            <option value="gradient">Gradient</option>
+            <option value="neon">Neon glow</option>
+            <option value="outline">Outline</option>
+            <option value="three">3D</option>
+            <option value="solid">Solid</option>
+          </select>
+        </label>
+        <label class="field inline"><span>Colour 1</span><input id="logoC1" type="color" value="#38f9ff"></label>
+        <label class="field inline"><span>Colour 2</span><input id="logoC2" type="color" value="#ff3df2"></label>
+        <label class="field inline"><span>PNG background</span>
+          <select id="logoBg">
+            <option value="transparent">Transparent</option>
+            <option value="#0b0618">Dark</option>
+            <option value="#ffffff">White</option>
+          </select>
+        </label>
+      </div>
+      <p class="note">Real fonts for thumbnails, banners and profile pictures. Download any of them as a PNG.</p>
+      <div id="logoList" class="logo-grid"></div>
+    </section>
+
+    <!-- Saved -->
+    <section class="panel" id="panel-saved" role="tabpanel" hidden>
+      <div class="toolbar">
+        <button type="button" id="copyAllSaved" class="btn">Copy all</button>
+        <button type="button" id="clearSaved" class="btn ghost">Clear all</button>
+      </div>
+      <p id="savedEmpty" class="note">Nothing saved yet. Tap ☆ on any name or style to keep it here.</p>
+      <div id="savedList" class="results"></div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
