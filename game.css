@@ -34,6 +34,37 @@ body {
   touch-action: none;
 }
 
+.crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 34px;
+  height: 34px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  overflow: visible;
+  fill: none;
+  stroke: #5ff3ff;
+  stroke-width: 2;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 1px #000) drop-shadow(0 0 4px #5ff3ff);
+}
+
+.crosshair .ch-dot {
+  fill: #fff;
+  stroke: none;
+}
+
+.crosshair .ch-cross,
+.crosshair .ch-ring {
+  display: none;
+}
+
+.crosshair[data-style="cross"] .ch-cross,
+.crosshair[data-style="circle"] .ch-ring {
+  display: inline;
+}
+
 #pauseBtn {
   position: absolute;
   top: 12px;
@@ -178,6 +209,16 @@ h2 {
 
 .settings input[type="range"] {
   flex: 1;
+}
+
+.settings select {
+  flex: 1;
+  padding: 4px 6px;
+  border: 1px solid rgba(160, 220, 255, 0.5);
+  border-radius: 6px;
+  background: rgba(20, 10, 50, 0.8);
+  color: #eaf6ff;
+  font: inherit;
 }
 
 .settings output {

@@ -296,9 +296,11 @@
     speed: store.get('speed', 5),
     offset: store.get('offset', 0),
     hitsound: store.get('hitsound', true),
+    crosshair: store.get('crosshair', 'cross'),
     diff: store.get('diff', 'normal'),
   };
   if (!DIFFS[settings.diff]) settings.diff = 'normal';
+  if (!['off', 'cross', 'dot', 'circle'].includes(settings.crosshair)) settings.crosshair = 'cross';
   const approach = () => 3 / (0.5 + settings.speed * 0.25);
 
   // ---------- Game state ----------
@@ -1078,6 +1080,20 @@
   hitEl.addEventListener('change', () => {
     settings.hitsound = hitEl.checked;
     store.set('hitsound', settings.hitsound);
+  });
+
+  const crosshairEl = $('crosshair');
+  const crosshairSel = $('crosshairSel');
+  const showCrosshair = () => {
+    crosshairEl.dataset.style = settings.crosshair;
+    crosshairEl.classList.toggle('hidden', settings.crosshair === 'off');
+  };
+  crosshairSel.value = settings.crosshair;
+  showCrosshair();
+  crosshairSel.addEventListener('change', () => {
+    settings.crosshair = crosshairSel.value;
+    store.set('crosshair', settings.crosshair);
+    showCrosshair();
   });
 
   $('startBtn').addEventListener('click', () => startGame(settings.diff));
