@@ -11,6 +11,11 @@
 <body>
   <div id="stage">
     <canvas id="board"></canvas>
+    <svg id="crosshair" class="crosshair hidden" viewBox="-16 -16 32 32" aria-hidden="true">
+      <path class="ch-cross" d="M-13 0H-5M5 0H13M0 -13V-5M0 5V13"/>
+      <circle class="ch-ring" r="9"/>
+      <circle class="ch-dot" r="2"/>
+    </svg>
     <button id="pauseBtn" class="hidden" aria-label="Pause">&#10074;&#10074;</button>
 
     <div id="menu" class="overlay">
@@ -29,6 +34,14 @@
         <label>Note speed <input type="range" id="speed" min="1" max="10" step="0.5"> <output id="speedOut"></output></label>
         <label>Audio offset <input type="range" id="offset" min="-150" max="150" step="5"> <output id="offsetOut"></output></label>
         <label class="check"><input type="checkbox" id="hitsound"> Hit sounds</label>
+        <label>Crosshair
+          <select id="crosshairSel">
+            <option value="off">Off</option>
+            <option value="cross">Cross</option>
+            <option value="dot">Dot</option>
+            <option value="circle">Circle</option>
+          </select>
+        </label>
       </details>
       <p class="help">Keys <kbd>D</kbd> <kbd>F</kbd> <kbd>J</kbd> <kbd>K</kbd> &middot; or tap the lanes<br>Hold long notes until they end &middot; <kbd>Esc</kbd> pauses</p>
       <a href="index.html" class="back">&larr; Back to store</a>
