@@ -1,0 +1,11 @@
+[
+ {"subject":"Q1 Sales Dashboard go-live","date":"2026-02-03T09:10:00","sender":"me","to":"Sara Ali; Finance Team","body":"Hi all, the new Power BI dashboard is now live. It replaces the manual weekly Excel report and refreshes daily.","folder":"Sent Items","from_me":true,"attachments":["Dashboard_Guide.pdf","image001.png"]},
+ {"subject":"RE: Q1 Sales Dashboard go-live","date":"2026-02-03T11:02:00","sender":"Sara Ali","to":"me","body":"Great work on this, it will save the team hours every week. Thank you!","folder":"Inbox","from_me":false},
+ {"subject":"RE: Q1 Sales Dashboard go-live","date":"2026-02-04T08:00:00","sender":"me","to":"Sara Ali","body":"Thanks Sara, I'll add the regional filter next sprint.","folder":"Sent Items","from_me":true},
+ {"subject":"URGENT: Payment system outage","date":"2026-05-12T22:15:00","sender":"me","to":"IT Ops; Omar Khan","body":"Root cause identified: expired certificate on the gateway. Fix deployed, service resolved at 22:40.","folder":"Sent Items","from_me":true},
+ {"subject":"FW: Payment system outage","date":"2026-05-13T08:30:00","sender":"Omar Khan","to":"me","body":"Kudos for jumping on this late at night, much appreciated.","folder":"Inbox","from_me":false},
+ {"subject":"Accepted: Weekly sync","date":"2026-03-01T10:00:00","sender":"Sara Ali","to":"me","body":"","folder":"Inbox","from_me":false,"is_meeting":true},
+ {"subject":"Newsletter: company updates","date":"2026-04-01T10:00:00","sender":"Comms","to":"All","body":"news","folder":"Inbox","from_me":false},
+ {"subject":"Onboarding plan for new joiner","date":"2026-07-20T10:00:00","sender":"me","to":"Lina","body":"Welcome Lina! I'll mentor you for the first month; here is the onboarding checklist.","folder":"Sent Items","from_me":true,"categories":"Leadership"},
+ {"subject":"Automate vendor invoice matching","date":"2026-09-02T14:00:00","sender":"me","to":"AP Team","body":"I built a script to automate invoice matching, which should reduce manual work by ~6 hours a week.","folder":"Sent Items","from_me":true}
+]

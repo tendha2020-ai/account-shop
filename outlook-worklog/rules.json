@@ -1,0 +1,21 @@
+{
+  "_help": "Edit these to match YOUR job. A thread goes to the category whose keywords appear most often in its subject/body (subject hits count double). Outlook categories you set on emails win over keywords. Re-run with --from-json to apply changes without rescanning Outlook.",
+
+  "categories": {
+    "Projects & Delivery": ["project", "milestone", "deliverable", "go-live", "launch", "release", "rollout", "implementation", "deploy", "phase", "timeline", "kickoff", "sprint"],
+    "Incidents & Support": ["incident", "outage", "issue", "bug", "error", "ticket", "escalation", "urgent", "fix", "resolved", "root cause", "rca", "down ", "p1", "sev"],
+    "Reporting & Analysis": ["report", "dashboard", "analysis", "kpi", "metrics", "data ", "forecast", "variance", "insight", "numbers", "excel", "power bi"],
+    "Process Improvement": ["improve", "automation", "automate", "streamline", "efficiency", "optimize", "template", "sop", "procedure", "process", "saved", "reduce"],
+    "Stakeholder & Client": ["client", "customer", "vendor", "stakeholder", "partner", "contract", "proposal", "rfp", "negotiat", "supplier"],
+    "Leadership & Mentoring": ["mentor", "coach", "onboard", "new joiner", "training session", "led ", "team meeting", "delegate", "review of", "feedback on"],
+    "Learning & Development": ["course", "certification", "training", "workshop", "webinar", "conference", "learning", "certificate"],
+    "Governance & Compliance": ["audit", "compliance", "policy", "risk", "control", "governance", "approval", "regulation", "security"],
+    "Planning & Budget": ["budget", "plan ", "planning", "roadmap", "strategy", "cost", "invoice", "po ", "purchase order", "headcount"]
+  },
+
+  "recognition_keywords": ["thank you", "thanks a lot", "great job", "great work", "well done", "kudos", "appreciate", "appreciated", "excellent work", "fantastic", "amazing work", "shout out", "shoutout", "above and beyond", "impressive", "congratulations", "nice work", "brilliant"],
+
+  "ignore_subject_prefixes": ["accepted:", "declined:", "tentative:", "canceled:", "cancelled:", "automatic reply", "out of office", "undeliverable", "delivery status notification", "read:", "not read:", "recall:"],
+
+  "ignore_senders": ["noreply", "no-reply", "donotreply", "do-not-reply", "notifications@", "mailer-daemon", "postmaster"]
+}
