@@ -119,7 +119,24 @@ canvas.trace{width:100%;height:70px;display:block;border-radius:10px;background:
 .toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--panel2);border:1px solid var(--line);color:var(--fg);padding:10px 14px;border-radius:12px;font-size:13.5px;z-index:40;max-width:92vw;text-align:center;opacity:0;pointer-events:none;transition:opacity .2s}
 .toast.show{opacity:1}
 .countdown{position:absolute;inset:0;display:grid;place-items:center;background:rgba(0,0,0,.55);font-family:var(--display);font-size:96px;font-weight:800;color:var(--amber);z-index:5}
-@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+.liveTop{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center}
+.liveTop .lbl{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.lovenum{font-family:var(--display);font-size:64px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums;color:var(--spot);transition:transform .15s}
+.lovenum.pop{transform:scale(1.12)}
+.combo{text-align:right}
+.combo b{display:block;font-family:var(--display);font-size:30px;font-weight:800;line-height:1;color:var(--amber);font-variant-numeric:tabular-nums}
+.combo small{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.fb{min-height:24px;font-family:var(--display);font-weight:700;font-size:18px;color:var(--spot2);text-align:center;opacity:0;transform:translateY(6px);transition:opacity .2s,transform .2s}
+.fb.show{opacity:1;transform:none}
+.lovebar{height:14px;background:var(--panel2);border-radius:999px;overflow:hidden;position:relative}
+.lovebar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#ff3d8d,#ff7ab8,#ffb545);border-radius:999px;transition:width .4s ease}
+.hearts{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:6}
+.hearts span{position:absolute;bottom:8%;font-size:28px;animation:rise 1.4s ease-out forwards;filter:drop-shadow(0 2px 6px rgba(0,0,0,.5))}
+@keyframes rise{0%{transform:translateY(0) scale(.6);opacity:0}15%{opacity:1}100%{transform:translateY(-240px) scale(1.3) rotate(var(--r,0deg));opacity:0}}
+.hearts-row{font-size:30px;letter-spacing:2px;line-height:1}
+.verdict{font-family:var(--display);font-weight:800;font-size:22px;line-height:1.1;color:var(--spot2)}
+.partnerLove{position:absolute;top:10px;right:10px;z-index:7;background:rgba(13,10,20,.75);border:1px solid var(--line);border-radius:999px;padding:6px 12px;font-weight:800;font-family:var(--display);color:var(--spot2);font-size:15px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}.hearts span{display:none}}
 </style>
 </head>
 <body>
@@ -135,6 +152,8 @@ canvas.trace{width:100%;height:70px;display:block;border-radius:10px;background:
     <div class="empty" id="playerEmpty"><b>Nothing on stage yet</b><span>Pick a song from the Songs tab, or add your own.</span></div>
     <div id="yt"></div>
     <div class="countdown hidden" id="countdown">3</div>
+    <div class="hearts" id="hearts"></div>
+    <div class="partnerLove hidden" id="partnerLove">❤️ 0</div>
   </div>
 
   <div class="card now">
@@ -156,39 +175,46 @@ canvas.trace{width:100%;height:70px;display:block;border-radius:10px;background:
 
   <div class="card hidden" id="scoreChoice" style="display:grid;gap:10px">
     <b>How should this one be scored?</b>
-    <button class="btn" id="chMic" style="justify-content:flex-start;text-align:left">Mic score <span class="tip" style="margin-left:6px">this phone listens to you</span></button>
-    <button class="btn" id="chJudge" style="justify-content:flex-start;text-align:left">Partner judges <span class="tip" style="margin-left:6px">no mic; they tap hype &amp; rate you</span></button>
+    <button class="btn" id="chMic" style="justify-content:flex-start;text-align:left">Mic + love <span class="tip" style="margin-left:6px">live score from your voice, plus their ❤️ taps</span></button>
+    <button class="btn" id="chJudge" style="justify-content:flex-start;text-align:left">Love only <span class="tip" style="margin-left:6px">no mic; their ❤️ taps and rating decide</span></button>
     <div class="tip">Phones give the mic to one app at a time, so mic scoring on the same phone as the call can mute you there. Partner judging never touches the mic.</div>
     <button class="btn ghost sm" id="chCancel">Cancel</button>
   </div>
 
   <div class="card hidden" id="judgePanel" style="display:grid;gap:12px;text-align:center">
-    <div class="lbl" style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700">You are the judge</div>
+    <div class="lbl" style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700">Send love while they sing</div>
     <div style="font-family:var(--display);font-weight:700;font-size:17px" id="judgeWho">…</div>
-    <button class="btn amb" id="btnHype" style="min-height:84px;font-size:22px;border-radius:20px">🔥 HYPE <span id="hypeCount" style="font-variant-numeric:tabular-nums">0</span></button>
-    <div class="tip">Tap every time they hit it. Then rate the whole thing:</div>
-    <div class="hcap"><input type="range" id="stars" min="1" max="10" value="7"><div><b id="starsV" style="font-family:var(--display);font-size:26px;color:var(--spot2)">7</b> / 10</div></div>
-    <div class="ctr"><button class="btn pri grow" id="btnSendJudge">Send score</button></div>
+    <button class="btn pri" id="btnHype" style="min-height:96px;font-size:26px;border-radius:24px">❤️ <span id="hypeCount" style="font-variant-numeric:tabular-nums">0</span></button>
+    <div class="tip" id="judgeHint">Every tap lands on their screen as a heart and adds to their score.</div>
+    <div id="judgeRateWrap" class="hcap"><div class="tip">When they finish, rate the performance:</div><input type="range" id="stars" min="1" max="10" value="7"><div><b id="starsV" style="font-family:var(--display);font-size:26px;color:var(--spot2)">7</b> / 10</div></div>
+    <div class="ctr" id="judgeSendWrap"><button class="btn amb grow" id="btnSendJudge">Send rating</button></div>
   </div>
 
   <div class="card hidden" id="judgeWait" style="text-align:center;display:grid;gap:6px">
-    <div style="font-family:var(--display);font-weight:700;font-size:17px">Sing. They're judging.</div>
-    <div class="tip" id="judgeWaitTxt">Hype so far: 0</div>
+    <div style="font-family:var(--display);font-weight:700;font-size:17px">Sing. They're sending love.</div>
+    <div class="tip" id="judgeWaitTxt">❤️ 0 so far</div>
     <div class="ctr" style="justify-content:center"><button class="btn ghost sm" id="btnJudgeCancel">Cancel</button></div>
   </div>
 
   <div class="card meter hidden" id="scoreLive">
-    <div class="row"><span class="k">Hype</span><div class="bar"><i id="mHype"></i></div><span class="v" id="vHype">0</span></div>
-    <div class="row"><span class="k">Singing</span><div class="bar mint"><i id="mVoice"></i></div><span class="v" id="vVoice">0%</span></div>
+    <div class="liveTop">
+      <div><div class="lbl">Love score</div><div class="lovenum" id="liveScore">0</div></div>
+      <div class="combo"><b id="comboN">0</b><small>combo</small></div>
+    </div>
+    <div class="lovebar"><i id="loveBar"></i></div>
+    <div class="fb" id="fb"></div>
+    <div class="row"><span class="k">Voice</span><div class="bar mint"><i id="mVoice"></i></div><span class="v" id="vVoice">0%</span></div>
     <canvas class="trace" id="trace" width="800" height="140"></canvas>
-    <div class="ctr"><button class="btn grow" id="btnStopScore">Finish &amp; score</button><button class="btn ghost" id="btnCancelScore">Cancel</button></div>
-    <div class="tip" id="micTip">Listening. Use earphones so the mic hears you, not the track.</div>
+    <div class="ctr"><button class="btn pri grow" id="btnStopScore">Finish</button><button class="btn ghost" id="btnCancelScore">Cancel</button></div>
+    <div class="tip" id="micTip">Listening. Earphones in, so the mic hears you and not the track.</div>
   </div>
 
-  <div class="card hidden" id="scoreResult">
+  <div class="card hidden" id="scoreResult" style="display:grid;gap:10px">
+    <div class="verdict" id="rTitle">Heart-stealer</div>
+    <div class="hearts-row" id="rHearts">💗💗💗💗💗</div>
     <div class="result">
-      <div><div class="grade" id="rGrade">A</div></div>
       <div><div class="big" id="rScore">87</div></div>
+      <div class="grade" id="rGrade" style="font-size:28px">A</div>
       <div class="parts" id="rParts"></div>
     </div>
     <div class="ctr" style="margin-top:10px"><button class="btn pri grow" id="btnSaveScore">Save to season</button><button class="btn ghost" id="btnDiscard">Discard</button></div>
@@ -338,9 +364,9 @@ function onData(m){
   if(m.type==='state'){ if(ME.role==='guest'||(m.state.ts||0)>(S.ts||0)){ const prevCur=S.current&&S.current.id; S=Object.assign(S,m.state); persist(); render(); if(S.current&&S.current.id!==prevCur) loadCurrent(false); } return;}
   if(m.type==='player'){ applyRemotePlayer(m); return;}
   if(m.type==='score'){ S.history.unshift(m.entry); S.ts=Date.now(); persist(); render(); toast(`${m.entry.singer} scored ${m.entry.score}`); return;}
-  if(m.type==='judge-start'){ judging={song:m.song,singer:m.singer,taps:0}; $('judgeWho').textContent=`${m.singer} · ${m.song}`; $('hypeCount').textContent='0'; $('stars').value=7; $('starsV').textContent='7'; $('judgePanel').classList.remove('hidden'); showView('stage'); toast(`${m.singer} is singing. You judge.`); return;}
-  if(m.type==='judge-tap'){ $('judgeWaitTxt').textContent='Hype so far: '+m.taps; return;}
-  if(m.type==='judge-cancel'){ judging=null; $('judgePanel').classList.add('hidden'); toast('Judging cancelled'); return;}
+  if(m.type==='judge-start'){ judging={song:m.song,singer:m.singer,taps:0,mode:m.mode||'judge'}; $('judgeWho').textContent=`${m.singer} · ${m.song}`; $('hypeCount').textContent='0'; $('stars').value=7; $('starsV').textContent='7'; const micMode=judging.mode==='mic'; $('judgeRateWrap').classList.toggle('hidden',micMode); $('judgeSendWrap').classList.toggle('hidden',micMode); $('judgePanel').classList.remove('hidden'); showView('stage'); toast(`${m.singer} is singing. Send love.`); return;}
+  if(m.type==='judge-tap'){ loveTaps=m.taps; $('judgeWaitTxt').textContent='❤️ '+m.taps+' so far'; $('partnerLove').textContent='❤️ '+m.taps; $('partnerLove').classList.remove('hidden'); spawnHeart(); if(scoring){ flash(['💗 Love from '+S.names[1-ME.slot],'❤️ They felt that','💞 Aww'][m.taps%3]); } return;}
+  if(m.type==='judge-cancel'){ judging=null; $('judgePanel').classList.add('hidden'); toast('Round over'); return;}
   if(m.type==='judged'){ if(!awaitingJudge)return; awaitingJudge=false; $('judgeWait').classList.add('hidden'); showJudgedResult(m.taps,m.stars); return;}
 }
 let rejoinTimer=null;
@@ -441,14 +467,33 @@ async function startScore(){
     mic=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
   }catch(e){ toast('Mic blocked. Allow the microphone, or open the page in a regular browser.'); return; }
   const src=audio.createMediaStreamSource(mic); an=audio.createAnalyser(); an.fftSize=2048; src.connect(an); buf=new Float32Array(an.fftSize);
-  frames={total:0,voiced:0,midi:[],rms:[],stable:0,hype:0}; noiseFloor=0.004; calibUntil=performance.now()+900;
+  frames={total:0,voiced:0,midi:[],rms:[],stable:0,hype:0,secs:[],combo:0,bestCombo:0,loud:0}; noiseFloor=0.004; calibUntil=performance.now()+900; loveTaps=0; lastMidi=null; trace=[]; lastSec=0; secAcc={n:0,v:0,st:0,rms:0}; live=0;
+  $('liveScore').textContent='0'; $('loveBar').style.width='0%'; $('comboN').textContent='0'; $('partnerLove').textContent='❤️ 0'; $('partnerLove').classList.toggle('hidden',!(conn&&conn.open)); $('hearts').innerHTML='';
   scoring=true; $('scoreLive').classList.remove('hidden'); $('scoreResult').classList.add('hidden'); $('btnScore').disabled=true;
+  if(conn&&conn.open) send({type:'judge-start',song:S.current.t,singer:S.names[S.turn],mode:'mic'});
   $('micTip').textContent='Calibrating… stay quiet for a second.';
   const cd=$('countdown'); let n=3; cd.textContent=n; cd.classList.remove('hidden');
   const iv=setInterval(()=>{n--; if(n<=0){clearInterval(iv);cd.classList.add('hidden'); if(yt&&S.current.y){ yt.seekTo(0,true); yt.playVideo(); send({type:'player',cmd:'play',t:0}); } $('micTip').textContent='Listening. Use earphones so the mic hears you, not the track.'; } else cd.textContent=n;},1000);
   tick();
 }
-let lastMidi=null, trace=[];
+let lastMidi=null, trace=[], loveTaps=0, lastSec=0, secAcc={n:0,v:0,st:0,rms:0}, live=0, fbT=0;
+const FB_GOOD=['💗 Perfect hold','✨ Gorgeous','🔥 Power!','💞 Smooth','🎯 Locked in','💫 Shimmer'];
+const FB_RANGE=['🚀 Big range','🌈 Those highs!','🎢 Range!'];
+const FB_QUIET=['🎤 Louder, star','💤 Sing to me','👀 Where did you go?'];
+function flash(t){ const e=$('fb'); e.textContent=t; e.classList.add('show'); clearTimeout(fbT); fbT=setTimeout(()=>e.classList.remove('show'),1100); }
+function spawnHeart(n){ const box=$('hearts'); const k=n||1; for(let i=0;i<k;i++){ const s=document.createElement('span'); s.textContent=['❤️','💗','💖','💘','💕'][Math.floor(Math.random()*5)]; s.style.left=(10+Math.random()*80)+'%'; s.style.setProperty('--r',(Math.random()*60-30)+'deg'); s.style.animationDelay=(Math.random()*.2)+'s'; box.appendChild(s); setTimeout(()=>s.remove(),1700);} }
+function liveMetrics(f){
+  const vr=f.total?f.voiced/f.total:0;
+  const presence=Math.min(1,vr/0.5)*40;
+  const control=(f.voiced?Math.min(1,(f.stable/f.voiced)/0.7):0)*25;
+  let span=0; if(f.midi.length>20){ const s=f.midi.slice().sort((a,b)=>a-b); const p=q=>s[Math.floor(q*(s.length-1))]; span=p(0.95)-p(0.05); }
+  const range=Math.min(1,span/12)*15;
+  let dyn=0; if(f.rms.length>20){const mean=f.rms.reduce((a,b)=>a+b,0)/f.rms.length; const sd=Math.sqrt(f.rms.reduce((a,b)=>a+(b-mean)**2,0)/f.rms.length); dyn=Math.min(1,(sd/mean)/0.5)*10;}
+  const combo=Math.min(1,f.bestCombo/12)*10;
+  const voice=presence+control+range+dyn+combo;            // 0–100 from the mic
+  const love=Math.min(15,loveTaps*1.5);                      // partner taps, up to +15
+  return {vr,presence,control,span,range,dyn,combo,voice,love,raw:Math.min(100,voice*0.9+love)};
+}
 function tick(){
   if(!scoring)return;
   an.getFloatTimeDomainData(buf);
@@ -460,10 +505,22 @@ function tick(){
     frames.total++;
     if(r.hz>0){ const m=hzToMidi(r.hz); frames.voiced++; frames.midi.push(m); frames.rms.push(r.rms); if(lastMidi!==null&&Math.abs(m-lastMidi)<0.7)frames.stable++; lastMidi=m; trace.push(m);} else { lastMidi=null; trace.push(null); }
     if(trace.length>160)trace.shift();
-    const recent=trace.slice(-30).filter(x=>x!==null).length/30;
-    frames.hype=frames.hype*0.9+Math.min(1,(r.rms>0?r.rms*18:0)+recent*0.5)*0.1;
-    $('mHype').style.width=Math.round(frames.hype*100)+'%'; $('vHype').textContent=Math.round(frames.hype*100);
-    const vr=frames.total?frames.voiced/frames.total:0; $('mVoice').style.width=Math.round(vr*100)+'%'; $('vVoice').textContent=Math.round(vr*100)+'%';
+    // per-second bucket for live feedback + combo
+    secAcc.n++; if(r.hz>0){secAcc.v++; secAcc.rms+=r.rms; if(lastMidi!==null)secAcc.st++;}
+    const sec=Math.floor(now/1000);
+    if(sec!==lastSec && secAcc.n>10){
+      const sv=secAcc.v/secAcc.n;
+      if(sv>0.45){ frames.combo++; frames.bestCombo=Math.max(frames.bestCombo,frames.combo);
+        if(frames.combo%4===0){ flash(FB_GOOD[Math.floor(Math.random()*FB_GOOD.length)]); spawnHeart(2); }
+        if(frames.combo%10===0){ flash('🔥 '+frames.combo+' combo!'); spawnHeart(5); }
+      } else { if(frames.combo>=4) flash(FB_QUIET[Math.floor(Math.random()*FB_QUIET.length)]); frames.combo=0; }
+      const recentMidi=frames.midi.slice(-120); if(recentMidi.length>40){ const mx=Math.max(...recentMidi), mn=Math.min(...recentMidi); if(mx-mn>9 && Math.random()<0.5){ flash(FB_RANGE[Math.floor(Math.random()*FB_RANGE.length)]); spawnHeart(2);} }
+      const m=liveMetrics(frames); const target=Math.round(m.raw*S.hcap[S.turn]);
+      if(target>live){ live=Math.min(100,target); const el=$('liveScore'); el.textContent=live; el.classList.add('pop'); setTimeout(()=>el.classList.remove('pop'),150); }
+      $('loveBar').style.width=live+'%'; $('comboN').textContent=frames.combo;
+      $('mVoice').style.width=Math.round(m.vr*100)+'%'; $('vVoice').textContent=Math.round(m.vr*100)+'%';
+      lastSec=sec; secAcc={n:0,v:0,st:0,rms:0};
+    }
     drawTrace();
   }
   rafId=requestAnimationFrame(tick);
@@ -478,48 +535,45 @@ function drawTrace(){
 }
 function stopMic(){ scoring=false; cancelAnimationFrame(rafId); if(mic){mic.getTracks().forEach(t=>t.stop());mic=null;} $('scoreLive').classList.add('hidden'); $('btnScore').disabled=!S.current; }
 let pendingResult=null;
+function verdict(score){
+  return score>=90?['Heart-stealer 💘',5]:score>=80?['Swoon-worthy 💞',4]:score>=65?['Made me smile 💗',3]:score>=50?['Warming up 💓',2]:['Shower-singer energy 🚿',1];
+}
+function showResult(score,raw,parts,by){
+  const singerSlot=S.turn; const grade=score>=90?'S':score>=80?'A':score>=65?'B':score>=50?'C':'D'; const [title,hearts]=verdict(score);
+  pendingResult={song:S.current.t,singer:S.names[singerSlot],slot:singerSlot,score,raw:Math.round(raw),grade,hearts,date:new Date().toISOString().slice(0,10),season:S.season,by};
+  $('rTitle').textContent=title; $('rHearts').textContent='💗'.repeat(hearts)+'🤍'.repeat(5-hearts);
+  $('rGrade').textContent=grade; $('rScore').textContent=score; $('rParts').innerHTML=parts+(S.hcap[singerSlot]>1?`<span>Boost ×${S.hcap[singerSlot].toFixed(2)} applied</span>`:'');
+  $('scoreResult').classList.remove('hidden'); $('btnScore').disabled=false; spawnHeart(hearts*2);
+}
 function finishScore(){
-  if(!scoring)return; stopMic(); if(yt&&yt.getPlayerState()===1){yt.pauseVideo();}
-  const f=frames; const secs=f.total/60;
+  if(!scoring)return; stopMic(); if(yt&&yt.getPlayerState()===1){yt.pauseVideo();} $('partnerLove').classList.add('hidden');
+  if(conn&&conn.open) send({type:'judge-cancel'});
+  const f=frames;
   if(f.total<120){ toast('Too short to score. Sing at least a few seconds.'); return; }
-  const voicedRatio=f.voiced/f.total;
-  const presence=Math.min(1,voicedRatio/0.55)*40;
-  const control=(f.voiced?Math.min(1,(f.stable/f.voiced)/0.75):0)*30;
-  const sorted=f.midi.slice().sort((a,b)=>a-b); const p=q=>sorted[Math.floor(q*(sorted.length-1))]||0;
-  const span=sorted.length?p(0.95)-p(0.05):0; const range=Math.min(1,span/14)*15;
-  let dyn=0; if(f.rms.length>10){const mean=f.rms.reduce((a,b)=>a+b,0)/f.rms.length; const sd=Math.sqrt(f.rms.reduce((a,b)=>a+(b-mean)**2,0)/f.rms.length); dyn=Math.min(1,(sd/mean)/0.55)*15;}
-  const raw=presence+control+range+dyn;
-  const singerSlot=S.turn; const boosted=Math.min(100,Math.round(raw*S.hcap[singerSlot]));
-  const grade=boosted>=90?'S':boosted>=80?'A':boosted>=65?'B':boosted>=50?'C':'D';
-  pendingResult={song:S.current.t,singer:S.names[singerSlot],slot:singerSlot,score:boosted,raw:Math.round(raw),grade,date:new Date().toISOString().slice(0,10),season:S.season};
-  $('rGrade').textContent=grade; $('rScore').textContent=boosted;
-  $('rParts').innerHTML=`<span>Presence <b>${Math.round(presence)}</b>/40</span><span>Control <b>${Math.round(control)}</b>/30</span><span>Range <b>${Math.round(range)}</b>/15 · ${span.toFixed(0)} semitones</span><span>Dynamics <b>${Math.round(dyn)}</b>/15</span>${S.hcap[singerSlot]>1?`<span>Boost ×${S.hcap[singerSlot].toFixed(2)} applied</span>`:''}`;
-  $('scoreResult').classList.remove('hidden');
+  const m=liveMetrics(f); const score=Math.min(100,Math.max(live,Math.round(m.raw*S.hcap[S.turn])));
+  showResult(score,m.raw,`<span>Voice <b>${Math.round(m.voice)}</b>/100</span><span>Longest combo <b>${f.bestCombo}s</b></span><span>Range <b>${m.span.toFixed(0)}</b> semitones</span>${(conn&&conn.open)?`<span>Love from ${esc(S.names[1-ME.slot])} <b>${loveTaps}</b> ❤️ → +${Math.round(m.love)}</span>`:''}`,'mic');
 }
 $('btnScore').onclick=()=>{ if(!S.current){toast('Put a song on stage first');return;} if(conn&&conn.open){ $('scoreChoice').classList.remove('hidden'); } else startScore(); };
 $('chMic').onclick=()=>{$('scoreChoice').classList.add('hidden');startScore();};
 $('chCancel').onclick=()=>$('scoreChoice').classList.add('hidden');
 let judging=null, awaitingJudge=false;
 $('chJudge').onclick=()=>{
-  $('scoreChoice').classList.add('hidden'); awaitingJudge=true; $('judgeWaitTxt').textContent='Hype so far: 0'; $('judgeWait').classList.remove('hidden'); $('btnScore').disabled=true;
-  send({type:'judge-start',song:S.current.t,singer:S.names[S.turn]});
+  $('scoreChoice').classList.add('hidden'); awaitingJudge=true; loveTaps=0; $('judgeWaitTxt').textContent='❤️ 0 so far'; $('judgeWait').classList.remove('hidden'); $('btnScore').disabled=true; $('partnerLove').textContent='❤️ 0'; $('partnerLove').classList.remove('hidden'); $('hearts').innerHTML='';
+  send({type:'judge-start',song:S.current.t,singer:S.names[S.turn],mode:'judge'});
   if(yt&&S.current.y){ yt.seekTo(0,true); yt.playVideo(); send({type:'player',cmd:'play',t:0}); }
 };
 $('btnJudgeCancel').onclick=()=>{awaitingJudge=false;$('judgeWait').classList.add('hidden');$('btnScore').disabled=false;send({type:'judge-cancel'});};
-$('btnHype').onclick=()=>{ if(!judging)return; judging.taps++; $('hypeCount').textContent=judging.taps; send({type:'judge-tap',taps:judging.taps}); if(navigator.vibrate)navigator.vibrate(15); };
+$('btnHype').onclick=()=>{ if(!judging)return; judging.taps++; $('hypeCount').textContent=judging.taps; send({type:'judge-tap',taps:judging.taps}); spawnHeart(); if(navigator.vibrate)navigator.vibrate(15); };
 $('stars').addEventListener('input',()=>$('starsV').textContent=$('stars').value);
-$('btnSendJudge').onclick=()=>{ if(!judging)return; send({type:'judged',taps:judging.taps,stars:+$('stars').value}); $('judgePanel').classList.add('hidden'); toast('Score sent'); judging=null; };
+$('btnSendJudge').onclick=()=>{ if(!judging)return; send({type:'judged',taps:judging.taps,stars:+$('stars').value}); $('judgePanel').classList.add('hidden'); toast('Rating sent'); judging=null; };
 function showJudgedResult(taps,stars){
-  const singerSlot=S.turn; const raw=Math.min(100,stars*7+Math.min(30,taps*1.5)); const boosted=Math.min(100,Math.round(raw*S.hcap[singerSlot]));
-  const grade=boosted>=90?'S':boosted>=80?'A':boosted>=65?'B':boosted>=50?'C':'D';
-  pendingResult={song:S.current.t,singer:S.names[singerSlot],slot:singerSlot,score:boosted,raw:Math.round(raw),grade,date:new Date().toISOString().slice(0,10),season:S.season,by:'judge'};
-  $('rGrade').textContent=grade; $('rScore').textContent=boosted;
-  $('rParts').innerHTML=`<span>Judge rating <b>${stars}</b>/10 → ${stars*7}</span><span>Hype taps <b>${taps}</b> → ${Math.min(30,Math.round(taps*1.5))}/30</span>${S.hcap[singerSlot]>1?`<span>Boost ×${S.hcap[singerSlot].toFixed(2)} applied</span>`:''}`;
-  $('scoreResult').classList.remove('hidden'); $('btnScore').disabled=false;
+  $('partnerLove').classList.add('hidden');
+  const raw=Math.min(100,stars*7+Math.min(30,taps*1.5)); const score=Math.min(100,Math.round(raw*S.hcap[S.turn]));
+  showResult(score,raw,`<span>${esc(S.names[1-ME.slot])}'s rating <b>${stars}</b>/10 → ${stars*7}</span><span>Love taps <b>${taps}</b> ❤️ → ${Math.min(30,Math.round(taps*1.5))}/30</span>`,'judge');
 }
 $('btnStopScore').onclick=finishScore;
-$('btnCancelScore').onclick=()=>{stopMic();toast('Scoring cancelled');};
-$('btnSaveScore').onclick=()=>{ if(!pendingResult)return; S.history.unshift(pendingResult); send({type:'score',entry:pendingResult}); pendingResult=null; $('scoreResult').classList.add('hidden'); S.turn=1-S.turn; commit(); toast('Saved. Next singer: '+S.names[S.turn]); };
+$('btnCancelScore').onclick=()=>{stopMic();$('partnerLove').classList.add('hidden');if(conn&&conn.open)send({type:'judge-cancel'});toast('Scoring cancelled');};
+$('btnSaveScore').onclick=()=>{ if(!pendingResult)return; S.history.unshift(pendingResult); send({type:'score',entry:pendingResult}); pendingResult=null; $('scoreResult').classList.add('hidden'); S.turn=1-S.turn; commit(); toast('Saved. Your turn, '+S.names[S.turn]); };
 $('btnDiscard').onclick=()=>{pendingResult=null;$('scoreResult').classList.add('hidden');};
 
 // ===== Songs view =====
@@ -562,7 +616,7 @@ function render(){
   // scores
   const hist=S.history.filter(h=>h.season===S.season);
   [0,1].forEach(i=>{const rows=hist.filter(h=>h.slot===i);const pts=rows.reduce((a,b)=>a+b.score,0);$('tName'+'AB'[i]).textContent=S.names[i];$('tPts'+'AB'[i]).textContent=pts;$('tSub'+'AB'[i]).textContent=rows.length+' song'+(rows.length===1?'':'s')+(rows.length?' · best '+Math.max(...rows.map(r=>r.score)):'');});
-  $('histBody').innerHTML=hist.map(h=>`<tr><td>${esc(h.song)}<div class="tip">${h.date}${h.by==='judge'?' · judged':''}</div></td><td>${esc(h.singer)}</td><td class="num">${h.score} <span style="color:var(--spot2)">${h.grade}</span></td></tr>`).join('');
+  $('histBody').innerHTML=hist.map(h=>`<tr><td>${esc(h.song)}<div class="tip">${h.date}${h.by==='judge'?' · judged':''}</div></td><td>${esc(h.singer)}</td><td class="num">${h.score} <span style="color:var(--spot2)">${'💗'.repeat(h.hearts||verdict(h.score)[1])}</span></td></tr>`).join('');
   const pA=hist.filter(h=>h.slot===0).reduce((a,b)=>a+b.score,0), pB=hist.filter(h=>h.slot===1).reduce((a,b)=>a+b.score,0);
   $('h2h').textContent=!hist.length?'No scores yet this season.':pA===pB?`Dead even at ${pA} each.`:`${S.names[pA>pB?0:1]} leads by ${Math.abs(pA-pB)} after ${hist.length} song${hist.length===1?'':'s'}.`;
   $('histEmpty').classList.toggle('hidden',hist.length>0);
