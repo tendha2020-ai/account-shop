@@ -236,12 +236,12 @@ canvas.trace{width:100%;height:70px;display:block;border-radius:10px;background:
   <div class="card" style="display:grid;gap:12px">
     <h3 style="font-size:16px">Players &amp; handicap</h3>
     <div class="two">
-      <div class="field"><label for="nameA">Player 1</label><input class="in" id="nameA" placeholder="Moha"></div>
-      <div class="field"><label for="nameB">Player 2</label><input class="in" id="nameB" placeholder="Viki"></div>
+      <div class="field"><label for="nameA">Singer 1</label><input class="in" id="nameA" value="Moha" readonly></div>
+      <div class="field"><label for="nameB">Singer 2</label><input class="in" id="nameB" value="Viki" readonly></div>
     </div>
     <div class="two">
-      <div class="hcap"><label style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700">P1 boost <b id="hA">×1.00</b></label><input type="range" id="hcapA" min="100" max="160" step="5" value="100"></div>
-      <div class="hcap"><label style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700">P2 boost <b id="hB">×1.00</b></label><input type="range" id="hcapB" min="100" max="160" step="5" value="100"></div>
+      <div class="hcap"><label style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700">Moha boost <b id="hA">×1.00</b></label><input type="range" id="hcapA" min="100" max="160" step="5" value="100"></div>
+      <div class="hcap"><label style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700">Viki boost <b id="hB">×1.00</b></label><input type="range" id="hcapB" min="100" max="160" step="5" value="100"></div>
     </div>
     <div class="tip">Give the weaker singer a boost so rounds stay close. Scores are capped at 100.</div>
   </div>
@@ -262,8 +262,13 @@ canvas.trace{width:100%;height:70px;display:block;border-radius:10px;background:
 <!-- SETUP -->
 <div class="overlay" id="setup">
   <div class="box">
-    <h2>Same song,<br>two phones,<br><span>one stage.</span></h2>
-    <div class="field"><label for="myName">Your name</label><input class="in" id="myName" placeholder="Name" autocomplete="off"></div>
+    <h2>Moha <span>&amp;</span> Viki,<br>one stage.</h2>
+    <div class="field"><label>Who are you?</label>
+      <div class="two" id="whoPick">
+        <button class="btn pri" data-who="0" id="whoA" style="min-height:52px;font-size:17px">Moha</button>
+        <button class="btn" data-who="1" id="whoB" style="min-height:52px;font-size:17px">Viki</button>
+      </div>
+    </div>
     <div class="card" style="display:grid;gap:10px">
       <b>Create a room</b>
       <div class="tip">You get a 4-letter code. Send it on the call; the other person joins with it. Queue, turns, play/pause and scores stay in sync.</div>
@@ -301,9 +306,11 @@ CATALOG.forEach((s,i)=>s.id='c'+i);
 const $=id=>document.getElementById(id);
 const LS='duetk.v1';
 let S={names:['Moha','Viki'],hcap:[1,1],turn:0,queue:[],current:null,custom:[],history:[],ts:0,season:1};
-let ME={name:'',slot:0,role:'solo'};   // slot 0 = Player 1 (host), 1 = Player 2 (guest)
-try{const saved=JSON.parse(localStorage.getItem(LS)||'null'); if(saved){S=Object.assign(S,saved);} const mn=localStorage.getItem(LS+'.me'); if(mn) ME.name=mn;}catch(e){}
-function persist(){try{localStorage.setItem(LS,JSON.stringify(S));localStorage.setItem(LS+'.me',ME.name);}catch(e){}}
+const NAMES=['Moha','Viki'];
+let ME={name:NAMES[0],slot:0,role:'solo'};   // slot = which of the two this phone is; role = host/guest/solo
+try{const saved=JSON.parse(localStorage.getItem(LS)||'null'); if(saved){S=Object.assign(S,saved);} const ms=localStorage.getItem(LS+'.slot'); if(ms==='1'){ME.slot=1;ME.name=NAMES[1];}}catch(e){}
+S.names=NAMES.slice();
+function persist(){try{localStorage.setItem(LS,JSON.stringify(S));localStorage.setItem(LS+'.slot',String(ME.slot));}catch(e){}}
 function allSongs(){return CATALOG.concat(S.custom);}
 function songById(id){return allSongs().find(s=>s.id===id);}
 function toast(m){const t=$('toast');t.textContent=m;t.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>t.classList.remove('show'),2200);}
@@ -319,7 +326,7 @@ function commit(){S.ts=Date.now();persist();render();send({type:'state',state:S}
 function wire(c){
   conn=c;
   c.on('open',()=>{const code=(c.metadata&&c.metadata.code)||'';setDot('on',(ME.role==='host'?'Host · ':'Linked · ')+code);$('hostWait').classList.add('hidden');toast('Connected');
-    send({type:'hello',name:ME.name});
+    send({type:'hello',name:ME.name,slot:ME.slot});
     if(ME.role==='host'){send({type:'state',state:S});}});
   c.on('data',onData);
   c.on('close',()=>{ setDot('wait',ME.role==='guest'?'Reconnecting':'Waiting for them'); if(ME.role==='guest'){ toast('Connection dropped, rejoining…'); rejoin(); } else { toast('They disconnected. Room stays open for them to rejoin.'); } });
@@ -327,7 +334,7 @@ function wire(c){
 }
 function onData(m){
   if(!m||!m.type)return;
-  if(m.type==='hello'){const slot=ME.role==='host'?1:0; if(m.name){S.names[slot]=m.name;} if(ME.role==='host'){commit();} else render(); return;}
+  if(m.type==='hello'){ if(typeof m.slot==='number'&&m.slot===ME.slot){ toast(`You both picked ${NAMES[ME.slot]}. Tap the room chip to change.`); } if(ME.role==='host'){commit();} else render(); return;}
   if(m.type==='state'){ if(ME.role==='guest'||(m.state.ts||0)>(S.ts||0)){ const prevCur=S.current&&S.current.id; S=Object.assign(S,m.state); persist(); render(); if(S.current&&S.current.id!==prevCur) loadCurrent(false); } return;}
   if(m.type==='player'){ applyRemotePlayer(m); return;}
   if(m.type==='score'){ S.history.unshift(m.entry); S.ts=Date.now(); persist(); render(); toast(`${m.entry.singer} scored ${m.entry.score}`); return;}
@@ -345,7 +352,7 @@ function rejoin(){
   rejoinTimer=setTimeout(()=>{ if(!(conn&&conn.open)) rejoin(); },6000);
 }
 function hostRoom(){
-  const code=mkCode(); ME.role='host'; ME.slot=0; if(ME.name)S.names[0]=ME.name;
+  const code=mkCode(); ME.role='host';
   $('setup').classList.add('hidden'); $('hostWait').classList.remove('hidden'); $('hostCode').textContent=code; setDot('wait','Host · '+code);
   try{ peer=new Peer('duetk-'+code,{debug:0}); }catch(e){ toast('Sync library not available; running solo'); return; }
   peer.on('open',()=>setDot('wait','Host · '+code));
@@ -354,13 +361,13 @@ function hostRoom(){
 }
 function joinRoom(){
   const code=$('joinCode').value.trim().toUpperCase(); if(code.length!==4){$('setupMsg').textContent='Enter the 4-letter code.';return;}
-  ME.role='guest'; ME.slot=1; if(ME.name)S.names[1]=ME.name; setDot('wait','Joining '+code); try{localStorage.setItem(LS+'.code',code);}catch(e){}
+  ME.role='guest'; setDot('wait','Joining '+code); try{localStorage.setItem(LS+'.code',code);}catch(e){}
   $('setupMsg').textContent='Connecting…';
   try{ peer=new Peer({debug:0}); }catch(e){ $('setupMsg').textContent='Sync library did not load.'; return; }
   peer.on('open',()=>{ const c=peer.connect('duetk-'+code,{reliable:true,metadata:{code}}); wire(c); $('setup').classList.add('hidden'); });
   peer.on('error',e=>{ $('setupMsg').textContent= e.type==='peer-unavailable' ? 'No room with that code is open right now.' : 'Could not connect ('+e.type+').'; setDot('', 'Solo'); });
 }
-function goSolo(){ ME.role='solo'; ME.slot=0; if(ME.name)S.names[0]=ME.name; $('setup').classList.add('hidden'); setDot('','Solo'); render(); }
+function goSolo(){ ME.role='solo'; $('setup').classList.add('hidden'); setDot('','Solo'); render(); }
 
 // ===== YouTube player (IFrame API) =====
 let yt=null, ytReady=false, pendingLoad=null, suppress=0;
@@ -547,7 +554,7 @@ $('btnAddCustom').onclick=()=>{
 function render(){
   const cur=S.current;
   $('whoBadge').textContent=S.names[S.turn].slice(0,1).toUpperCase(); $('whoBadge').className='who'+(S.turn===1?' b':'');
-  $('nowLbl').textContent=cur?('Now singing · '+S.names[S.turn]):('Up next · '+S.names[S.turn]);
+  $('nowLbl').textContent=(cur?'Now singing · ':'Up next · ')+S.names[S.turn]+(S.turn===ME.slot?' (you)':'');
   $('nowSong').textContent=cur?cur.t:'Choose a song'; $('nowArt').innerHTML=cur?esc(cur.a):'&nbsp;';
   $('btnScore').disabled=!cur||scoring; if(!cur){$('btnPlay').disabled=true;}
   $('qCount').textContent=S.queue.length?`· ${S.queue.length}`:'';
@@ -564,14 +571,16 @@ function render(){
   renderSongs();
 }
 $('queueList').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return; if(b.dataset.s)putOnStage(b.dataset.s,true); if(b.dataset.x){S.queue=S.queue.filter(q=>q!==b.dataset.x);commit();}});
-['A','B'].forEach((k,i)=>{ $('name'+k).addEventListener('change',()=>{S.names[i]=$('name'+k).value.trim()||['Moha','Viki'][i]; if(i===ME.slot)ME.name=S.names[i]; commit();}); $('hcap'+k).addEventListener('input',()=>{S.hcap[i]=+$('hcap'+k).value/100;$('h'+k).textContent='×'+S.hcap[i].toFixed(2);}); $('hcap'+k).addEventListener('change',commit); });
+['A','B'].forEach((k,i)=>{ $('hcap'+k).addEventListener('input',()=>{S.hcap[i]=+$('hcap'+k).value/100;$('h'+k).textContent='×'+S.hcap[i].toFixed(2);}); $('hcap'+k).addEventListener('change',commit); });
 $('btnResetSeason').onclick=()=>{S.season++;commit();toast('New season started');};
 
 // ===== Tabs / setup =====
 function showView(v){document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id==='v-'+v));document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.v===v));}
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>showView(t.dataset.v));
-$('myName').value=ME.name; try{$('joinCode').value=localStorage.getItem(LS+'.code')||'';}catch(e){}
-$('myName').addEventListener('input',()=>{ME.name=$('myName').value.trim();});
+try{$('joinCode').value=localStorage.getItem(LS+'.code')||'';}catch(e){}
+function setWho(i){ ME.slot=i; ME.name=NAMES[i]; $('whoA').classList.toggle('pri',i===0); $('whoB').classList.toggle('pri',i===1); S.turn=S.turn; persist(); render(); }
+$('whoPick').addEventListener('click',e=>{const b=e.target.closest('button');if(b)setWho(+b.dataset.who);});
+setWho(ME.slot);
 $('btnHost').onclick=hostRoom; $('btnJoin').onclick=joinRoom; $('btnSolo').onclick=goSolo;
 $('btnHostSkip').onclick=()=>$('hostWait').classList.add('hidden');
 $('btnCopyCode').onclick=()=>{const c=$('hostCode').textContent;(navigator.clipboard?navigator.clipboard.writeText(c):Promise.reject()).then(()=>toast('Copied '+c),()=>toast('Code: '+c));};
