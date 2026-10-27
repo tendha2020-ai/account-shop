@@ -13,8 +13,44 @@
   --fg:#f3edf7; --muted:#9d93ad;
   --spot:#ff3d8d; --spot2:#ff7ab8; --amber:#ffb545; --mint:#4fe3b0; --red:#ff5e5e;
   --display:'Syne',ui-sans-serif,system-ui,sans-serif; --body:'Manrope',ui-sans-serif,system-ui,sans-serif;
+  --glow:rgba(255,61,141,.28); --ink:#1a0610; --ink2:#2a1800;
   color-scheme:dark;
 }
+/* Themes: picked per viewer, stored on this phone */
+body[data-th="sunset"]{--bg:#1a0f12;--panel:#261519;--panel2:#331c20;--line:#4a2a2e;--fg:#fff1e8;--muted:#c49a8c;--spot:#ff6b4a;--spot2:#ff9a7a;--amber:#ffc857;--mint:#7be0c3;--glow:rgba(255,107,74,.3)}
+body[data-th="snow"]{--bg:#0b1220;--panel:#121b2e;--panel2:#1a2540;--line:#28365a;--fg:#eef3ff;--muted:#93a3c7;--spot:#7cc4ff;--spot2:#b3dcff;--amber:#ffd97a;--mint:#9af0d5;--glow:rgba(124,196,255,.25);--ink:#06131f;--ink2:#1e1600}
+body[data-th="y2k"]{--bg:#1c0b1f;--panel:#2a1030;--panel2:#3a1742;--line:#55256a;--fg:#fff0fb;--muted:#c9a0d6;--spot:#ff4fd8;--spot2:#ff9af0;--amber:#c7ff4a;--mint:#5df2ff;--glow:rgba(255,79,216,.3);--ink:#2a0424;--ink2:#1a2200}
+body{background-image:radial-gradient(60% 35% at 50% -5%,var(--glow),transparent 70%)}
+.btn.pri{color:var(--ink)} .btn.amb{color:var(--ink2)} .now .who{color:var(--ink)} .f.on{color:var(--ink)}
+.themes{display:flex;gap:8px;flex-wrap:wrap}
+.themes button{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;border:1px solid var(--line);background:var(--panel2);font-weight:700;font-size:13px}
+.themes button.on{outline:2px solid var(--spot)}
+.themes i{width:16px;height:16px;border-radius:50%;display:inline-block}
+.duetbar{display:grid;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:10px 12px}
+.duetbar .who2{display:flex;justify-content:space-between;font-family:var(--display);font-weight:800;font-size:18px}
+.duetbar .who2 span.off{color:var(--muted);font-weight:500}
+.duetbar .seg{height:8px;background:var(--panel2);border-radius:999px;overflow:hidden}
+.duetbar .seg i{display:block;height:100%;width:0;background:var(--spot);transition:width .25s linear}
+.duetbar.b .seg i{background:var(--amber)}
+.curtain{position:absolute;inset:0;z-index:8;display:grid;place-items:center;background:linear-gradient(135deg,var(--panel2),var(--bg));text-align:center;padding:16px;gap:6px}
+.curtain b{font-family:var(--display);font-size:22px}
+.curtain .q{font-family:var(--display);font-size:72px;font-weight:800;color:var(--spot);line-height:1}
+.badges{display:flex;gap:8px;flex-wrap:wrap}
+.badge{display:flex;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:8px 10px;font-size:12.5px;font-weight:700;min-width:0}
+.badge .e{font-size:20px}
+.badge.lock{opacity:.4;filter:grayscale(1)}
+.badge small{display:block;font-weight:500;color:var(--muted);font-size:11px}
+.tuner{display:grid;gap:10px;text-align:center}
+.tuner .note{font-family:var(--display);font-size:64px;font-weight:800;line-height:1;color:var(--spot)}
+.tuner .needle{position:relative;height:14px;background:var(--panel2);border-radius:999px;overflow:hidden}
+.tuner .needle i{position:absolute;top:0;bottom:0;width:6px;left:50%;background:var(--amber);border-radius:3px;transition:left .1s linear}
+.tuner .needle:before{content:"";position:absolute;left:calc(50% - 1px);top:0;bottom:0;width:2px;background:var(--mint)}
+.memo{display:flex;align-items:center;gap:10px;background:var(--panel2);border-radius:12px;padding:10px 12px}
+.memo .n{flex:1;min-width:0;font-size:13px}
+.memo .n b{display:block;overflow-wrap:anywhere}
+.memo audio{width:140px;height:32px}
+.bigcount{position:absolute;inset:0;z-index:9;display:grid;place-items:center;pointer-events:none;font-family:var(--display);font-weight:800;font-size:110px;color:var(--amber);text-shadow:0 4px 24px rgba(0,0,0,.6)}
+.bigcount.sing{font-size:64px;color:var(--spot2)}
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 var(--body);
@@ -169,6 +205,18 @@ canvas.trace{width:100%;height:70px;display:block;border-radius:10px;background:
     <div class="countdown hidden" id="countdown">3</div>
     <div class="hearts" id="hearts"></div>
     <div class="partnerLove hidden" id="partnerLove">❤️ 0</div>
+    <div class="curtain hidden" id="curtain"><div class="q">?</div><b id="curtainT">Secret song</b><span class="tip" id="curtainS"></span><button class="btn pri" id="curtainBtn">Reveal &amp; sing</button></div>
+    <div class="curtain hidden" id="introCover"><div class="q">🎧</div><b id="introT">Listen…</b><span class="tip" id="introS">Guess the song from the intro</span></div>
+    <div class="bigcount hidden" id="bigcount"></div>
+  </div>
+  <div class="duetbar hidden" id="duetbar"><div class="who2"><span id="duetL">Modi</span><span id="duetR">Viki</span></div><div class="seg"><i id="duetSeg"></i></div><div class="tip" id="duetHint">Your line</div></div>
+  <div class="card hidden" id="introGame" style="display:grid;gap:10px">
+    <div class="lbl" style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700">Guess the intro · round <span id="introRound">1</span></div>
+    <div id="introPhase" class="tip">Listening to 5 seconds…</div>
+    <input class="in" id="introGuess" placeholder="Type the song title" autocomplete="off">
+    <div class="ctr"><button class="btn pri grow" id="introSubmit">Guess</button><button class="btn" id="introReplay">Replay 5s</button><button class="btn ghost" id="introGiveUp">Reveal</button></div>
+    <div class="tip" id="introLog"></div>
+    <div class="ctr"><button class="btn amb grow" id="introNextRound">Next round</button><button class="btn ghost" id="introQuit">Back to karaoke</button></div>
   </div>
 
   <div class="card now">
@@ -187,6 +235,18 @@ canvas.trace{width:100%;height:70px;display:block;border-radius:10px;background:
     <button class="btn" id="btnNext">Next in queue</button>
     <button class="btn ghost" id="btnSurprise" title="Random song">Surprise me</button>
     <button class="btn ghost" id="btnDare" title="Random dare for the singer">🎲 Dare</button>
+    <button class="btn ghost" id="btnDuet" title="Sing it together">👩‍❤️‍👨 Duet</button>
+    <button class="btn ghost" id="btnIntro" title="Guess the intro game">🎧 Intro game</button>
+    <button class="btn ghost" id="btnMark" title="Mark where the singing starts">⏱ Mark vocals</button>
+    <button class="btn ghost" id="btnWarm" title="Check the mic and your key">🎤 Warm-up</button>
+  </div>
+  <div class="card tuner hidden" id="warm">
+    <div class="lbl" style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700">Warm-up · <span id="warmLeft">30</span>s</div>
+    <div class="note" id="warmNote">–</div>
+    <div class="needle"><i id="warmNeedle"></i></div>
+    <div class="tip" id="warmTip">Hum any note. Hold it steady so the needle sits in the middle.</div>
+    <div class="row" style="display:flex;align-items:center;gap:10px;font-size:12px"><span class="k" style="width:64px;color:var(--muted);font-weight:700;text-transform:uppercase;font-size:11px">Mic</span><div class="bar mint" style="flex:1"><i id="warmLvl"></i></div><span id="warmOk" class="v">…</span></div>
+    <div class="ctr"><button class="btn ghost grow" id="warmStop">Done</button></div>
   </div>
   <div class="dare hidden" id="dareBox"><div class="d"><div class="lbl2">Dare · +10 if you pull it off</div><div id="dareTxt"></div></div><button class="btn sm ghost" id="dareX">✕</button></div>
 
@@ -290,6 +350,26 @@ canvas.trace{width:100%;height:70px;display:block;border-radius:10px;background:
     <div class="tot b"><div class="nm" id="tNameB">Viki</div><div class="pts" id="tPtsB">0</div><div class="sub" id="tSubB">0 songs</div></div>
   </div>
   <div class="card tip" id="h2h" style="text-align:center;font-size:14px">No scores yet this season.</div>
+  <div class="ctr"><button class="btn pri grow" id="btnRecap">📸 Tonight's recap card</button></div>
+  <div class="card" style="display:grid;gap:10px">
+    <h3 style="font-size:16px">Badges</h3>
+    <div class="tip" id="badgeNameA">Modi</div><div class="badges" id="badgesA"></div>
+    <div class="tip" id="badgeNameB">Viki</div><div class="badges" id="badgesB"></div>
+  </div>
+  <div class="card" style="display:grid;gap:10px">
+    <h3 style="font-size:16px">Hall of fame · voice memos</h3>
+    <div class="tip">Takes recorded during mic scoring (your voice only, no track). Send one to the other phone with ➤.</div>
+    <div id="memoList" style="display:grid;gap:8px"><div class="tip">No recordings yet.</div></div>
+  </div>
+  <div class="card" style="display:grid;gap:10px">
+    <h3 style="font-size:16px">Look</h3>
+    <div class="themes" id="themes">
+      <button data-th="neon"><i style="background:#ff3d8d"></i>Neon stage</button>
+      <button data-th="sunset"><i style="background:#ff6b4a"></i>Rooftop sunset</button>
+      <button data-th="snow"><i style="background:#7cc4ff"></i>Snow night</button>
+      <button data-th="y2k"><i style="background:#ff4fd8"></i>Y2K pink</button>
+    </div>
+  </div>
   <div class="card" style="display:grid;gap:12px">
     <h3 style="font-size:16px">Players &amp; handicap</h3>
     <div class="two">
@@ -336,6 +416,9 @@ canvas.trace{width:100%;height:70px;display:block;border-radius:10px;background:
       <input class="in code-in" id="joinCode" maxlength="4" placeholder="CODE" autocomplete="off" autocapitalize="characters">
       <button class="btn amb" id="btnJoin">Join</button>
     </div>
+    <div class="field"><label>Look</label><div class="themes" id="themes2">
+      <button data-th="neon"><i style="background:#ff3d8d"></i>Neon</button><button data-th="sunset"><i style="background:#ff6b4a"></i>Sunset</button><button data-th="snow"><i style="background:#7cc4ff"></i>Snow</button><button data-th="y2k"><i style="background:#ff4fd8"></i>Y2K</button>
+    </div></div>
     <button class="btn ghost" id="btnSolo">Skip, use it solo</button>
     <div class="tip" id="setupMsg"></div>
   </div>
@@ -361,12 +444,26 @@ CATALOG.forEach((s,i)=>s.id='c'+i);
 
 // ===== State =====
 const $=id=>document.getElementById(id);
+let memos=[];
+const BADGES=[
+  ['⭐','First S','Score 90 or more',(rows)=>rows.some(r=>r.score>=90&&!r.duet)],
+  ['🏆','Dare devil','Three dares pulled off',(rows)=>rows.filter(r=>r.dare).length>=3],
+  ['🇵🇱','Polish queen','Five Polish songs',(rows)=>rows.filter(r=>(r.tags||[]).includes('pl')).length>=5],
+  ['🇩🇪','Deutsch-pop','Five German-chart songs',(rows)=>rows.filter(r=>(r.tags||[]).includes('de')).length>=5],
+  ['🔥','Three nights','Three nights in a row',(rows)=>{const d=[...new Set(rows.map(r=>r.date))].sort(); for(let i=2;i<d.length;i++){ if((new Date(d[i])-new Date(d[i-2]))/864e5===2)return true;} return false;}],
+  ['👩‍❤️‍👨','Duet partners','Three duets',(rows)=>rows.filter(r=>r.duet).length>=3],
+  ['🧲','Heart magnet','30 love taps in one song',(rows)=>rows.some(r=>(r.taps||0)>=30)],
+  ['💯','Century','Ten songs scored',(rows)=>rows.filter(r=>!r.duet&&r.by!=='intro').length>=10],
+  ['🎁','Mystery solved','Sang a blind pick',(rows)=>rows.some(r=>r.blind)],
+  ['🎧','Intro ninja','Three intro wins',(rows)=>rows.filter(r=>r.by==='intro').length>=3],
+];
+
 const LS='duetk.v1';
-let S={names:['Modi','Viki'],hcap:[1,1],turn:0,queue:[],current:null,custom:[],history:[],ts:0,season:1};
+let S={names:['Modi','Viki'],hcap:[1,1],turn:0,queue:[],current:null,custom:[],history:[],ts:0,season:1,blindUsed:[],marks:{}};
 const NAMES=['Modi','Viki'];
 let ME={name:NAMES[0],slot:0,role:'solo'};   // slot = which of the two this phone is; role = host/guest/solo
 try{const saved=JSON.parse(localStorage.getItem(LS)||'null'); if(saved){S=Object.assign(S,saved);} const ms=localStorage.getItem(LS+'.slot'); if(ms==='1'){ME.slot=1;ME.name=NAMES[1];}}catch(e){}
-S.names=NAMES.slice();
+S.names=NAMES.slice(); S.blindUsed=S.blindUsed||[]; S.marks=S.marks||{};
 function persist(){try{localStorage.setItem(LS,JSON.stringify(S));localStorage.setItem(LS+'.slot',String(ME.slot));}catch(e){}}
 function allSongs(){return CATALOG.concat(S.custom);}
 function songById(id){return allSongs().find(s=>s.id===id);}
@@ -394,7 +491,16 @@ function onData(m){
   if(m.type==='hello'){ if(typeof m.slot==='number'&&m.slot===ME.slot){ toast(`You both picked ${NAMES[ME.slot]}. Tap the room chip to change.`); } if(ME.role==='host'){commit();} else render(); return;}
   if(m.type==='state'){ if(ME.role==='guest'||(m.state.ts||0)>(S.ts||0)){ const prevCur=S.current&&S.current.id; S=Object.assign(S,m.state); persist(); render(); if(S.current&&S.current.id!==prevCur) loadCurrent(false); } return;}
   if(m.type==='player'){ applyRemotePlayer(m); return;}
-  if(m.type==='score'){ S.history.unshift(m.entry); S.ts=Date.now(); persist(); render(); toast(`${m.entry.singer} scored ${m.entry.score}`); return;}
+  if(m.type==='score'){ if(m.entry.id&&S.history.some(x=>x.id===m.entry.id))return; S.history.unshift(m.entry); S.ts=Date.now(); persist(); render(); toast(`${m.entry.singer} scored ${m.entry.score}`); return;}
+  if(m.type==='blind'){ S.current={id:m.song.id,t:m.song.t,a:m.song.a,y:m.song.y,hidden:true,from:m.from}; S.turn=ME.slot; S.blindUsed=S.blindUsed||[]; if(!S.blindUsed.includes(m.song.id))S.blindUsed.push(m.song.id); persist(); render(); loadCurrent(false); showView('stage'); spawnBig('🎁'); toast(`${S.names[m.from]} picked a secret song for you`); return;}
+  if(m.type==='duet-start'){ startDuet(false,m.t0); return;}
+  if(m.type==='duet-finish'){ if(duet&&scoring) finishScore(); return;}
+  if(m.type==='duet-score'){ if(!duet)return; duet.scores[m.slot]=m.score; duet.parts[m.slot]=m.parts||''; maybeShowDuetResult(); return;}
+  if(m.type==='intro-start'){ introRound(m.id,m.round,false); return;}
+  if(m.type==='intro-guess'){ introLogLine(`${S.names[m.slot]} guessed ${m.ok?'✅ right':'❌ "'+m.text+'"'}`); if(m.ok){ intro.done=true; $('introPhase').textContent=`${S.names[m.slot]} got it: ${intro.song.t} — ${intro.song.a}`; $('introCover').classList.add('hidden'); } return;}
+  if(m.type==='intro-reveal'){ if(intro){ intro.done=true; $('introPhase').textContent=`It was ${intro.song.t} — ${intro.song.a}`; $('introCover').classList.add('hidden'); } return;}
+  if(m.type==='intro-quit'){ quitIntro(false); return;}
+  if(m.type==='memo'){ saveMemo({id:m.id,title:m.title,singer:m.singer,date:m.date,score:m.score,blob:new Blob([m.buf],{type:m.mime||'audio/webm'})}); toast(`🎙 ${m.singer} sent you a recording`); return;}
   if(m.type==='judge-start'){ judging={song:m.song,singer:m.singer,taps:0,mode:m.mode||'judge'}; $('judgeWho').textContent=`${m.singer} · ${m.song}`; $('hypeCount').textContent='0'; $('stars').value=7; $('starsV').textContent='7'; const micMode=judging.mode==='mic'; $('judgeRateWrap').classList.toggle('hidden',micMode); $('judgeSendWrap').classList.toggle('hidden',micMode); $('judgePanel').classList.remove('hidden'); $('btnDareDone').classList.toggle('hidden',!dare); showView('stage'); toast(`${m.singer} is singing. Send love.`); return;}
   if(m.type==='judge-tap'){ loveTaps=m.taps; $('judgeWaitTxt').textContent='❤️ '+m.taps+' so far'; $('partnerLove').textContent='❤️ '+m.taps; $('partnerLove').classList.remove('hidden'); spawnHeart(); if(scoring){ flash(['💗 Love from '+S.names[1-ME.slot],'❤️ They felt that','💞 Aww'][m.taps%3]); } return;}
   if(m.type==='dare'){ showDare(m.t); if(m.t){ toast('🎲 Dare: '+m.t); } return;}
@@ -436,7 +542,8 @@ window.onYouTubeIframeAPIReady=function(){ ytReady=true; if(pendingLoad){loadVid
 function loadVideo(id){
   if(!ytReady){pendingLoad=id;return;}
   $('playerEmpty').classList.add('hidden');
-  if(!yt){ yt=new YT.Player('yt',{videoId:id,playerVars:{playsinline:1,rel:0,modestbranding:1,controls:1},events:{onReady:()=>{$('btnPlay').disabled=false;},onStateChange:onYtState,onError:onYtError}}); }
+  if(!yt){ yt=new YT.Player('yt',{videoId:id,playerVars:{playsinline:1,rel:0,modestbranding:1,controls:1},events:{onReady:()=>{$('btnPlay').disabled=false; if(pendingLoad){const p=pendingLoad;pendingLoad=null;loadVideo(p);} },onStateChange:onYtState,onError:onYtError}}); }
+  else if(typeof yt.loadVideoById!=='function'){ pendingLoad=id; return; }
   else { yt.loadVideoById(id); yt.pauseVideo(); }
   $('btnPlay').disabled=false; $('btnScore').disabled=false;
 }
@@ -446,9 +553,23 @@ function onYtError(e){
   toast('This video will not play here. Finding another version…');
   findKaraoke(S.current.t+' '+(S.current.a||''),{auto:true});
 }
+let pollT=0;
+function pollPlayer(){
+  if(!yt||yt.getPlayerState()!==1)return;
+  const t=yt.getCurrentTime()||0;
+  // lyric countdown from the marked vocal start
+  const mk=S.current&&S.marks&&S.marks[S.current.id];
+  const bc=$('bigcount');
+  if(mk&&!intro){ const d=mk-t; if(d>0&&d<=3.4){ bc.textContent=Math.ceil(d); bc.className='bigcount'; } else if(d<=0&&d>-1.2){ bc.textContent='SING!'; bc.className='bigcount sing'; } else bc.className='bigcount hidden'; }
+  else bc.className='bigcount hidden';
+  // intro game: stop after 5 s
+  if(intro&&!intro.done&&t>=intro.from+5){ yt.pauseVideo(); $('introPhase').textContent='Got it? Type your guess.'; $('introGuess').focus(); }
+  pollT=setTimeout(pollPlayer,200);
+}
 function onYtState(e){
   const st=e.data; // 1 playing, 2 paused, 0 ended
   $('btnPlay').textContent = st===1?'Pause':'Play';
+  clearTimeout(pollT); if(st===1) pollPlayer(); else $('bigcount').className='bigcount hidden';
   if(st===0){ if(scoring) finishScore(); return; }
   if(st!==1&&st!==2) return;
   if(suppress>0){suppress--;return;}
@@ -470,7 +591,7 @@ function loadCurrent(announce){
 // ===== Stage actions =====
 function putOnStage(id,fromQueue){
   const s=songById(id); if(!s)return;
-  S.current={id:s.id,t:s.t,a:s.a,y:s.y};
+  S.current={id:s.id,t:s.t,a:s.a,y:s.y}; if(intro) quitIntro(true);
   if(fromQueue){S.queue=S.queue.filter(q=>q!==id);} else {S.queue=S.queue.filter(q=>q!==id);}
   commit(); loadCurrent(true); showView('stage');
 }
@@ -480,6 +601,24 @@ $('btnNext').onclick=nextInQueue;
 const DARES=['Whisper the whole chorus','Opera voice for one verse','Sing it as a lullaby','A dance move on every chorus','Sing it in a British accent','Replace one word per line with the other person\'s name','Hand on heart the entire song, no exceptions','Eyes closed from start to finish','Rap the bridge','Sing it furious','Hold the last note as long as you can','Air guitar through the instrumental','Blow a kiss on every chorus','Second verse in slow motion','Point at the camera on every "you"','Sing it like a sleepy robot','Tiny voice, maximum feeling','Sing it to an imaginary stadium'];
 let dare=null, dareDone=false;
 function showDare(t){ dare=t; dareDone=false; $('dareTxt').textContent=t; $('dareBox').classList.toggle('hidden',!t); $('btnDareDone').classList.toggle('hidden',!t||!judging); }
+// ---- Warm-up: mic check + tuner
+let warmOn=false, warmRaf=0, warmMic=null, warmAn=null, warmBuf=null, warmEnd=0;
+const NOTE_NAMES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+async function startWarm(){
+  try{ audio=audio||new (window.AudioContext||window.webkitAudioContext)(); warmMic=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false}); }
+  catch(e){ toast('Mic blocked. Allow the microphone in the browser settings.'); return; }
+  const src=audio.createMediaStreamSource(warmMic); warmAn=audio.createAnalyser(); warmAn.fftSize=2048; src.connect(warmAn); warmBuf=new Float32Array(2048);
+  warmOn=true; warmEnd=performance.now()+30000; noiseFloor=0.004; $('warm').classList.remove('hidden'); $('warmOk').textContent='…'; let heard=false;
+  (function loop(){ if(!warmOn)return; warmAn.getFloatTimeDomainData(warmBuf); const r=autoCorrelate(warmBuf,audio.sampleRate); const lvl=Math.min(100,Math.round(r.rms*600)); $('warmLvl').style.width=lvl+'%'; if(lvl>8&&!heard){heard=true;$('warmOk').textContent='✅ mic works';}
+    if(r.hz>0){ const m=hzToMidi(r.hz); const n=Math.round(m); const cents=Math.round((m-n)*100); $('warmNote').textContent=NOTE_NAMES[((n%12)+12)%12]+(Math.floor(n/12)-1); $('warmNeedle').style.left=(50+cents)+'%'; $('warmTip').textContent=Math.abs(cents)<10?'🎯 Dead centre. That is your note.':cents>0?'A touch sharp, relax it down.':'A touch flat, lift it up.'; }
+    const left=Math.max(0,Math.ceil((warmEnd-performance.now())/1000)); $('warmLeft').textContent=left; if(left<=0){ stopWarm(); return; } warmRaf=requestAnimationFrame(loop); })();
+}
+function stopWarm(){ warmOn=false; cancelAnimationFrame(warmRaf); if(warmMic){warmMic.getTracks().forEach(t=>t.stop());warmMic=null;} $('warm').classList.add('hidden'); }
+$('btnWarm').onclick=()=>{ if(warmOn) stopWarm(); else startWarm(); };
+$('warmStop').onclick=stopWarm;
+$('btnMark').onclick=()=>{ if(!S.current||!yt){toast('Play the song, then tap this when the singing starts');return;} const t=Math.round((yt.getCurrentTime()||0)*10)/10; if(t<1){toast('Play the song, then tap this when the singing starts');return;} S.marks=S.marks||{}; S.marks[S.current.id]=t; commit(); toast('Marked. You will get a 3-2-1 before the vocals.'); };
+$('curtainBtn').onclick=()=>{ if(!S.current)return; S.current.hidden=false; S.current.wasBlind=true; commit(); render(); spawnBig('🎤'); toast(S.current.t+' — '+S.current.a); if(yt&&S.current.y){ yt.playVideo(); } };
+function blindPick(id){ const s=songById(id); if(!s)return; if(!(conn&&conn.open)){toast('Blind pick needs the other phone connected');return;} S.blindUsed=S.blindUsed||[]; if(S.blindUsed.includes(id)){toast('Already used this season');return;} S.blindUsed.push(id); send({type:'blind',song:{id:s.id,t:s.t,a:s.a,y:s.y},from:ME.slot}); S.current={id:s.id,t:s.t,a:s.a,y:s.y,hidden:true,from:ME.slot}; S.turn=1-ME.slot; persist(); render(); loadCurrent(false); showView('stage'); toast('🎁 Sent. They see a mystery song.'); }
 $('btnDare').onclick=()=>{ const t=DARES[Math.floor(Math.random()*DARES.length)]; showDare(t); send({type:'dare',t}); spawnHeart(2); toast('🎲 Dare set'); };
 $('dareX').onclick=()=>{ showDare(null); send({type:'dare',t:null}); };
 $('reacts').addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b)return; send({type:'react',r:b.dataset.r}); spawnBig(b.dataset.r); if(navigator.vibrate)navigator.vibrate(10); });
@@ -508,7 +647,9 @@ function autoCorrelate(b,sr){
   const hz=fs/T; if(hz<70||hz>1100) return {hz:-1,rms};
   return {hz,rms};
 }
-async function startScore(){
+let duet=null, duetT=0, rec=null, recChunks=[], recStart=0;
+async function startScore(opts){
+  opts=opts||{};
   if(!S.current){toast('Put a song on stage first');return;}
   try{
     audio=audio||new (window.AudioContext||window.webkitAudioContext)();
@@ -518,12 +659,65 @@ async function startScore(){
   frames={total:0,voiced:0,midi:[],rms:[],stable:0,hype:0,secs:[],combo:0,bestCombo:0,loud:0}; noiseFloor=0.004; calibUntil=performance.now()+900; loveTaps=0; lastMidi=null; trace=[]; lastSec=0; secAcc={n:0,v:0,st:0,rms:0}; live=0;
   $('liveScore').textContent='0'; $('loveBar').style.width='0%'; $('comboN').textContent='0'; $('partnerLove').textContent='❤️ 0'; $('partnerLove').classList.toggle('hidden',!(conn&&conn.open)); $('hearts').innerHTML='';
   scoring=true; $('scoreLive').classList.remove('hidden'); $('scoreResult').classList.add('hidden'); $('btnScore').disabled=true;
-  if(conn&&conn.open) send({type:'judge-start',song:S.current.t,singer:S.names[S.turn],mode:'mic'});
+  if(conn&&conn.open&&!opts.duet) send({type:'judge-start',song:S.current.t,singer:S.names[S.turn],mode:'mic'});
+  try{ recChunks=[]; rec=new MediaRecorder(mic,{mimeType:MediaRecorder.isTypeSupported('audio/webm;codecs=opus')?'audio/webm;codecs=opus':''}); rec.ondataavailable=e=>{if(e.data.size)recChunks.push(e.data);}; rec.start(1000); recStart=Date.now(); }catch(e){ rec=null; }
   $('micTip').textContent='Calibrating… stay quiet for a second.';
   const cd=$('countdown'); let n=3; cd.textContent=n; cd.classList.remove('hidden');
-  const iv=setInterval(()=>{n--; if(n<=0){clearInterval(iv);cd.classList.add('hidden'); if(yt&&S.current.y){ yt.seekTo(0,true); yt.playVideo(); send({type:'player',cmd:'play',t:0}); } $('micTip').textContent='Listening. Use earphones so the mic hears you, not the track.'; } else cd.textContent=n;},1000);
+  const iv=setInterval(()=>{n--; if(n<=0){clearInterval(iv);cd.classList.add('hidden'); if(yt&&S.current.y){ yt.seekTo(0,true); yt.playVideo(); if(!opts.duet||ME.role==='host') send({type:'player',cmd:'play',t:0}); } $('micTip').textContent=opts.duet?'Duet on. Watch the bar: it tells you whose line it is.':'Listening. Use earphones so the mic hears you, not the track.'; } else cd.textContent=n;},1000);
   tick();
 }
+// ---- Duet mode: both phones score at once; the bar alternates lines; one shared score
+const DUET_SEG=12; // seconds per line-turn
+function startDuet(initiator,t0){
+  if(!S.current){toast('Put a song on stage first');return;}
+  if(initiator&&!(conn&&conn.open)){toast('Duet needs the other phone connected');return;}
+  duet={t0:t0||Date.now()+3500,scores:{},parts:{}};
+  if(initiator) send({type:'duet-start',t0:duet.t0});
+  $('duetbar').classList.remove('hidden'); $('duetL').textContent=S.names[0]; $('duetR').textContent=S.names[1];
+  startScore({duet:true}); duetTick();
+}
+function duetTick(){
+  if(!duet){ $('duetbar').classList.add('hidden'); return; }
+  if(!scoring){ $('duetHint').textContent='Getting the mic ready…'; duetT=setTimeout(duetTick,250); return; }
+  const el=Math.max(0,(Date.now()-duet.t0)/1000); const seg=Math.floor(el/DUET_SEG); const frac=(el%DUET_SEG)/DUET_SEG;
+  const both=seg%4===3; const who=both?-1:seg%2===0?0:1;
+  $('duetbar').classList.toggle('b',who===1); $('duetSeg').style.width=Math.round(frac*100)+'%';
+  $('duetL').className=who===0||both?'':'off'; $('duetR').className=who===1||both?'':'off';
+  $('duetHint').textContent=both?'🎶 Both — sing together!':(who===ME.slot?'🎤 Your line':`👂 ${S.names[who]}'s line — hum along`);
+  duetT=setTimeout(duetTick,250);
+}
+function maybeShowDuetResult(){
+  if(!duet||duet.scores[0]===undefined||duet.scores[1]===undefined)return;
+  const a=duet.scores[0],b=duet.scores[1]; const score=Math.round((a+b)/2+Math.min(10,Math.abs(a-b)<10?10:0)); // harmony bonus when you are close
+  const parts=`<span>${esc(S.names[0])} <b>${a}</b></span><span>${esc(S.names[1])} <b>${b}</b></span>${Math.abs(a-b)<10?'<span>💞 Harmony bonus <b>+10</b></span>':''}`;
+  const saveTurn=S.turn; duet=null; $('duetbar').classList.add('hidden'); $('scoreLive').classList.add('hidden');
+  showResult(Math.min(100,score),score,parts,'duet');
+  pendingResult.duet=true; pendingResult.singer=S.names[0]+' & '+S.names[1]; pendingResult.id='d'+Math.floor((Date.now())/20000); // same id on both phones → saved once
+  $('rTitle').textContent='Duet: '+$('rTitle').textContent; S.turn=saveTurn;
+}
+$('btnDuet').onclick=()=>startDuet(true);
+// ---- Guess the intro
+let intro=null, introSaved=null;
+function norm(s){ return String(s).toLowerCase().replace(/\(.*?\)|\[.*?\]/g,'').replace(/[^a-z0-9\u00C0-\u024F\u0400-\u04FF\u0600-\u06FF ]+/g,' ').replace(/\s+/g,' ').trim(); }
+function guessOk(g,title){ const a=norm(g), b=norm(title); if(!a)return false; if(a===b||b.includes(a)&&a.length>=Math.min(6,b.length)||a.includes(b))return true; const ta=a.split(' ').filter(w=>w.length>2), tb=b.split(' ').filter(w=>w.length>2); if(!tb.length)return false; const hit=tb.filter(w=>ta.includes(w)).length; return hit/tb.length>=0.6; }
+function introRound(id,round,initiator){
+  const s=songById(id); if(!s||!s.y)return;
+  if(!intro){ introSaved=S.current; }
+  intro={song:s,round,done:false,from:Math.floor(Math.random()*0)}; 
+  $('introGame').classList.remove('hidden'); $('introRound').textContent=round; $('introLog').textContent=''; $('introGuess').value=''; $('introPhase').textContent='Listening to 5 seconds…';
+  $('introCover').classList.remove('hidden'); $('curtain').classList.add('hidden'); showView('stage');
+  intro.from=0; loadVideo(s.y); setTimeout(()=>{ if(yt&&typeof yt.seekTo==='function'&&intro&&!intro.done){ yt.seekTo(0,true); yt.playVideo(); } },900);
+  if(initiator) send({type:'intro-start',id,round});
+}
+function introLogLine(t){ const l=$('introLog'); l.innerHTML=(l.innerHTML?l.innerHTML+'<br>':'')+esc(t); }
+$('btnIntro').onclick=()=>{ const pool=CATALOG.filter(s=>s.y); const s=pool[Math.floor(Math.random()*pool.length)]; const round=intro?intro.round+1:1; introRound(s.id,round,true); };
+$('introNextRound').onclick=$('btnIntro').onclick;
+$('introReplay').onclick=()=>{ if(!yt||!intro||typeof yt.seekTo!=='function')return; yt.seekTo(0,true); yt.playVideo(); };
+$('introSubmit').onclick=()=>{ if(!intro||intro.done)return; const g=$('introGuess').value.trim(); if(!g)return; const ok=guessOk(g,intro.song.t); send({type:'intro-guess',slot:ME.slot,ok,text:g}); introLogLine(`You guessed ${ok?'✅ right':'❌ "'+g+'"'}`); if(ok){ intro.done=true; $('introPhase').textContent=`✅ ${intro.song.t} — ${intro.song.a}. +10 for you.`; $('introCover').classList.add('hidden'); spawnBig('🏆'); const entry={id:'i'+Date.now(),song:'🎧 Intro: '+intro.song.t,singer:S.names[ME.slot],slot:ME.slot,score:10,raw:10,grade:'',hearts:0,date:new Date().toISOString().slice(0,10),season:S.season,by:'intro',tags:['intro']}; S.history.unshift(entry); send({type:'score',entry}); commit(); } else { $('introGuess').value=''; $('introGuess').focus(); } };
+$('introGuess').addEventListener('keydown',e=>{if(e.key==='Enter')$('introSubmit').onclick();});
+$('introGiveUp').onclick=()=>{ if(!intro)return; intro.done=true; $('introPhase').textContent=`It was ${intro.song.t} — ${intro.song.a}`; $('introCover').classList.add('hidden'); send({type:'intro-reveal'}); };
+function quitIntro(silent){ if(!intro)return; intro=null; $('introGame').classList.add('hidden'); $('introCover').classList.add('hidden'); if(!silent){ send({type:'intro-quit'}); if(introSaved){ S.current=introSaved; commit(); loadCurrent(false); } else { $('playerEmpty').classList.remove('hidden'); } } introSaved=null; }
+$('introQuit').onclick=()=>quitIntro(false);
 let lastMidi=null, trace=[], loveTaps=0, lastSec=0, secAcc={n:0,v:0,st:0,rms:0}, live=0, fbT=0;
 const FB_GOOD=['💗 Perfect hold','✨ Gorgeous','🔥 Power!','💞 Smooth','🎯 Locked in','💫 Shimmer'];
 const FB_RANGE=['🚀 Big range','🌈 Those highs!','🎢 Range!'];
@@ -581,7 +775,7 @@ function drawTrace(){
   trace.forEach((m,i)=>{ if(m===null){pen=false;return;} const x=i*sx, y=c.height-((m-lo)/(hi-lo))*(c.height-10)-5; if(!pen){g.moveTo(x,y);pen=true;} else g.lineTo(x,y); });
   g.stroke();
 }
-function stopMic(){ scoring=false; cancelAnimationFrame(rafId); if(mic){mic.getTracks().forEach(t=>t.stop());mic=null;} $('scoreLive').classList.add('hidden'); $('btnScore').disabled=!S.current; }
+function stopMic(){ scoring=false; clearTimeout(duetT); cancelAnimationFrame(rafId); if(mic){mic.getTracks().forEach(t=>t.stop());mic=null;} $('scoreLive').classList.add('hidden'); $('btnScore').disabled=!S.current; }
 let pendingResult=null;
 function verdict(score){
   return score>=90?['Heart-stealer 💘',5]:score>=80?['Swoon-worthy 💞',4]:score>=65?['Made me smile 💗',3]:score>=50?['Warming up 💓',2]:['Shower-singer energy 🚿',1];
@@ -590,18 +784,23 @@ function showResult(score,raw,parts,by){
   if(dareDone){ score=Math.min(100,score+10); parts+='<span>🏆 Dare bonus <b>+10</b></span>'; }
   showDare(null); send({type:'dare',t:null});
   const singerSlot=S.turn; const grade=score>=90?'S':score>=80?'A':score>=65?'B':score>=50?'C':'D'; const [title,hearts]=verdict(score);
-  pendingResult={song:S.current.t,singer:S.names[singerSlot],slot:singerSlot,score,raw:Math.round(raw),grade,hearts,date:new Date().toISOString().slice(0,10),season:S.season,by};
+  const songObj=songById(S.current.id)||{g:[]};
+  pendingResult={id:'e'+Date.now()+Math.random().toString(36).slice(2,6),song:S.current.t,singer:S.names[singerSlot],slot:singerSlot,score,raw:Math.round(raw),grade,hearts,date:new Date().toISOString().slice(0,10),season:S.season,by,tags:songObj.g||[],taps:loveTaps,dare:dareDone?dare:null,blind:!!S.current.wasBlind};
   $('rTitle').textContent=title; $('rHearts').textContent='💗'.repeat(hearts)+'🤍'.repeat(5-hearts);
   $('rGrade').textContent=grade; $('rParts').innerHTML=parts+(S.hcap[singerSlot]>1?`<span>Boost ×${S.hcap[singerSlot].toFixed(2)} applied</span>`:'');
   $('scoreResult').classList.remove('hidden'); $('btnScore').disabled=false;
   const el=$('rScore'); const t0=performance.now(); const dur=1300; (function cnt(){ const k=Math.min(1,(performance.now()-t0)/dur); const v=Math.round(score*(1-Math.pow(1-k,3))); el.textContent=v; if(k<1) requestAnimationFrame(cnt); else { spawnHeart(hearts*3); if(hearts>=4) setTimeout(()=>spawnBig('🎉'),200); } })();
 }
+function stopRec(){ return new Promise(res=>{ if(!rec||rec.state==='inactive'){rec=null;res(null);return;} rec.onstop=()=>{ const blob=new Blob(recChunks,{type:rec.mimeType||'audio/webm'}); rec=null; res(blob); }; try{rec.stop();}catch(e){res(null);} }); }
 function finishScore(){
-  if(!scoring)return; stopMic(); if(yt&&yt.getPlayerState()===1){yt.pauseVideo();} $('partnerLove').classList.add('hidden');
-  if(conn&&conn.open) send({type:'judge-cancel'});
-  const f=frames;
-  if(f.total<120){ toast('Too short to score. Sing at least a few seconds.'); return; }
+  if(!scoring)return; const wasDuet=!!duet; stopMic(); if(yt&&yt.getPlayerState()===1){yt.pauseVideo();} $('partnerLove').classList.add('hidden');
+  if(conn&&conn.open&&!wasDuet) send({type:'judge-cancel'});
+  if(wasDuet&&conn&&conn.open) send({type:'duet-finish'});
+  const f=frames; const recP=stopRec();
+  if(f.total<120){ toast('Too short to score. Sing at least a few seconds.'); duet=null; $('duetbar').classList.add('hidden'); return; }
   const m=liveMetrics(f); const score=Math.min(100,Math.max(live,Math.round(m.raw*S.hcap[S.turn])));
+  recP.then(blob=>{ if(blob&&blob.size>20000&&(Date.now()-recStart)>8000){ const memo={id:'m'+Date.now(),title:S.current.t,singer:S.names[wasDuet?ME.slot:S.turn],date:new Date().toISOString().slice(0,10),score,blob}; saveMemo(memo); toast('🎙 Take saved to Hall of fame'); } });
+  if(wasDuet){ const mine=Math.min(100,Math.round(m.voice*S.hcap[ME.slot])); duet.scores[ME.slot]=mine; send({type:'duet-score',slot:ME.slot,score:mine}); $('micTip').textContent='Waiting for '+S.names[1-ME.slot]+'…'; $('scoreLive').classList.remove('hidden'); setTimeout(()=>{ if(duet&&duet.scores[1-ME.slot]===undefined){ duet.scores[1-ME.slot]=mine; maybeShowDuetResult(); } },8000); maybeShowDuetResult(); return; }
   showResult(score,m.raw,`<span>Voice <b>${Math.round(m.voice)}</b>/100</span><span>Longest combo <b>${f.bestCombo}s</b></span><span>Range <b>${m.span.toFixed(0)}</b> semitones</span>${(conn&&conn.open)?`<span>Love from ${esc(S.names[1-ME.slot])} <b>${loveTaps}</b> ❤️ → +${Math.round(m.love)}</span>`:''}`,'mic');
 }
 $('btnScore').onclick=()=>{ if(!S.current){toast('Put a song on stage first');return;} if(conn&&conn.open){ $('scoreChoice').classList.remove('hidden'); } else startScore(); };
@@ -624,7 +823,7 @@ function showJudgedResult(taps,stars){
 }
 $('btnStopScore').onclick=finishScore;
 $('btnCancelScore').onclick=()=>{stopMic();$('partnerLove').classList.add('hidden');if(conn&&conn.open)send({type:'judge-cancel'});toast('Scoring cancelled');};
-$('btnSaveScore').onclick=()=>{ if(!pendingResult)return; S.history.unshift(pendingResult); send({type:'score',entry:pendingResult}); pendingResult=null; $('scoreResult').classList.add('hidden'); S.turn=1-S.turn; commit(); toast('Saved. Your turn, '+S.names[S.turn]); };
+$('btnSaveScore').onclick=()=>{ if(!pendingResult)return; if(!S.history.some(x=>x.id===pendingResult.id)){ S.history.unshift(pendingResult); send({type:'score',entry:pendingResult}); } const wasDuet=!!pendingResult.duet; pendingResult=null; $('scoreResult').classList.add('hidden'); if(!wasDuet) S.turn=1-S.turn; commit(); toast(wasDuet?'Duet saved for both of you':'Saved. Your turn, '+S.names[S.turn]); };
 $('btnDiscard').onclick=()=>{pendingResult=null;$('scoreResult').classList.add('hidden');};
 
 // ===== Songs view =====
@@ -640,11 +839,11 @@ function renderSongs(){
   $('songList').innerHTML=rows.length?rows.map(s=>{
     const tag=s.g.includes('pl')?'pl':s.g.includes('de')?'de':s.g.includes('arabic')?'ar':s.g.includes('classic')?'cl':'';
     const find=s.y?'':`<a class="btn sm" href="https://www.youtube.com/results?search_query=${encodeURIComponent(s.t+' '+s.a+' karaoke')}" target="_blank" rel="noopener">Find on YouTube</a>`;
-    return `<div class="song-row"><div class="n"><div class="t">${esc(s.t)}</div><div class="a">${esc(s.a)}</div><div class="tag ${tag}">${esc(s.n)}${s.g.includes('duet')?'':''}</div></div>${find}${s.y?`<button class="btn sm" data-q="${s.id}" title="Add to queue">+</button><button class="btn sm pri" data-s="${s.id}">Sing</button>`:''}</div>`;
+    return `<div class="song-row"><div class="n"><div class="t">${esc(s.t)}</div><div class="a">${esc(s.a)}</div><div class="tag ${tag}">${esc(s.n)}${s.g.includes('duet')?'':''}</div></div>${find}${s.y?`<button class="btn sm" data-b="${s.id}" title="Blind pick for ${esc(S.names[1-ME.slot])}" ${(S.blindUsed||[]).includes(s.id)?'disabled':''}>🎁</button><button class="btn sm" data-q="${s.id}" title="Add to queue">+</button><button class="btn sm pri" data-s="${s.id}">Sing</button>`:''}</div>`;
   }).join(''):'<div class="tip">Nothing matches.</div>';
   $('songCount').innerHTML=`${rows.length} of ${allSongs().length} songs · charts week of 23 Oct 2026 (Spotify Global &amp; Poland, Billboard Hot 100, UK Official, Offizielle Charts, Eska) plus karaoke classics. Every video here plays inside the page.`;
 }
-$('songList').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return; if(b.dataset.s)putOnStage(b.dataset.s,false); if(b.dataset.q)queueSong(b.dataset.q);});
+$('songList').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return; if(b.dataset.s)putOnStage(b.dataset.s,false); if(b.dataset.q)queueSong(b.dataset.q); if(b.dataset.b)blindPick(b.dataset.b);});
 $('search').addEventListener('input',renderSongs);
 $('filters').addEventListener('click',e=>{const b=e.target.closest('.f');if(!b)return;filter=b.dataset.f;document.querySelectorAll('.f').forEach(x=>x.classList.toggle('on',x===b));renderSongs();});
 function ytId(u){const m=String(u).match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([\w-]{11})/);return m?m[1]:'';}
@@ -724,15 +923,18 @@ function render(){
   const cur=S.current;
   $('whoBadge').textContent=S.names[S.turn].slice(0,1).toUpperCase(); $('whoBadge').className='who'+(S.turn===1?' b':'');
   $('nowLbl').textContent=(cur?'Now singing · ':'Up next · ')+S.names[S.turn]+(S.turn===ME.slot?' (you)':'');
-  $('nowSong').textContent=cur?cur.t:'Choose a song'; $('nowArt').innerHTML=cur?esc(cur.a):'&nbsp;';
+  const hid=cur&&cur.hidden; $('nowSong').textContent=cur?(hid?'🎁 Secret song':cur.t):'Choose a song'; $('nowArt').innerHTML=cur?(hid?('picked by '+esc(S.names[cur.from]||'')):esc(cur.a)):'&nbsp;';
+  $('curtain').classList.toggle('hidden',!hid); if(hid){ $('curtainS').textContent=`${S.names[cur.from]} chose this one for ${S.names[S.turn]}. No peeking.`; }
+  $('btnMark').textContent=(cur&&S.marks&&S.marks[cur.id])?('⏱ Vocals at '+S.marks[cur.id]+'s'):'⏱ Mark vocals';
   $('btnScore').disabled=!cur||scoring; if(!cur){$('btnPlay').disabled=true;}
   $('qCount').textContent=S.queue.length?`· ${S.queue.length}`:'';
   $('queueList').innerHTML=S.queue.length?S.queue.map((id,i)=>{const s=songById(id);if(!s)return '';return `<div class="song-row q"><div class="pos">${i+1}</div><div class="n"><div class="t">${esc(s.t)}</div><div class="a">${esc(s.a)}</div></div><button class="btn sm pri" data-s="${id}">Sing</button><button class="btn sm ghost" data-x="${id}">✕</button></div>`;}).join(''):'<div class="tip">Queue is empty. Add songs from the Songs tab.</div>';
   // scores
   const hist=S.history.filter(h=>h.season===S.season);
-  [0,1].forEach(i=>{const rows=hist.filter(h=>h.slot===i);const pts=rows.reduce((a,b)=>a+b.score,0);$('tName'+'AB'[i]).textContent=S.names[i];$('tPts'+'AB'[i]).textContent=pts;$('tSub'+'AB'[i]).textContent=rows.length+' song'+(rows.length===1?'':'s')+(rows.length?' · best '+Math.max(...rows.map(r=>r.score)):'');});
-  $('histBody').innerHTML=hist.map(h=>`<tr><td>${esc(h.song)}<div class="tip">${h.date}${h.by==='judge'?' · judged':''}</div></td><td>${esc(S.names[h.slot]||h.singer)}</td><td class="num">${h.score} <span style="color:var(--spot2)">${'💗'.repeat(h.hearts||verdict(h.score)[1])}</span></td></tr>`).join('');
-  const pA=hist.filter(h=>h.slot===0).reduce((a,b)=>a+b.score,0), pB=hist.filter(h=>h.slot===1).reduce((a,b)=>a+b.score,0);
+  [0,1].forEach(i=>{const rows=hist.filter(h=>h.slot===i||h.duet);const pts=rows.reduce((a,b)=>a+b.score,0);$('tName'+'AB'[i]).textContent=S.names[i];$('tPts'+'AB'[i]).textContent=pts;$('tSub'+'AB'[i]).textContent=rows.length+' song'+(rows.length===1?'':'s')+(rows.length?' · best '+Math.max(...rows.map(r=>r.score)):'');});
+  $('histBody').innerHTML=hist.map(h=>`<tr><td>${esc(h.song)}<div class="tip">${h.date}${h.by==='judge'?' · judged':''}</div></td><td>${h.duet?'👩‍❤️‍👨 both':esc(S.names[h.slot]||h.singer)}</td><td class="num">${h.score} <span style="color:var(--spot2)">${'💗'.repeat(h.hearts||verdict(h.score)[1])}</span></td></tr>`).join('');
+  const pA=hist.filter(h=>h.slot===0&&!h.duet).reduce((a,b)=>a+b.score,0), pB=hist.filter(h=>h.slot===1&&!h.duet).reduce((a,b)=>a+b.score,0);
+  renderBadges(); renderMemos();
   $('h2h').textContent=!hist.length?'No scores yet this season.':pA===pB?`Dead even at ${pA} each.`:`${S.names[pA>pB?0:1]} leads by ${Math.abs(pA-pB)} after ${hist.length} song${hist.length===1?'':'s'}.`;
   $('histEmpty').classList.toggle('hidden',hist.length>0);
   if(document.activeElement!==$('nameA'))$('nameA').value=S.names[0]; if(document.activeElement!==$('nameB'))$('nameB').value=S.names[1];
@@ -750,6 +952,45 @@ try{$('joinCode').value=localStorage.getItem(LS+'.code')||'';}catch(e){}
 function setWho(i){ ME.slot=i; ME.name=NAMES[i]; $('whoA').classList.toggle('pri',i===0); $('whoB').classList.toggle('pri',i===1); S.turn=S.turn; persist(); render(); }
 $('whoPick').addEventListener('click',e=>{const b=e.target.closest('button');if(b)setWho(+b.dataset.who);});
 setWho(ME.slot);
+// ---- Voice memos in IndexedDB (this phone only; send to the other phone over the room link)
+const DBN='duetk-memos';
+function idb(){ return new Promise((res,rej)=>{ const r=indexedDB.open(DBN,1); r.onupgradeneeded=()=>r.result.createObjectStore('m',{keyPath:'id'}); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+async function loadMemos(){ try{ const db=await idb(); const tx=db.transaction('m','readonly'); const rq=tx.objectStore('m').getAll(); rq.onsuccess=()=>{ memos=(rq.result||[]).sort((a,b)=>b.id<a.id?-1:1); renderMemos(); }; }catch(e){} }
+async function saveMemo(m){ if(memos.some(x=>x.id===m.id))return; memos.unshift(m); renderMemos(); try{ const db=await idb(); db.transaction('m','readwrite').objectStore('m').put(m); }catch(e){} }
+async function delMemo(id){ memos=memos.filter(x=>x.id!==id); renderMemos(); try{ const db=await idb(); db.transaction('m','readwrite').objectStore('m').delete(id); }catch(e){} }
+function renderMemos(){ const el=$('memoList'); if(!el)return; if(!memos.length){ el.innerHTML='<div class="tip">No recordings yet.</div>'; return; }
+  el.innerHTML=memos.slice(0,20).map(m=>`<div class="memo"><div class="n"><b>${esc(m.title)}</b>${esc(m.singer)} · ${m.date}${m.score?' · '+m.score:''}</div><audio controls preload="none" src="${URL.createObjectURL(m.blob)}"></audio><button class="btn sm" data-send="${m.id}" title="Send to the other phone">➤</button><button class="btn sm ghost" data-del="${m.id}">✕</button></div>`).join(''); }
+$('memoList').addEventListener('click',async e=>{ const b=e.target.closest('button'); if(!b)return; if(b.dataset.del){ delMemo(b.dataset.del); } if(b.dataset.send){ const m=memos.find(x=>x.id===b.dataset.send); if(!m)return; if(!(conn&&conn.open)){toast('Connect the other phone first');return;} if(m.blob.size>6e6){toast('Too big to send');return;} const buf=await m.blob.arrayBuffer(); send({type:'memo',id:m.id,title:m.title,singer:m.singer,date:m.date,score:m.score,mime:m.blob.type,buf}); toast('Sent ➤ '+S.names[1-ME.slot]); } });
+loadMemos();
+// ---- Badges
+function renderBadges(){ [0,1].forEach(i=>{ const rows=S.history.filter(h=>h.slot===i||h.duet); const el=$('badges'+'AB'[i]); if(!el)return; $('badgeName'+'AB'[i]).textContent=S.names[i]; el.innerHTML=BADGES.map(([e,n,d,fn])=>`<div class="badge ${fn(rows)?'':'lock'}"><span class="e">${e}</span><span>${n}<small>${d}</small></span></div>`).join(''); }); }
+// ---- Tonight's recap card (image)
+function recapCard(){
+  const today=new Date().toISOString().slice(0,10); let rows=S.history.filter(h=>h.date===today&&h.season===S.season); if(!rows.length){ rows=S.history.filter(h=>h.season===S.season); } if(!rows.length){toast('Nothing to recap yet');return;}
+  const date=rows[0].date; const songs=rows.filter(r=>r.by!=='intro'); const pts=i=>rows.filter(r=>r.slot===i||r.duet).reduce((a,b)=>a+b.score,0);
+  const pA=pts(0),pB=pts(1); const best=songs.slice().sort((a,b)=>b.score-a.score)[0]; const loved=songs.slice().sort((a,b)=>(b.taps||0)-(a.taps||0))[0]; const dared=songs.find(r=>r.dare);
+  const c=document.createElement('canvas'); c.width=1080; c.height=1350; const g=c.getContext('2d'); const cs=getComputedStyle(document.body);
+  const col=n=>cs.getPropertyValue(n).trim();
+  g.fillStyle=col('--bg'); g.fillRect(0,0,1080,1350); const gr=g.createRadialGradient(540,-50,50,540,-50,800); gr.addColorStop(0,col('--glow')); gr.addColorStop(1,'rgba(0,0,0,0)'); g.fillStyle=gr; g.fillRect(0,0,1080,1350);
+  g.fillStyle=col('--fg'); g.font='800 60px Syne, sans-serif'; g.fillText('Duet Karaoke',72,150); g.fillStyle=col('--spot'); g.fillText('recap',72+g.measureText('Duet Karaoke ').width,150);
+  g.fillStyle=col('--muted'); g.font='500 34px Manrope, sans-serif'; g.fillText(date+' · '+songs.length+' song'+(songs.length===1?'':'s'),72,205);
+  const box=(x,y,w,hh,name,p,colr)=>{ g.fillStyle=col('--panel'); g.beginPath(); g.roundRect(x,y,w,hh,28); g.fill(); g.fillStyle=col('--fg'); g.font='700 34px Manrope, sans-serif'; g.fillText(name,x+36,y+64); g.fillStyle=colr; g.font='800 110px Syne, sans-serif'; g.fillText(String(p),x+36,y+180); };
+  box(72,260,456,220,S.names[0],pA,col('--spot2')); box(552,260,456,220,S.names[1],pB,col('--amber'));
+  g.fillStyle=col('--fg'); g.font='800 48px Syne, sans-serif'; const win=pA===pB?'Dead even 💞':`${S.names[pA>pB?0:1]} wins the night 🏆`; g.fillText(win,72,560);
+  let y=650; const line=(k,v)=>{ g.fillStyle=col('--muted'); g.font='700 26px Manrope, sans-serif'; g.fillText(k.toUpperCase(),72,y); g.fillStyle=col('--fg'); g.font='700 40px Manrope, sans-serif'; const words=v.split(' '); let l='',yy=y+52; for(const w of words){ if(g.measureText(l+w).width>930){ g.fillText(l,72,yy); yy+=48; l=''; } l+=w+' '; } g.fillText(l,72,yy); y=yy+90; };
+  if(best) line('Best score', `${best.score} · ${best.song} · ${best.duet?'both':S.names[best.slot]}`);
+  if(loved&&loved.taps) line('Most loved', `${loved.taps} ❤️ · ${loved.song} · ${S.names[loved.slot]}`);
+  if(dared) line('Dare of the night', `${dared.dare} · ${S.names[dared.slot]}`);
+  const duets=songs.filter(r=>r.duet); if(duets.length) line('Duets', duets.map(d=>d.song).join(', '));
+  g.fillStyle=col('--muted'); g.font='500 28px Manrope, sans-serif'; g.fillText(S.names[0]+' & '+S.names[1]+' · season '+S.season,72,1290);
+  c.toBlob(async blob=>{ const file=new File([blob],'duet-karaoke-recap-'+date+'.png',{type:'image/png'});
+    if(navigator.share&&navigator.canShare&&navigator.canShare({files:[file]})){ try{ await navigator.share({files:[file],title:'Duet Karaoke recap'}); return; }catch(e){} }
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=file.name; document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},2000); toast('Recap image saved'); },'image/png');
+}
+$('btnRecap').onclick=recapCard;
+function setTheme(th){ document.body.dataset.th=th; try{localStorage.setItem(LS+'.th',th);}catch(e){} document.querySelectorAll('.themes button').forEach(b=>b.classList.toggle('on',b.dataset.th===th)); }
+try{ setTheme(localStorage.getItem(LS+'.th')||'neon'); }catch(e){ setTheme('neon'); }
+document.querySelectorAll('.themes').forEach(el=>el.addEventListener('click',e=>{const b=e.target.closest('button'); if(b) setTheme(b.dataset.th);}));
 $('btnHost').onclick=hostRoom; $('btnJoin').onclick=joinRoom; $('btnSolo').onclick=goSolo;
 $('btnHostSkip').onclick=()=>$('hostWait').classList.add('hidden');
 $('btnCopyCode').onclick=()=>{const c=$('hostCode').textContent;(navigator.clipboard?navigator.clipboard.writeText(c):Promise.reject()).then(()=>toast('Copied '+c),()=>toast('Code: '+c));};
