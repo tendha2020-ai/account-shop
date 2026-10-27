@@ -136,6 +136,21 @@ canvas.trace{width:100%;height:70px;display:block;border-radius:10px;background:
 .hearts-row{font-size:30px;letter-spacing:2px;line-height:1}
 .verdict{font-family:var(--display);font-weight:800;font-size:22px;line-height:1.1;color:var(--spot2)}
 .partnerLove{position:absolute;top:10px;right:10px;z-index:7;background:rgba(13,10,20,.75);border:1px solid var(--line);border-radius:999px;padding:6px 12px;font-weight:800;font-family:var(--display);color:var(--spot2);font-size:15px}
+.dare{display:flex;align-items:center;gap:10px;background:linear-gradient(135deg,rgba(255,181,69,.18),rgba(255,61,141,.14));border:1px dashed var(--amber);border-radius:14px;padding:10px 12px}
+.dare .d{flex:1;min-width:0;font-weight:700}
+.dare .lbl2{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--amber);font-weight:800}
+.reacts{display:flex;gap:8px;justify-content:center}
+.reacts button{font-size:26px;min-width:52px;min-height:52px;border-radius:14px;background:var(--panel2);border:1px solid var(--line)}
+.reacts button:active{transform:scale(.9)}
+.hearts span.big{font-size:54px;animation-duration:1.8s}
+.lab{display:grid;gap:10px}
+.lab .status{font-size:13px;color:var(--muted);min-height:18px}
+.cand{display:flex;align-items:center;gap:10px;background:var(--panel2);border-radius:12px;padding:10px 12px}
+.cand .n{flex:1;min-width:0}
+.cand .t{font-weight:700;font-size:13.5px;overflow-wrap:anywhere}
+.cand .c{font-size:12px;color:var(--muted)}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--spot);border-radius:50%;animation:spin .8s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}.hearts span{display:none}}
 </style>
 </head>
@@ -171,7 +186,9 @@ canvas.trace{width:100%;height:70px;display:block;border-radius:10px;background:
     <button class="btn amb" id="btnScore" disabled>Score this</button>
     <button class="btn" id="btnNext">Next in queue</button>
     <button class="btn ghost" id="btnSurprise" title="Random song">Surprise me</button>
+    <button class="btn ghost" id="btnDare" title="Random dare for the singer">🎲 Dare</button>
   </div>
+  <div class="dare hidden" id="dareBox"><div class="d"><div class="lbl2">Dare · +10 if you pull it off</div><div id="dareTxt"></div></div><button class="btn sm ghost" id="dareX">✕</button></div>
 
   <div class="card hidden" id="scoreChoice" style="display:grid;gap:10px">
     <b>How should this one be scored?</b>
@@ -186,6 +203,8 @@ canvas.trace{width:100%;height:70px;display:block;border-radius:10px;background:
     <div style="font-family:var(--display);font-weight:700;font-size:17px" id="judgeWho">…</div>
     <button class="btn pri" id="btnHype" style="min-height:96px;font-size:26px;border-radius:24px">❤️ <span id="hypeCount" style="font-variant-numeric:tabular-nums">0</span></button>
     <div class="tip" id="judgeHint">Every tap lands on their screen as a heart and adds to their score.</div>
+    <div class="reacts" id="reacts"><button data-r="😂">😂</button><button data-r="😍">😍</button><button data-r="🔥">🔥</button><button data-r="🥹">🥹</button><button data-r="💀">💀</button></div>
+    <button class="btn amb hidden" id="btnDareDone">✓ Dare done · +10</button>
     <div id="judgeRateWrap" class="hcap"><div class="tip">When they finish, rate the performance:</div><input type="range" id="stars" min="1" max="10" value="7"><div><b id="starsV" style="font-family:var(--display);font-size:26px;color:var(--spot2)">7</b> / 10</div></div>
     <div class="ctr" id="judgeSendWrap"><button class="btn amb grow" id="btnSendJudge">Send rating</button></div>
   </div>
@@ -244,29 +263,41 @@ canvas.trace{width:100%;height:70px;display:block;border-radius:10px;background:
   <div class="tip" id="songCount">Charts week of 23 Oct 2026 (Spotify Global &amp; Poland, Billboard Hot 100, UK Official, Offizielle Charts, Eska) plus karaoke classics. Every video here plays inside the page.</div>
   <div class="list" id="songList"></div>
   <div class="card" style="display:grid;gap:10px">
-    <h3 style="font-size:16px">Add your own</h3>
-    <div class="field"><label for="cTitle">Song</label><input class="in" id="cTitle" placeholder="Title – Artist"></div>
-    <div class="field"><label for="cUrl">YouTube link (karaoke version)</label><input class="in" id="cUrl" placeholder="https://youtu.be/…"></div>
-    <div class="ctr"><button class="btn pri grow" id="btnAddCustom">Add to list</button></div>
-    <div class="tip">Can't find a karaoke version? Any song row with "Find on YouTube" opens a search; paste the link here.</div>
+    <h3 style="font-size:16px">Any song → karaoke</h3>
+    <div class="tip">Paste a YouTube link to the normal song, or just type the song name. The app finds a karaoke version that plays in here.</div>
+    <div class="lab">
+      <input class="in" id="labIn" placeholder="https://youtu.be/… or 'Golden Hour JVKE'" autocomplete="off">
+      <div class="ctr"><button class="btn pri grow" id="btnLab">Make it karaoke</button></div>
+      <div class="status" id="labStatus"></div>
+      <div id="labResult" class="hidden" style="display:grid;gap:8px">
+        <div class="cand"><div class="n"><div class="t" id="labT"></div><div class="c" id="labC"></div></div></div>
+        <div class="ctr"><button class="btn pri grow" id="labSing">Sing it</button><button class="btn" id="labNext">Other version</button><button class="btn" id="labSave">+ Ours</button></div>
+        <div class="ctr"><button class="btn ghost sm" id="labOrig">Sing over the original instead</button><a class="btn ghost sm" id="labYt" href="#" target="_blank" rel="noopener">Search YouTube</a></div>
+      </div>
+    </div>
+    <details style="font-size:13px;color:var(--muted)"><summary style="cursor:pointer">Already have a karaoke link?</summary>
+      <div class="field" style="margin-top:8px"><label for="cTitle">Song</label><input class="in" id="cTitle" placeholder="Title – Artist"></div>
+      <div class="field" style="margin-top:8px"><label for="cUrl">YouTube link (karaoke version)</label><input class="in" id="cUrl" placeholder="https://youtu.be/…"></div>
+      <div class="ctr" style="margin-top:8px"><button class="btn grow" id="btnAddCustom">Add to list</button></div>
+    </details>
   </div>
 </section>
 
 <!-- SCORES -->
 <section class="view" id="v-scores">
   <div class="totals">
-    <div class="tot a"><div class="nm" id="tNameA">Moha</div><div class="pts" id="tPtsA">0</div><div class="sub" id="tSubA">0 songs</div></div>
+    <div class="tot a"><div class="nm" id="tNameA">Tindha</div><div class="pts" id="tPtsA">0</div><div class="sub" id="tSubA">0 songs</div></div>
     <div class="tot b"><div class="nm" id="tNameB">Viki</div><div class="pts" id="tPtsB">0</div><div class="sub" id="tSubB">0 songs</div></div>
   </div>
   <div class="card tip" id="h2h" style="text-align:center;font-size:14px">No scores yet this season.</div>
   <div class="card" style="display:grid;gap:12px">
     <h3 style="font-size:16px">Players &amp; handicap</h3>
     <div class="two">
-      <div class="field"><label for="nameA">Singer 1</label><input class="in" id="nameA" value="Moha" readonly></div>
+      <div class="field"><label for="nameA">Singer 1</label><input class="in" id="nameA" value="Tindha" readonly></div>
       <div class="field"><label for="nameB">Singer 2</label><input class="in" id="nameB" value="Viki" readonly></div>
     </div>
     <div class="two">
-      <div class="hcap"><label style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700">Moha boost <b id="hA">×1.00</b></label><input type="range" id="hcapA" min="100" max="160" step="5" value="100"></div>
+      <div class="hcap"><label style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700">Tindha boost <b id="hA">×1.00</b></label><input type="range" id="hcapA" min="100" max="160" step="5" value="100"></div>
       <div class="hcap"><label style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700">Viki boost <b id="hB">×1.00</b></label><input type="range" id="hcapB" min="100" max="160" step="5" value="100"></div>
     </div>
     <div class="tip">Give the weaker singer a boost so rounds stay close. Scores are capped at 100.</div>
@@ -288,10 +319,10 @@ canvas.trace{width:100%;height:70px;display:block;border-radius:10px;background:
 <!-- SETUP -->
 <div class="overlay" id="setup">
   <div class="box">
-    <h2>Moha <span>&amp;</span> Viki,<br>one stage.</h2>
+    <h2>Tindha <span>&amp;</span> Viki,<br>one stage.</h2>
     <div class="field"><label>Who are you?</label>
       <div class="two" id="whoPick">
-        <button class="btn pri" data-who="0" id="whoA" style="min-height:52px;font-size:17px">Moha</button>
+        <button class="btn pri" data-who="0" id="whoA" style="min-height:52px;font-size:17px">Tindha</button>
         <button class="btn" data-who="1" id="whoB" style="min-height:52px;font-size:17px">Viki</button>
       </div>
     </div>
@@ -331,8 +362,8 @@ CATALOG.forEach((s,i)=>s.id='c'+i);
 // ===== State =====
 const $=id=>document.getElementById(id);
 const LS='duetk.v1';
-let S={names:['Moha','Viki'],hcap:[1,1],turn:0,queue:[],current:null,custom:[],history:[],ts:0,season:1};
-const NAMES=['Moha','Viki'];
+let S={names:['Tindha','Viki'],hcap:[1,1],turn:0,queue:[],current:null,custom:[],history:[],ts:0,season:1};
+const NAMES=['Tindha','Viki'];
 let ME={name:NAMES[0],slot:0,role:'solo'};   // slot = which of the two this phone is; role = host/guest/solo
 try{const saved=JSON.parse(localStorage.getItem(LS)||'null'); if(saved){S=Object.assign(S,saved);} const ms=localStorage.getItem(LS+'.slot'); if(ms==='1'){ME.slot=1;ME.name=NAMES[1];}}catch(e){}
 S.names=NAMES.slice();
@@ -364,8 +395,11 @@ function onData(m){
   if(m.type==='state'){ if(ME.role==='guest'||(m.state.ts||0)>(S.ts||0)){ const prevCur=S.current&&S.current.id; S=Object.assign(S,m.state); persist(); render(); if(S.current&&S.current.id!==prevCur) loadCurrent(false); } return;}
   if(m.type==='player'){ applyRemotePlayer(m); return;}
   if(m.type==='score'){ S.history.unshift(m.entry); S.ts=Date.now(); persist(); render(); toast(`${m.entry.singer} scored ${m.entry.score}`); return;}
-  if(m.type==='judge-start'){ judging={song:m.song,singer:m.singer,taps:0,mode:m.mode||'judge'}; $('judgeWho').textContent=`${m.singer} · ${m.song}`; $('hypeCount').textContent='0'; $('stars').value=7; $('starsV').textContent='7'; const micMode=judging.mode==='mic'; $('judgeRateWrap').classList.toggle('hidden',micMode); $('judgeSendWrap').classList.toggle('hidden',micMode); $('judgePanel').classList.remove('hidden'); showView('stage'); toast(`${m.singer} is singing. Send love.`); return;}
+  if(m.type==='judge-start'){ judging={song:m.song,singer:m.singer,taps:0,mode:m.mode||'judge'}; $('judgeWho').textContent=`${m.singer} · ${m.song}`; $('hypeCount').textContent='0'; $('stars').value=7; $('starsV').textContent='7'; const micMode=judging.mode==='mic'; $('judgeRateWrap').classList.toggle('hidden',micMode); $('judgeSendWrap').classList.toggle('hidden',micMode); $('judgePanel').classList.remove('hidden'); $('btnDareDone').classList.toggle('hidden',!dare); showView('stage'); toast(`${m.singer} is singing. Send love.`); return;}
   if(m.type==='judge-tap'){ loveTaps=m.taps; $('judgeWaitTxt').textContent='❤️ '+m.taps+' so far'; $('partnerLove').textContent='❤️ '+m.taps; $('partnerLove').classList.remove('hidden'); spawnHeart(); if(scoring){ flash(['💗 Love from '+S.names[1-ME.slot],'❤️ They felt that','💞 Aww'][m.taps%3]); } return;}
+  if(m.type==='dare'){ showDare(m.t); if(m.t){ toast('🎲 Dare: '+m.t); } return;}
+  if(m.type==='react'){ spawnBig(m.r); if(scoring) flash(m.r+' from '+S.names[1-ME.slot]); return;}
+  if(m.type==='dare-done'){ dareDone=true; spawnBig('🏆'); flash('🏆 Dare done! +10'); toast('Dare bonus +10'); return;}
   if(m.type==='judge-cancel'){ judging=null; $('judgePanel').classList.add('hidden'); toast('Round over'); return;}
   if(m.type==='judged'){ if(!awaitingJudge)return; awaitingJudge=false; $('judgeWait').classList.add('hidden'); showJudgedResult(m.taps,m.stars); return;}
 }
@@ -402,9 +436,15 @@ window.onYouTubeIframeAPIReady=function(){ ytReady=true; if(pendingLoad){loadVid
 function loadVideo(id){
   if(!ytReady){pendingLoad=id;return;}
   $('playerEmpty').classList.add('hidden');
-  if(!yt){ yt=new YT.Player('yt',{videoId:id,playerVars:{playsinline:1,rel:0,modestbranding:1,controls:1},events:{onReady:()=>{$('btnPlay').disabled=false;},onStateChange:onYtState}}); }
+  if(!yt){ yt=new YT.Player('yt',{videoId:id,playerVars:{playsinline:1,rel:0,modestbranding:1,controls:1},events:{onReady:()=>{$('btnPlay').disabled=false;},onStateChange:onYtState,onError:onYtError}}); }
   else { yt.loadVideoById(id); yt.pauseVideo(); }
   $('btnPlay').disabled=false; $('btnScore').disabled=false;
+}
+function onYtError(e){
+  if(labPlaying){ labNextCandidate('That version will not play here'); return; }
+  if(!S.current||!S.current.t)return;
+  toast('This video will not play here. Finding another version…');
+  findKaraoke(S.current.t+' '+(S.current.a||''),{auto:true});
 }
 function onYtState(e){
   const st=e.data; // 1 playing, 2 paused, 0 ended
@@ -437,6 +477,14 @@ function putOnStage(id,fromQueue){
 function queueSong(id){ if(S.queue.includes(id)){toast('Already queued');return;} S.queue.push(id); commit(); toast('Queued'); }
 function nextInQueue(){ if(!S.queue.length){toast('Queue is empty');return;} S.turn=1-S.turn; putOnStage(S.queue[0],true); }
 $('btnNext').onclick=nextInQueue;
+const DARES=['Whisper the whole chorus','Opera voice for one verse','Sing it as a lullaby','A dance move on every chorus','Sing it in a British accent','Replace one word per line with the other person\'s name','Hand on heart the entire song, no exceptions','Eyes closed from start to finish','Rap the bridge','Sing it furious','Hold the last note as long as you can','Air guitar through the instrumental','Blow a kiss on every chorus','Second verse in slow motion','Point at the camera on every "you"','Sing it like a sleepy robot','Tiny voice, maximum feeling','Sing it to an imaginary stadium'];
+let dare=null, dareDone=false;
+function showDare(t){ dare=t; dareDone=false; $('dareTxt').textContent=t; $('dareBox').classList.toggle('hidden',!t); $('btnDareDone').classList.toggle('hidden',!t||!judging); }
+$('btnDare').onclick=()=>{ const t=DARES[Math.floor(Math.random()*DARES.length)]; showDare(t); send({type:'dare',t}); spawnHeart(2); toast('🎲 Dare set'); };
+$('dareX').onclick=()=>{ showDare(null); send({type:'dare',t:null}); };
+$('reacts').addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b)return; send({type:'react',r:b.dataset.r}); spawnBig(b.dataset.r); if(navigator.vibrate)navigator.vibrate(10); });
+$('btnDareDone').onclick=()=>{ send({type:'dare-done'}); $('btnDareDone').classList.add('hidden'); toast('+10 sent'); };
+function spawnBig(ch){ const s=document.createElement('span'); s.className='big'; s.textContent=ch; s.style.left=(20+Math.random()*60)+'%'; s.style.setProperty('--r',(Math.random()*40-20)+'deg'); $('hearts').appendChild(s); setTimeout(()=>s.remove(),2000); }
 $('btnSurprise').onclick=()=>{ const pool=allSongs().filter(s=>s.y&&(filter==='all'||filter==='mine'?true:s.g.includes(filter))); if(!pool.length)return; const s=pool[Math.floor(Math.random()*pool.length)]; toast('🎲 '+s.t+' — '+s.a); putOnStage(s.id,false); };
 $('swapTurn').onclick=()=>{S.turn=1-S.turn;commit();};
 $('btnPlay').onclick=()=>{ if(!yt)return; const st=yt.getPlayerState(); if(st===1) yt.pauseVideo(); else yt.playVideo(); };
@@ -539,11 +587,14 @@ function verdict(score){
   return score>=90?['Heart-stealer 💘',5]:score>=80?['Swoon-worthy 💞',4]:score>=65?['Made me smile 💗',3]:score>=50?['Warming up 💓',2]:['Shower-singer energy 🚿',1];
 }
 function showResult(score,raw,parts,by){
+  if(dareDone){ score=Math.min(100,score+10); parts+='<span>🏆 Dare bonus <b>+10</b></span>'; }
+  showDare(null); send({type:'dare',t:null});
   const singerSlot=S.turn; const grade=score>=90?'S':score>=80?'A':score>=65?'B':score>=50?'C':'D'; const [title,hearts]=verdict(score);
   pendingResult={song:S.current.t,singer:S.names[singerSlot],slot:singerSlot,score,raw:Math.round(raw),grade,hearts,date:new Date().toISOString().slice(0,10),season:S.season,by};
   $('rTitle').textContent=title; $('rHearts').textContent='💗'.repeat(hearts)+'🤍'.repeat(5-hearts);
-  $('rGrade').textContent=grade; $('rScore').textContent=score; $('rParts').innerHTML=parts+(S.hcap[singerSlot]>1?`<span>Boost ×${S.hcap[singerSlot].toFixed(2)} applied</span>`:'');
-  $('scoreResult').classList.remove('hidden'); $('btnScore').disabled=false; spawnHeart(hearts*2);
+  $('rGrade').textContent=grade; $('rParts').innerHTML=parts+(S.hcap[singerSlot]>1?`<span>Boost ×${S.hcap[singerSlot].toFixed(2)} applied</span>`:'');
+  $('scoreResult').classList.remove('hidden'); $('btnScore').disabled=false;
+  const el=$('rScore'); const t0=performance.now(); const dur=1300; (function cnt(){ const k=Math.min(1,(performance.now()-t0)/dur); const v=Math.round(score*(1-Math.pow(1-k,3))); el.textContent=v; if(k<1) requestAnimationFrame(cnt); else { spawnHeart(hearts*3); if(hearts>=4) setTimeout(()=>spawnBig('🎉'),200); } })();
 }
 function finishScore(){
   if(!scoring)return; stopMic(); if(yt&&yt.getPlayerState()===1){yt.pauseVideo();} $('partnerLove').classList.add('hidden');
@@ -597,6 +648,70 @@ $('songList').addEventListener('click',e=>{const b=e.target.closest('button');if
 $('search').addEventListener('input',renderSongs);
 $('filters').addEventListener('click',e=>{const b=e.target.closest('.f');if(!b)return;filter=b.dataset.f;document.querySelectorAll('.f').forEach(x=>x.classList.toggle('on',x===b));renderSongs();});
 function ytId(u){const m=String(u).match(/(?:v=|youtu\.be\/|shorts\/|embed\/)([\w-]{11})/);return m?m[1]:'';}
+// ----- Karaoke Lab: any link or title -> embeddable karaoke version -----
+const PIPED=['https://api.piped.private.coffee','https://pipedapi.kavin.rocks','https://pipedapi.drgns.space','https://pipedapi.ducks.party','https://api.piped.yt','https://pipedapi.leptons.xyz'];
+const BAD_CH=/sing king|karafun/i; // these block embedding
+const GOOD_CH=/zoom karaoke|musisi|karaoke all keys|karaokeytv|atomic karaoke|party tyme|stingray|cc karaoke|isiing|karaoke polska|quality arabic/i;
+let lab={title:'',orig:'',cands:[],i:0}, labPlaying=false, labTimer=0;
+async function piped(path){
+  let lastErr;
+  for(const base of PIPED){
+    try{ const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(),6000); const r=await fetch(base+path,{signal:ctl.signal}); clearTimeout(t); if(!r.ok)throw new Error(r.status); return await r.json(); }
+    catch(e){ lastErr=e; }
+  }
+  throw lastErr||new Error('no instance');
+}
+function cleanTitle(t){
+  return String(t).replace(/\(.*?\)|\[.*?\]|\{.*?\}/g,' ').replace(/\|.*$/,'').replace(/\b(official|video|audio|lyrics?|lyric|hd|4k|visualizer|mv|m\/v|clip|version|remastered|live)\b/gi,' ').replace(/\s+/g,' ').trim();
+}
+function setLabStatus(html){ $('labStatus').innerHTML=html; }
+async function findKaraoke(input,opts){
+  opts=opts||{}; input=String(input||'').trim(); if(!input){toast('Paste a link or type a song');return;}
+  $('labResult').classList.add('hidden'); labPlaying=false;
+  const id=ytId(input); lab={title:'',orig:id,cands:[],i:0};
+  try{
+    if(id){ setLabStatus('<span class="spin"></span>Reading the song…'); const s=await piped('/streams/'+id); lab.title=cleanTitle(s.title||''); if(!lab.title) throw new Error('no title'); }
+    else lab.title=cleanTitle(input);
+    setLabStatus('<span class="spin"></span>Finding a karaoke version of <b>'+esc(lab.title)+'</b>…');
+    const res=await piped('/search?q='+encodeURIComponent(lab.title+' karaoke')+'&filter=videos');
+    const items=(res.items||[]).filter(x=>x.type==='stream'&&x.url);
+    const key=lab.title.toLowerCase().replace(/[^a-z0-9\u00C0-\u024F\u0400-\u04FF\u0600-\u06FF]+/g,' ').split(' ').filter(w=>w.length>2).slice(0,3);
+    let c=items.map(x=>({id:(x.url.match(/v=([\w-]{11})/)||[])[1],t:x.title||'',ch:x.uploaderName||'',d:x.duration||0}))
+      .filter(x=>x.id&&/karaoke|instrumental|backing/i.test(x.t)&&!/\bmix\b|megamix|\d+\s*hours?|hour long|compilation|medley|playlist|top \d/i.test(x.t)&&x.d<720&&key.filter(w=>x.t.toLowerCase().includes(w)).length>=Math.min(1,key.length));
+    const rank=x=>BAD_CH.test(x.ch)?-1:GOOD_CH.test(x.ch)?1:0; c.sort((a,b)=>rank(b)-rank(a));
+    lab.cands=c.slice(0,8);
+    if(!lab.cands.length){ setLabStatus('No karaoke version found for <b>'+esc(lab.title)+'</b>.'); $('labResult').classList.remove('hidden'); $('labT').textContent='Nothing matched'; $('labC').textContent='Try the original, or search YouTube and paste a karaoke link.'; $('labSing').classList.add('hidden'); $('labNext').classList.add('hidden'); $('labSave').classList.add('hidden'); $('labOrig').classList.toggle('hidden',!id); $('labYt').href='https://www.youtube.com/results?search_query='+encodeURIComponent(lab.title+' karaoke'); return; }
+    showCandidate(opts.auto);
+  }catch(e){
+    setLabStatus('Could not reach the search service. Paste a karaoke link below instead, or try again in a minute.');
+    $('labYt').href='https://www.youtube.com/results?search_query='+encodeURIComponent((lab.title||input)+' karaoke'); $('labResult').classList.remove('hidden'); $('labT').textContent='Search unavailable'; $('labC').textContent=''; $('labSing').classList.add('hidden'); $('labNext').classList.add('hidden'); $('labSave').classList.add('hidden'); $('labOrig').classList.toggle('hidden',!id);
+  }
+}
+function showCandidate(autoSing){
+  const c=lab.cands[lab.i]; if(!c){ setLabStatus('Ran out of versions. Try the original or search YouTube.'); return; }
+  setLabStatus('Found '+lab.cands.length+' version'+(lab.cands.length===1?'':'s')+' · showing '+(lab.i+1));
+  $('labResult').classList.remove('hidden'); $('labT').textContent=c.t; $('labC').textContent=c.ch;
+  ['labSing','labNext','labSave'].forEach(x=>$(x).classList.remove('hidden')); $('labOrig').classList.toggle('hidden',!lab.orig);
+  $('labYt').href='https://www.youtube.com/results?search_query='+encodeURIComponent(lab.title+' karaoke');
+  if(autoSing) labSingNow();
+}
+function labSong(){ const c=lab.cands[lab.i]; const parts=lab.title.split(/\s[–-]\s/); const t=lab.orig&&parts.length>1?parts.slice(1).join(' - '):(parts[0]||lab.title); const ar=lab.orig&&parts.length>1?parts[0]:(parts[1]||''); return {id:'u'+c.id,t,a:ar||c.ch,g:['mine'],n:'Ours · karaoke',y:c.id}; }
+function labSingNow(){
+  const song=labSong(); if(!S.custom.some(x=>x.id===song.id)) S.custom.push(song);
+  labPlaying=true; clearTimeout(labTimer); labTimer=setTimeout(()=>{labPlaying=false;},6000);
+  putOnStage(song.id,false);
+}
+function labNextCandidate(why){
+  labPlaying=false; if(why) toast(why+'. Trying the next one…');
+  lab.i++; if(lab.i>=lab.cands.length){ lab.i=0; toast('That was the last version; back to the first.'); showCandidate(false); return; }
+  showCandidate(true);
+}
+$('btnLab').onclick=()=>findKaraoke($('labIn').value);
+$('labIn').addEventListener('keydown',e=>{if(e.key==='Enter')findKaraoke($('labIn').value);});
+$('labSing').onclick=labSingNow;
+$('labNext').onclick=()=>labNextCandidate('');
+$('labSave').onclick=()=>{ const song=labSong(); if(S.custom.some(x=>x.id===song.id)){toast('Already in Ours');return;} S.custom.push(song); commit(); toast('Added to Ours'); };
+$('labOrig').onclick=()=>{ if(!lab.orig)return; const song={id:'o'+lab.orig,t:lab.title,a:'original',g:['mine'],n:'Ours · original',y:lab.orig}; if(!S.custom.some(x=>x.id===song.id))S.custom.push(song); putOnStage(song.id,false); };
 $('btnAddCustom').onclick=()=>{
   const t=$('cTitle').value.trim(), id=ytId($('cUrl').value);
   if(!t){toast('Give the song a title');return;} if(!id){toast('That is not a YouTube link');return;}
@@ -616,7 +731,7 @@ function render(){
   // scores
   const hist=S.history.filter(h=>h.season===S.season);
   [0,1].forEach(i=>{const rows=hist.filter(h=>h.slot===i);const pts=rows.reduce((a,b)=>a+b.score,0);$('tName'+'AB'[i]).textContent=S.names[i];$('tPts'+'AB'[i]).textContent=pts;$('tSub'+'AB'[i]).textContent=rows.length+' song'+(rows.length===1?'':'s')+(rows.length?' · best '+Math.max(...rows.map(r=>r.score)):'');});
-  $('histBody').innerHTML=hist.map(h=>`<tr><td>${esc(h.song)}<div class="tip">${h.date}${h.by==='judge'?' · judged':''}</div></td><td>${esc(h.singer)}</td><td class="num">${h.score} <span style="color:var(--spot2)">${'💗'.repeat(h.hearts||verdict(h.score)[1])}</span></td></tr>`).join('');
+  $('histBody').innerHTML=hist.map(h=>`<tr><td>${esc(h.song)}<div class="tip">${h.date}${h.by==='judge'?' · judged':''}</div></td><td>${esc(S.names[h.slot]||h.singer)}</td><td class="num">${h.score} <span style="color:var(--spot2)">${'💗'.repeat(h.hearts||verdict(h.score)[1])}</span></td></tr>`).join('');
   const pA=hist.filter(h=>h.slot===0).reduce((a,b)=>a+b.score,0), pB=hist.filter(h=>h.slot===1).reduce((a,b)=>a+b.score,0);
   $('h2h').textContent=!hist.length?'No scores yet this season.':pA===pB?`Dead even at ${pA} each.`:`${S.names[pA>pB?0:1]} leads by ${Math.abs(pA-pB)} after ${hist.length} song${hist.length===1?'':'s'}.`;
   $('histEmpty').classList.toggle('hidden',hist.length>0);
