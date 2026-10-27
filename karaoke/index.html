@@ -286,18 +286,18 @@ canvas.trace{width:100%;height:70px;display:block;border-radius:10px;background:
 <!-- SCORES -->
 <section class="view" id="v-scores">
   <div class="totals">
-    <div class="tot a"><div class="nm" id="tNameA">Tindha</div><div class="pts" id="tPtsA">0</div><div class="sub" id="tSubA">0 songs</div></div>
+    <div class="tot a"><div class="nm" id="tNameA">Modi</div><div class="pts" id="tPtsA">0</div><div class="sub" id="tSubA">0 songs</div></div>
     <div class="tot b"><div class="nm" id="tNameB">Viki</div><div class="pts" id="tPtsB">0</div><div class="sub" id="tSubB">0 songs</div></div>
   </div>
   <div class="card tip" id="h2h" style="text-align:center;font-size:14px">No scores yet this season.</div>
   <div class="card" style="display:grid;gap:12px">
     <h3 style="font-size:16px">Players &amp; handicap</h3>
     <div class="two">
-      <div class="field"><label for="nameA">Singer 1</label><input class="in" id="nameA" value="Tindha" readonly></div>
+      <div class="field"><label for="nameA">Singer 1</label><input class="in" id="nameA" value="Modi" readonly></div>
       <div class="field"><label for="nameB">Singer 2</label><input class="in" id="nameB" value="Viki" readonly></div>
     </div>
     <div class="two">
-      <div class="hcap"><label style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700">Tindha boost <b id="hA">×1.00</b></label><input type="range" id="hcapA" min="100" max="160" step="5" value="100"></div>
+      <div class="hcap"><label style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700">Modi boost <b id="hA">×1.00</b></label><input type="range" id="hcapA" min="100" max="160" step="5" value="100"></div>
       <div class="hcap"><label style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700">Viki boost <b id="hB">×1.00</b></label><input type="range" id="hcapB" min="100" max="160" step="5" value="100"></div>
     </div>
     <div class="tip">Give the weaker singer a boost so rounds stay close. Scores are capped at 100.</div>
@@ -319,10 +319,10 @@ canvas.trace{width:100%;height:70px;display:block;border-radius:10px;background:
 <!-- SETUP -->
 <div class="overlay" id="setup">
   <div class="box">
-    <h2>Tindha <span>&amp;</span> Viki,<br>one stage.</h2>
+    <h2>Modi <span>&amp;</span> Viki,<br>one stage.</h2>
     <div class="field"><label>Who are you?</label>
       <div class="two" id="whoPick">
-        <button class="btn pri" data-who="0" id="whoA" style="min-height:52px;font-size:17px">Tindha</button>
+        <button class="btn pri" data-who="0" id="whoA" style="min-height:52px;font-size:17px">Modi</button>
         <button class="btn" data-who="1" id="whoB" style="min-height:52px;font-size:17px">Viki</button>
       </div>
     </div>
@@ -362,8 +362,8 @@ CATALOG.forEach((s,i)=>s.id='c'+i);
 // ===== State =====
 const $=id=>document.getElementById(id);
 const LS='duetk.v1';
-let S={names:['Tindha','Viki'],hcap:[1,1],turn:0,queue:[],current:null,custom:[],history:[],ts:0,season:1};
-const NAMES=['Tindha','Viki'];
+let S={names:['Modi','Viki'],hcap:[1,1],turn:0,queue:[],current:null,custom:[],history:[],ts:0,season:1};
+const NAMES=['Modi','Viki'];
 let ME={name:NAMES[0],slot:0,role:'solo'};   // slot = which of the two this phone is; role = host/guest/solo
 try{const saved=JSON.parse(localStorage.getItem(LS)||'null'); if(saved){S=Object.assign(S,saved);} const ms=localStorage.getItem(LS+'.slot'); if(ms==='1'){ME.slot=1;ME.name=NAMES[1];}}catch(e){}
 S.names=NAMES.slice();
