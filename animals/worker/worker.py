@@ -375,13 +375,18 @@ def make_clip(picture, prompt, seconds, out):
 
 # ---------- Step 3: join clips into one TikTok video ----------
 
-EMOJI = re.compile('[\U0001F000-\U0001FFFF☀-➿️‍]')
+# Text on the video uses a plain font, so emoji and other symbols would show as empty boxes.
+TEXT_OK = set('’‘“”…–—•')
+
+
+def plain_text(text):
+    return ''.join(ch for ch in text if ord(ch) < 0x2000 or ch in TEXT_OK)
 
 
 def caption_png(text, path):
     """White text with a black outline near the top, like a TikTok caption."""
     img = Image.new('RGBA', (OUT_W, OUT_H), (0, 0, 0, 0))
-    text = EMOJI.sub('', text or '').strip()
+    text = re.sub(r'\s+', ' ', plain_text(text or '')).strip()
     if text:
         draw = ImageDraw.Draw(img)
         font = ImageFont.truetype(FONT, 46)
