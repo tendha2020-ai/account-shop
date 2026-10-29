@@ -46,7 +46,7 @@
     </form>
 
     <section class="list" aria-label="Your videos">
-      <h2>Your videos</h2>
+      <h2>Your videos <span id="pcChip" class="pc-chip" hidden>made on your PC</span></h2>
       <p id="wakeNote" class="wake" hidden>Waking up your worker…</p>
       <div id="jobs"></div>
       <p id="emptyNote" class="empty">Nothing yet. Paste a link and hit <b>Make it</b>. You can close the app, it keeps working.</p>
@@ -108,6 +108,25 @@
           <input type="checkbox" id="captionsOpt" checked>
         </label>
         <p class="fine">Free Hugging Face time makes about 3–5 clips a day. When it runs out, unfinished videos wait and finish by themselves.</p>
+        <p id="updateNote" class="note bad" hidden>Your worker is out of date. Tap <b>Set up again</b> below (you'll need your Hugging Face key).</p>
+
+        <div class="pc-box">
+          <div class="opt">
+            <span>Use my PC</span>
+            <span id="pcState" class="pc-state">not connected</span>
+          </div>
+          <p class="fine">Unlimited free videos on your own NVIDIA graphics card. When the PC is off, the free online time is used instead.</p>
+          <div class="row">
+            <a class="plain" href="pc.html" target="_blank" rel="noopener">How to set up my PC</a>
+            <button type="button" id="pairBtn" class="plain">Get connect code</button>
+          </div>
+          <div id="pairBox" class="pair" hidden>
+            <p>When the helper on your PC asks, type:</p>
+            <p>Username: <b id="pairUser"></b></p>
+            <p>Code: <b id="pairCode" class="code"></b> <span class="fine">(works for 10 minutes)</span></p>
+          </div>
+        </div>
+
         <div class="row">
           <button type="button" id="redoSetup" class="plain">Set up again</button>
           <button type="button" id="disconnect" class="plain danger">Disconnect</button>

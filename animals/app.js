@@ -6,6 +6,7 @@ const HF = 'https://huggingface.co';
 const SPACE_NAME = 'antics-worker';
 const DATASET_NAME = 'antics-videos';
 const WORKER_FILES = ['Dockerfile', 'README.md', 'requirements.txt', 'worker.py', 'ideas.py'];
+const WORKER_VERSION = '2'; // bump with VERSION in worker/worker.py
 const KEYS = { worker: 'antics.worker', clips: 'antics.clips', captions: 'antics.captions' };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -20,6 +21,7 @@ const state = {
   pending: null, // what to make once setup finishes
   playing: null,
   playingBlob: null,
+  health: null, // the worker's /health: version and whether the user's PC is connected
 };
 
 function load(key, fallback) {
@@ -528,6 +530,7 @@ async function refreshJobs() {
     const { jobs } = await api('/jobs');
     state.jobs = jobs;
     renderJobs();
+    refreshHealth();
     renderWorkerDot(true);
     $('#wakeNote').hidden = true;
     const busy = jobs.some((j) => j.status === 'queued' || j.status === 'working');
@@ -626,6 +629,41 @@ function openSettings() {
   openDialog($('#settings'));
 }
 
+async function refreshHealth() {
+  try {
+    const res = await fetch(`${state.worker.url}/health`);
+    state.health = await res.json();
+  } catch {
+    return; // asleep or offline: keep the last known state
+  }
+  renderPc();
+}
+
+function renderPc() {
+  const h = state.health;
+  const pcOn = Boolean(h && h.pc);
+  const pcState = $('#pcState');
+  pcState.textContent = pcOn ? `on · ${h.pc_name || 'PC'}` : 'off or not connected';
+  pcState.classList.toggle('on', pcOn);
+  $('#pcChip').hidden = !pcOn;
+  $('#updateNote').hidden = !h || h.version === WORKER_VERSION;
+}
+
+async function getPairCode() {
+  const btn = $('#pairBtn');
+  btn.disabled = true;
+  try {
+    const { code } = await api('/pc/pair-code', { method: 'POST' });
+    $('#pairUser').textContent = state.worker.space.split('/')[0];
+    $('#pairCode').textContent = `${code.slice(0, 3)} ${code.slice(3)}`;
+    $('#pairBox').hidden = false;
+  } catch (e) {
+    toast(e.waking ? 'Your worker is waking up. Try again in a minute.' : e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function renderSettings() {
   const ready = Boolean(state.worker);
   $('#setupPane').hidden = ready;
@@ -638,6 +676,7 @@ function renderSettings() {
   }
   document.querySelectorAll('#clipsSeg button').forEach((b) => b.setAttribute('aria-pressed', String(Number(b.dataset.clips) === state.clips)));
   $('#captionsOpt').checked = state.captions;
+  renderPc();
 }
 
 function init() {
@@ -661,6 +700,7 @@ function init() {
   $('#openSettings').addEventListener('click', openSettings);
   $('#closeSettings').addEventListener('click', () => closeDialog($('#settings')));
   $('#setupBtn').addEventListener('click', setupWorker);
+  $('#pairBtn').addEventListener('click', getPairCode);
   $('#redoSetup').addEventListener('click', () => {
     $('#setupPane').hidden = false;
     $('#optionsPane').hidden = true;

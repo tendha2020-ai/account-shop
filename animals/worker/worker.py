@@ -30,7 +30,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 import ideas
 
-VERSION = '1'
+VERSION = '2'
 HF_TOKEN = os.environ.get('HF_TOKEN') or None
 ANTICS_KEY = os.environ.get('ANTICS_KEY', '')
 DATASET = os.environ.get('ANTICS_DATASET', '')
@@ -343,8 +343,46 @@ def wan21_size(picture):
     return {'height': 640, 'width': 640}
 
 
+# ---------- Your own PC (the antics PC helper) ----------
+# The helper on the user's PC asks the worker for work, so it needs no open ports or tunnels.
+
+PC_GONE_AFTER = 90  # seconds without a check-in before the PC counts as switched off
+pc = {'seen': 0.0, 'name': ''}
+pc_tasks = {}
+pc_cond = threading.Condition()
+pairing = {'code': '', 'until': 0.0, 'misses': 0}
+
+
+def pc_online():
+    return time.time() - pc['seen'] < PC_GONE_AFTER
+
+
+def pc_make_clip(picture, prompt, seconds, out):
+    """Hands one clip to the user's PC and waits. Returns False if the PC failed or went away."""
+    task = {'id': secrets.token_hex(6), 'picture': str(picture), 'prompt': prompt, 'seconds': seconds,
+            'out': str(out), 'status': 'waiting', 'error': '', 'done': threading.Event()}
+    with pc_cond:
+        pc_tasks[task['id']] = task
+        pc_cond.notify_all()
+    started = time.time()
+    try:
+        while not task['done'].wait(5):
+            if not pc_online() or time.time() - started > 30 * 60:
+                log.warning('the PC went quiet during clip %s', task['id'])
+                return False
+        if task['status'] != 'done':
+            log.warning('the PC could not make clip %s: %s', task['id'], task['error'])
+        return task['status'] == 'done'
+    finally:
+        with pc_cond:
+            pc_tasks.pop(task['id'], None)
+
+
 def make_clip(picture, prompt, seconds, out):
-    """Animate one picture. Tries each free engine; stops early on quota or key problems."""
+    """Animate one picture: on the user's PC when it is on, otherwise with the free online engines
+    (each tried in turn; stops early on quota or key problems)."""
+    if pc_online() and pc_make_clip(picture, prompt, seconds, out):
+        return 'your PC'
     from gradio_client import Client, handle_file
     last, busy = None, False
     for engine in ENGINES:
@@ -480,7 +518,8 @@ def process(job):
         if out.exists():
             clips.append(out)
             continue
-        update(job, stage=f'Animating clip {i + 1} of {wanted}… (1–2 min each)', progress=0.15 + 0.7 * i / wanted)
+        where, each = ('Your PC is animating', '3–5 min each') if pc_online() else ('Animating', '1–2 min each')
+        update(job, stage=f'{where} clip {i + 1} of {wanted}… ({each})', progress=0.15 + 0.7 * i / wanted)
         picture = local_file(job, job['inputs'][i % len(job['inputs'])])
         try:
             make_clip(picture, ideas.video_prompt(idea, animal), job['seconds'], out)
@@ -541,15 +580,20 @@ def friendly(e):
     return msg[:300]
 
 
+def wake_waiting(now_anyway=False):
+    """Put waiting jobs back in line once their wait is over (or right away when the PC is on)."""
+    now = time.time()
+    for job in list(jobs.values()):
+        if job['status'] == 'waiting' and (now_anyway or (job.get('retry_at') or 0) <= now):
+            update(job, status='queued', stage='In line…')
+            work_queue.put(job['id'])
+
+
 def scheduler_loop():
     """Wake jobs that were waiting for the free GPU time to come back."""
     while True:
         time.sleep(60)
-        now = time.time()
-        for job in list(jobs.values()):
-            if job['status'] == 'waiting' and (job.get('retry_at') or 0) <= now:
-                update(job, status='queued', stage='In line…')
-                work_queue.put(job['id'])
+        wake_waiting()
 
 
 # ---------- API ----------
@@ -579,7 +623,8 @@ def home():
 
 @app.get('/health')
 def health():
-    return {'ok': True, 'version': VERSION, 'storage': bool(hub), 'token': bool(HF_TOKEN)}
+    return {'ok': True, 'version': VERSION, 'storage': bool(hub), 'token': bool(HF_TOKEN),
+            'pc': pc_online(), 'pc_name': pc['name']}
 
 
 @app.get('/jobs')
@@ -685,4 +730,111 @@ def delete_job(job_id: str, x_antics_key: str = Header(None)):
             hub.delete_folder(f'jobs/{job_id}', repo_id=DATASET, repo_type='dataset')
         except Exception as e:
             log.warning('could not delete %s from the Hub: %s', job_id, e)
+    return {'ok': True}
+
+
+# ---------- PC helper API ----------
+
+def pc_seen(name=''):
+    was_on = pc_online()
+    pc['seen'] = time.time()
+    if name:
+        pc['name'] = name[:80]
+    if not was_on:
+        wake_waiting(now_anyway=True)
+
+
+def pc_task(task_id):
+    task = pc_tasks.get(task_id)
+    if not task:
+        raise HTTPException(404, 'That clip is no longer needed')
+    return task
+
+
+@app.post('/pc/pair-code')
+def pc_pair_code(x_antics_key: str = Header(None)):
+    """A 6-digit code the phone shows, so the PC helper can connect without typing the long key."""
+    check(x_antics_key)
+    pairing.update(code=f'{secrets.randbelow(10 ** 6):06d}', until=time.time() + 600, misses=0)
+    return {'code': pairing['code'], 'minutes': 10}
+
+
+@app.post('/pc/pair')
+def pc_pair(code: str = Form(...)):
+    if not pairing['code'] or time.time() > pairing['until'] or pairing['misses'] >= 8:
+        raise HTTPException(403, 'That code has expired. Get a new one in the antics app: Settings, Use my PC, Get connect code.')
+    if not secrets.compare_digest(code.strip(), pairing['code']):
+        pairing['misses'] += 1
+        raise HTTPException(403, 'Wrong code. Check the 6 digits in the antics app.')
+    pairing.update(code='', until=0.0)
+    return {'key': ANTICS_KEY}
+
+
+@app.post('/pc/hello')
+def pc_hello(name: str = Form(''), starting: bool = Form(False), x_antics_key: str = Header(None)):
+    check(x_antics_key)
+    pc_seen(name)
+    if starting:  # a restarted helper won't finish what it was making before
+        with pc_cond:
+            for task in pc_tasks.values():
+                if task['status'] == 'claimed':
+                    task['status'] = 'waiting'
+            pc_cond.notify_all()
+        wake_waiting(now_anyway=True)
+    return {'ok': True}
+
+
+@app.get('/pc/next')
+def pc_next(wait: float = Query(25), x_antics_key: str = Header(None)):
+    """Long poll: the next clip for the PC to make, or nothing after `wait` seconds."""
+    check(x_antics_key)
+    pc_seen()
+    deadline = time.time() + max(0.0, min(wait, 50.0))
+    with pc_cond:
+        while True:
+            task = next((t for t in pc_tasks.values() if t['status'] == 'waiting'), None)
+            if task:
+                task['status'] = 'claimed'
+                break
+            left = deadline - time.time()
+            if left <= 0:
+                return {'task': None}
+            pc_cond.wait(left)
+    pc_seen()
+    return {'task': {'id': task['id'], 'prompt': task['prompt'], 'seconds': task['seconds']}}
+
+
+@app.get('/pc/tasks/{task_id}/image')
+def pc_task_image(task_id: str, x_antics_key: str = Header(None)):
+    check(x_antics_key)
+    return FileResponse(pc_task(task_id)['picture'], media_type='image/jpeg')
+
+
+@app.post('/pc/tasks/{task_id}/done')
+def pc_task_done(task_id: str, video: UploadFile = File(...), x_antics_key: str = Header(None)):
+    check(x_antics_key)
+    pc_seen()
+    task = pc_task(task_id)
+    out = Path(task['out'])
+    with open(out, 'wb') as f:
+        shutil.copyfileobj(video.file, f)
+    try:
+        probe(out)
+    except Exception:
+        out.unlink(missing_ok=True)
+        task.update(status='failed', error='The PC sent a video that could not be read')
+        task['done'].set()
+        raise HTTPException(400, 'That video could not be read')
+    task['status'] = 'done'
+    task['done'].set()
+    return {'ok': True}
+
+
+@app.post('/pc/tasks/{task_id}/failed')
+def pc_task_failed(task_id: str, error: str = Form(''), x_antics_key: str = Header(None)):
+    check(x_antics_key)
+    pc_seen()
+    task = pc_task(task_id)
+    task.update(status='failed', error=error[:300])
+    task['done'].set()
     return {'ok': True}
