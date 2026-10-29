@@ -1,37 +1,25 @@
 // app.js
-// Animal Antics: pick an animal picture, pick a funny idea, let a free Hugging Face
-// video model animate it, then stitch the clips into a 9:16 video for TikTok.
+// antics: paste a link (or upload a clip), tap Make it, and your own free Hugging Face worker
+// turns the animal into a human-acting TikTok video in the background.
 
-const GRADIO_CLIENT = 'https://cdn.jsdelivr.net/npm/@gradio/client@2.7.1/dist/browser.js';
-
-// Free Wan image-to-video Spaces, tried in order. They all spend the same daily free GPU time.
-const ENGINES = [
-  { id: 'zerogpu-aoti/wan2-2-fp8da-aoti-faster', name: 'Wan 2.2', maxSec: 5, extra: { steps: 6 } },
-  { id: 'r3gm/wan2-2-fp8da-aoti-preview', name: 'Wan 2.2 backup', maxSec: 5, extra: { steps: 6 } },
-  { id: 'multimodalart/wan2-1-fast', name: 'Wan 2.1 backup', maxSec: 3.4, extra: { steps: 4 }, sized: true },
-];
-const IMAGE_SPACE = 'black-forest-labs/FLUX.1-schnell';
-
-const OUT_W = 720;
-const OUT_H = 1280;
-const FPS = 30;
-const KEYS = { token: 'antics.token', pet: 'antics.pet', petOther: 'antics.petOther', sec: 'antics.sec', mode: 'antics.mode' };
+const HF = 'https://huggingface.co';
+const SPACE_NAME = 'antics-worker';
+const DATASET_NAME = 'antics-videos';
+const WORKER_FILES = ['Dockerfile', 'README.md', 'requirements.txt', 'worker.py', 'ideas.py'];
+const KEYS = { worker: 'antics.worker', clips: 'antics.clips', captions: 'antics.captions' };
 
 const $ = (sel, root = document) => root.querySelector(sel);
 
 const state = {
-  mode: 'upload',
-  token: '',
-  pet: 'dog',
-  sec: 5,
-  upload: { blob: null, video: null },
-  surprise: null,
-  ideas: [],
-  chosen: null,
-  promptEdited: false,
-  busy: false,
-  clips: [],
-  exportBlob: null,
+  worker: null, // { space, url, key }
+  clips: 3,
+  captions: true,
+  file: null,
+  jobs: [],
+  online: false,
+  pending: null, // what to make once setup finishes
+  playing: null,
+  playingBlob: null,
 };
 
 function load(key, fallback) {
@@ -45,13 +33,12 @@ function load(key, fallback) {
 
 function save(key, value) {
   try {
-    localStorage.setItem(key, JSON.stringify(value));
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, JSON.stringify(value));
   } catch {
     // storage blocked: settings just won't persist
   }
 }
-
-// ---------- Small helpers ----------
 
 let toastTimer;
 function toast(msg) {
@@ -59,7 +46,13 @@ function toast(msg) {
   el.textContent = msg;
   el.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+}
+
+function note(el, text, kind = '') {
+  el.textContent = text;
+  el.className = 'note' + (kind ? ' ' + kind : '');
+  el.hidden = !text;
 }
 
 async function copyText(text) {
@@ -73,49 +66,292 @@ async function copyText(text) {
     document.execCommand('copy');
     ta.remove();
   }
-  toast('Copied!');
+  toast('Copied');
 }
 
-function showStatus(el, text, kind = '') {
-  el.textContent = text;
-  el.className = 'status' + (kind ? ' ' + kind : '');
-  el.hidden = !text;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function openDialog(dlg) {
+  if (dlg.showModal) dlg.showModal();
+  else dlg.setAttribute('open', '');
 }
 
-function errText(e) {
-  if (!e) return 'Unknown error';
-  if (typeof e === 'string') return e;
-  return e.message || e.detail || e.title || JSON.stringify(e);
+function closeDialog(dlg) {
+  if (dlg.close) dlg.close();
+  else dlg.removeAttribute('open');
 }
 
-function isQuotaError(msg) {
-  return /quota|runs limit|gpu limit|exceeded your/i.test(msg);
+// ---------- Talking to the worker ----------
+
+async function api(path, opts = {}) {
+  const w = state.worker;
+  const res = await fetch(w.url + path, { ...opts, headers: { 'X-Antics-Key': w.key, ...(opts.headers || {}) } });
+  const type = res.headers.get('content-type') || '';
+  if (!type.includes('application/json')) {
+    // A sleeping or rebuilding Space answers with an HTML page instead of the API.
+    throw Object.assign(new Error('Your worker is waking up'), { waking: true });
+  }
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.detail || `Worker error ${res.status}`);
+  return body;
 }
 
-function friendlyError(e) {
-  const msg = errText(e);
-  if (isQuotaError(msg)) {
-    const wait = msg.match(/try again in ([\d:]+)/i);
-    return `Today's free video time is used up${wait ? ` (it comes back in ${wait[1]})` : ''}. ` +
-      'Meanwhile you can use a free app: open "Out of free tries?" below.';
-  }
-  if (/\b401\b|unauthori[sz]ed|invalid (user )?token|credentials/i.test(msg)) {
-    return 'Your free key did not work. Tap 🔑 Free key at the top and paste it again.';
-  }
-  if (/nsfw|safety|inappropriate|not allowed/i.test(msg)) {
-    return 'The engine refused this idea. Pick another idea and try again.';
-  }
-  if (/sleep|building|paused|runtime error|could not|failed to fetch|networkerror|load failed|timed? ?out|connection/i.test(msg)) {
-    return 'The free engines are busy or offline right now. Try again in a few minutes.';
-  }
-  return 'Something went wrong: ' + msg;
+function mediaUrl(job, what) {
+  return `${state.worker.url}/jobs/${job.id}/${what}?key=${encodeURIComponent(state.worker.key)}&v=${job.status}`;
 }
+
+// ---------- One-time setup: create the user's worker Space ----------
+
+function step(name, status) {
+  const li = $(`#steps [data-step="${name}"]`);
+  if (li) li.className = status;
+}
+
+async function hf(path, token, opts = {}) {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const res = await fetch(HF + path, { ...opts, headers: { Authorization: `Bearer ${token}`, ...(opts.headers || {}) } });
+    if (res.status !== 429) return res;
+    await sleep(3000 * (attempt + 1));
+  }
+  throw new Error('Hugging Face is busy right now. Try again in a minute.');
+}
+
+async function hfError(res) {
+  try {
+    const body = await res.json();
+    return body.error || `Hugging Face error ${res.status}`;
+  } catch {
+    return `Hugging Face error ${res.status}`;
+  }
+}
+
+function base64(text) {
+  const bytes = new TextEncoder().encode(text);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+function randomKey() {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function setupWorker() {
+  const token = $('#token').value.trim();
+  const msg = $('#setupNote');
+  if (!/^hf_[A-Za-z0-9]{20,}$/.test(token)) {
+    note(msg, "That doesn't look like a Hugging Face key. It starts with hf_", 'bad');
+    return;
+  }
+  note(msg, '');
+  $('#setupBtn').disabled = true;
+  $('#steps').hidden = false;
+  $('#steps').querySelectorAll('li').forEach((li) => { li.className = ''; });
+  try {
+    step('key', 'active');
+    const whoRes = await hf('/api/whoami-v2', token);
+    if (whoRes.status === 401) throw new Error('Hugging Face says this key is not valid. Copy it again.');
+    if (!whoRes.ok) throw new Error(await hfError(whoRes));
+    const who = await whoRes.json();
+    if (who.auth && who.auth.accessToken && who.auth.accessToken.role === 'read') {
+      throw new Error('This key can only read. Make a new one and pick Write (step 2).');
+    }
+    const user = who.name;
+    const space = `${user}/${SPACE_NAME}`;
+    step('key', 'done');
+
+    step('create', 'active');
+    // Secrets can only be set when a Space is created, so an old worker is replaced.
+    // Finished videos live in the dataset and are kept.
+    const existing = await hf(`/api/spaces/${space}`, token);
+    if (existing.ok) {
+      const del = await hf('/api/repos/delete', token, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'space', name: SPACE_NAME }),
+      });
+      if (!del.ok) throw new Error(await hfError(del));
+      await sleep(2000);
+    }
+    const key = randomKey();
+    const created = await hf('/api/repos/create', token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'space',
+        name: SPACE_NAME,
+        private: false,
+        sdk: 'docker',
+        secrets: [
+          { key: 'HF_TOKEN', value: token },
+          { key: 'ANTICS_KEY', value: key },
+          { key: 'ANTICS_DATASET', value: `${user}/${DATASET_NAME}` },
+        ],
+      }),
+    });
+    if (!created.ok) throw new Error(await hfError(created));
+
+    const lines = [{ key: 'header', value: { summary: 'Set up the Animal Antics worker', description: '' } }];
+    for (const name of WORKER_FILES) {
+      const res = await fetch(`worker/${name}`, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Could not read worker/${name} (${res.status})`);
+      lines.push({ key: 'file', value: { content: base64(await res.text()), path: name, encoding: 'base64' } });
+    }
+    const commit = await hf(`/api/spaces/${space}/commit/main`, token, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-ndjson' },
+      body: lines.map((l) => JSON.stringify(l)).join('\n'),
+    });
+    if (!commit.ok) throw new Error(await hfError(commit));
+    step('create', 'done');
+
+    step('build', 'active');
+    $('#token').value = '';
+    const url = await waitForBuild(space);
+    state.worker = { space, url, key };
+    save(KEYS.worker, state.worker);
+    await waitForHealth();
+    step('build', 'done');
+    step('ready', 'done');
+    renderSettings();
+    renderWorkerDot(true);
+    note(msg, 'All set. You can make videos now.', 'good');
+    toast('Worker ready');
+    refreshJobs();
+    if (state.pending) {
+      const pending = state.pending;
+      state.pending = null;
+      setTimeout(() => closeDialog($('#settings')), 900);
+      submit(pending);
+    }
+  } catch (e) {
+    $('#steps').querySelectorAll('li.active').forEach((li) => { li.className = ''; });
+    note(msg, e.message, 'bad');
+  } finally {
+    $('#setupBtn').disabled = false;
+  }
+}
+
+// Polls the Space until Docker has built it. Returns its web address.
+async function waitForBuild(space) {
+  const started = Date.now();
+  while (Date.now() - started < 15 * 60 * 1000) {
+    await sleep(6000);
+    let rt;
+    try {
+      const res = await fetch(`${HF}/api/spaces/${space}/runtime`);
+      if (!res.ok) continue;
+      rt = await res.json();
+    } catch {
+      continue;
+    }
+    const stage = rt.stage || '';
+    const mins = Math.floor((Date.now() - started) / 60000);
+    $('#steps [data-step="build"]').textContent = `Building it (${mins} min so far, 2–5 min, only once)`;
+    if (/ERROR/.test(stage)) {
+      throw new Error(`The worker failed to build (${stage}). Open huggingface.co/spaces/${space} to see why, then tap Set up again.`);
+    }
+    if (stage === 'RUNNING') {
+      const domain = (rt.domains || []).find((d) => d.stage === 'READY') || (rt.domains || [])[0];
+      if (domain) return `https://${domain.domain}`;
+      return `https://${space.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase()}.hf.space`;
+    }
+  }
+  throw new Error('The worker is taking too long to build. Try Set up again later.');
+}
+
+async function waitForHealth() {
+  for (let i = 0; i < 30; i++) {
+    try {
+      const res = await fetch(`${state.worker.url}/health`);
+      if (res.ok && (res.headers.get('content-type') || '').includes('json')) return;
+    } catch {
+      // still starting
+    }
+    await sleep(4000);
+  }
+}
+
+// ---------- Making videos ----------
+
+function renderWorkerDot(on) {
+  state.online = on;
+  $('#workerDot').classList.toggle('on', Boolean(on));
+}
+
+function setFile(file) {
+  state.file = file;
+  $('#fileChip').hidden = !file;
+  $('#linkField').hidden = Boolean(file);
+  $('#fileName').textContent = file ? file.name || 'Your video' : '';
+  if (!file) $('#file').value = '';
+}
+
+async function onMake(e) {
+  e.preventDefault();
+  const note1 = $('#note');
+  if (state.file) {
+    submit({ kind: 'file', file: state.file });
+    return;
+  }
+  const link = $('#link').value.trim();
+  if (!/^https?:\/\/\S+$/i.test(link)) {
+    note(note1, 'Paste a video link first (or upload a video, or tap surprise me).', 'bad');
+    return;
+  }
+  submit({ kind: 'link', url: link });
+}
+
+async function submit(what) {
+  const msg = $('#note');
+  if (!state.worker) {
+    state.pending = what;
+    openSettings();
+    return;
+  }
+  note(msg, '');
+  const btn = $('#makeBtn');
+  btn.disabled = true;
+  btn.textContent = what.kind === 'file' ? 'Picking the best moments…' : 'Sending…';
+  try {
+    const form = new FormData();
+    form.append('clips', String(state.clips));
+    form.append('captions', String(state.captions));
+    if (what.kind === 'link') form.append('url', what.url);
+    if (what.kind === 'surprise') form.append('surprise', 'true');
+    if (what.kind === 'file') {
+      const pictures = await picturesFromFile(what.file, state.clips);
+      pictures.forEach((blob, i) => form.append('images', blob, `picture_${i}.jpg`));
+      btn.textContent = 'Sending…';
+    }
+    const job = await sendJob(form);
+    state.jobs = [job, ...state.jobs.filter((j) => j.id !== job.id)];
+    renderJobs();
+    $('#link').value = '';
+    setFile(null);
+    toast('Got it. You can close the app, it keeps working.');
+    schedulePoll(2000);
+  } catch (e) {
+    note(msg, e.waking ? 'Your worker is waking up (takes up to a minute). Tap Make it again in a moment.' : e.message, 'bad');
+    if (e.waking) wakeWorker();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Make it';
+  }
+}
+
+async function sendJob(form) {
+  return api('/jobs', { method: 'POST', body: form });
+}
+
+// ---------- Pictures from an uploaded video (picked on the phone, so only a few small JPEGs are sent) ----------
 
 function waitFor(el, event, ms = 15000) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => done(reject, new Error('Timed out loading media')), ms);
+    const timer = setTimeout(() => done(reject, new Error('This video took too long to open')), ms);
     const ok = () => done(resolve);
-    const bad = () => done(reject, new Error('This file could not be opened here'));
+    const bad = () => done(reject, new Error("This video can't be opened here. Try a photo or a screenshot."));
     function done(fn, arg) {
       clearTimeout(timer);
       el.removeEventListener(event, ok);
@@ -127,19 +363,6 @@ function waitFor(el, event, ms = 15000) {
   });
 }
 
-function timeoutSignal(ms) {
-  const ctrl = new AbortController();
-  setTimeout(() => ctrl.abort(), ms);
-  return ctrl.signal;
-}
-
-function canvasToBlob(canvas, type = 'image/jpeg', quality = 0.92) {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not save the picture'))), type, quality);
-  });
-}
-
-// Draw a video frame or image onto a canvas no bigger than maxSide.
 function drawScaled(source, w, h, maxSide) {
   const scale = Math.min(1, maxSide / Math.max(w, h));
   const canvas = document.createElement('canvas');
@@ -151,14 +374,10 @@ function drawScaled(source, w, h, maxSide) {
 
 // Higher = sharper. Variance of a Laplacian on a small greyscale copy.
 function sharpness(canvas) {
-  const w = 160;
-  const h = Math.max(2, Math.round((canvas.height / canvas.width) * w));
-  const small = drawScaled(canvas, canvas.width, canvas.height, Math.max(w, h));
+  const small = drawScaled(canvas, canvas.width, canvas.height, 160);
   const { data, width, height } = small.getContext('2d').getImageData(0, 0, small.width, small.height);
   const grey = new Float32Array(width * height);
-  for (let i = 0; i < grey.length; i++) {
-    grey[i] = 0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2];
-  }
+  for (let i = 0; i < grey.length; i++) grey[i] = 0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2];
   let sum = 0;
   let sumSq = 0;
   let n = 0;
@@ -171,26 +390,224 @@ function sharpness(canvas) {
       n++;
     }
   }
-  const mean = sum / n;
-  return sumSq / n - mean * mean;
+  return sumSq / n - (sum / n) ** 2;
 }
 
-async function imageSize(blob) {
-  const url = URL.createObjectURL(blob);
+function toJpeg(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not read the picture'))), 'image/jpeg', 0.9);
+  });
+}
+
+async function picturesFromFile(file, count) {
+  const isVideo = file.type.startsWith('video/') || /\.(mov|mp4|m4v|webm|3gp)$/i.test(file.name);
+  const url = URL.createObjectURL(file);
   try {
-    const img = new Image();
-    img.src = url;
-    await img.decode();
-    return { w: img.naturalWidth, h: img.naturalHeight };
+    if (!isVideo) {
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      return [await toJpeg(drawScaled(img, img.naturalWidth, img.naturalHeight, 1024))];
+    }
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.setAttribute('playsinline', '');
+    video.preload = 'auto';
+    video.src = url;
+    await waitFor(video, 'loadeddata');
+    try {
+      // iPhones only hand out frames after playback has started once.
+      await video.play();
+      video.pause();
+    } catch {
+      // autoplay refused: seeking still works on most browsers
+    }
+    const dur = Number.isFinite(video.duration) ? video.duration : 0;
+    const samples = dur > 1 ? 12 : 1;
+    const frames = [];
+    for (let i = 0; i < samples; i++) {
+      if (samples > 1) {
+        video.currentTime = dur * (0.04 + (0.92 * i) / (samples - 1));
+        await waitFor(video, 'seeked', 8000);
+      }
+      const canvas = drawScaled(video, video.videoWidth, video.videoHeight, 1024);
+      frames.push({ t: video.currentTime, canvas, score: sharpness(canvas) });
+    }
+    // The sharpest moment in each part of the video, one per clip.
+    const picks = [];
+    for (let part = 0; part < count; part++) {
+      const lo = (dur * part) / count;
+      const hi = (dur * (part + 1)) / count;
+      const inPart = frames.filter((f) => f.t >= lo && f.t <= hi);
+      const pool = inPart.length ? inPart : frames;
+      picks.push(pool.reduce((a, b) => (b.score > a.score ? b : a)));
+    }
+    return Promise.all([...new Set(picks)].map((f) => toJpeg(f.canvas)));
   } finally {
     URL.revokeObjectURL(url);
   }
 }
 
-function saveFile(blob, name) {
-  const file = new File([blob], name, { type: blob.type });
+// ---------- Job list ----------
+
+function describe(job) {
+  if (job.status === 'queued') return job.stage || 'In line…';
+  if (job.status === 'working') return job.stage || 'Working…';
+  if (job.status === 'waiting') {
+    const at = job.retry_at ? new Date(job.retry_at * 1000) : null;
+    const when = at ? at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'later';
+    return `Out of free time for today. Finishes by itself around ${when}.`;
+  }
+  if (job.status === 'failed') return job.error || 'Something went wrong.';
+  const len = job.seconds_long ? `${Math.round(job.seconds_long)} sec` : '';
+  return ['Ready', len, job.stage].filter(Boolean).join(' · ');
+}
+
+function renderJobs() {
+  const box = $('#jobs');
+  box.innerHTML = '';
+  for (const job of state.jobs) {
+    const card = document.createElement('article');
+    card.className = `job ${job.status}`;
+    card.innerHTML = `
+      <button type="button" class="thumb" aria-label="Play"></button>
+      <div class="job-body">
+        <div class="job-title"></div>
+        <div class="job-stage"></div>
+        <div class="meter" hidden><span></span></div>
+        <div class="job-actions"></div>
+      </div>`;
+    const thumb = $('.thumb', card);
+    if (job.has_thumb) {
+      const img = document.createElement('img');
+      img.alt = '';
+      img.loading = 'lazy';
+      img.src = mediaUrl(job, 'thumb');
+      thumb.appendChild(img);
+    }
+    $('.job-title', card).textContent = job.label || (job.kind === 'surprise' ? 'Surprise' : 'Video');
+    $('.job-stage', card).textContent = describe(job);
+    if (job.status === 'working' || job.status === 'queued') {
+      $('.meter', card).hidden = false;
+      $('.meter span', card).style.width = `${Math.max(4, Math.round((job.progress || 0) * 100))}%`;
+    }
+    const actions = $('.job-actions', card);
+    const add = (label, cls, fn) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = `plain ${cls}`;
+      b.textContent = label;
+      b.addEventListener('click', fn);
+      actions.appendChild(b);
+    };
+    if (job.status === 'done') {
+      const play = document.createElement('span');
+      play.className = 'play';
+      play.innerHTML = '<span><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M7 4v16l13-8z"/></svg></span>';
+      thumb.appendChild(play);
+      thumb.addEventListener('click', () => openPlayer(job));
+      add('Watch & save', 'open', () => openPlayer(job));
+      add('Copy caption', '', () => copyText(job.caption || ''));
+    }
+    if (job.status === 'failed' || job.status === 'waiting') add('Try again', '', () => retryJob(job));
+    if (job.status !== 'working') add('Delete', 'danger', () => deleteJob(job));
+    box.appendChild(card);
+  }
+}
+
+let pollTimer;
+function schedulePoll(ms) {
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(refreshJobs, ms);
+}
+
+async function refreshJobs() {
+  if (!state.worker) return;
+  try {
+    const { jobs } = await api('/jobs');
+    state.jobs = jobs;
+    renderJobs();
+    renderWorkerDot(true);
+    $('#wakeNote').hidden = true;
+    const busy = jobs.some((j) => j.status === 'queued' || j.status === 'working');
+    schedulePoll(document.hidden ? 60000 : busy ? 4000 : 30000);
+  } catch (e) {
+    renderWorkerDot(false);
+    $('#wakeNote').hidden = false;
+    $('#wakeNote').textContent = e.waking || e instanceof TypeError
+      ? 'Waking up your worker… (up to a minute)'
+      : `Worker problem: ${e.message}`;
+    schedulePoll(6000);
+  }
+}
+
+function wakeWorker() {
+  $('#wakeNote').hidden = false;
+  schedulePoll(5000);
+}
+
+async function retryJob(job) {
+  try {
+    await api(`/jobs/${job.id}/retry`, { method: 'POST' });
+    refreshJobs();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+async function deleteJob(job) {
+  if (!confirm('Delete this video?')) return;
+  try {
+    await api(`/jobs/${job.id}`, { method: 'DELETE' });
+    state.jobs = state.jobs.filter((j) => j.id !== job.id);
+    renderJobs();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+// ---------- Player + saving ----------
+
+function openPlayer(job) {
+  state.playing = job;
+  state.playingBlob = null;
+  const video = $('#playerVideo');
+  video.src = mediaUrl(job, 'video');
+  $('#playerCaption').textContent = job.caption || '';
+  $('#playerSound').textContent = job.sound || 'any trending sound';
+  openDialog($('#player'));
+  video.play().catch(() => {});
+  // Fetch the file now so Save can open the share sheet straight away.
+  fetch(mediaUrl(job, 'video'))
+    .then((r) => (r.ok ? r.blob() : null))
+    .then((blob) => {
+      if (state.playing === job) state.playingBlob = blob;
+    })
+    .catch(() => {});
+}
+
+async function saveVideo() {
+  const job = state.playing;
+  if (!job) return;
+  const name = `antics-${job.id}.mp4`;
+  let blob = state.playingBlob;
+  if (!blob) {
+    toast('Getting the video…');
+    blob = await (await fetch(mediaUrl(job, 'video'))).blob();
+    state.playingBlob = blob;
+  }
+  const file = new File([blob], name, { type: 'video/mp4' });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    return navigator.share({ files: [file] }).catch(() => {});
+    try {
+      await navigator.share({ files: [file] });
+      return;
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+      // The share sheet needs a fresh tap after a slow download.
+      toast('Ready. Tap Save video again.');
+      return;
+    }
   }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -199,886 +616,88 @@ function saveFile(blob, name) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 60000);
-  return Promise.resolve();
 }
 
-// ---------- Free Hugging Face engines ----------
-
-let gradioModule;
-async function gradio() {
-  if (!gradioModule) {
-    try {
-      gradioModule = await import(GRADIO_CLIENT);
-    } catch {
-      throw new Error('Could not load the free engine. Check your internet connection.');
-    }
-  }
-  return gradioModule;
-}
-
-// Runs one Space endpoint and returns its output list.
-async function runSpace(spaceId, endpoint, payload, onStatus) {
-  const { Client } = await gradio();
-  const app = await Client.connect(spaceId, {
-    token: state.token || undefined,
-    events: ['data', 'status'],
-  });
-  const job = app.submit(endpoint, payload);
-  for await (const msg of job) {
-    if (msg.type === 'status') {
-      if (msg.stage === 'error') throw new Error(msg.message || 'The free engine returned an error');
-      if (onStatus) onStatus(msg);
-    } else if (msg.type === 'data') {
-      return msg.data;
-    }
-  }
-  throw new Error('The free engine did not send a result');
-}
-
-// Gradio file outputs come back as {url} or {video: {url}}.
-async function fetchOutput(out) {
-  const file = out && out.video ? out.video : out;
-  const url = typeof file === 'string' ? file : file && (file.url || file.path);
-  if (!url) throw new Error('The free engine sent no file');
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Could not download the result (${res.status})`);
-  return res.blob();
-}
-
-function wan21Size({ w, h }) {
-  if (h > w * 1.15) return { height: 896, width: 512 };
-  if (w > h * 1.15) return { height: 512, width: 896 };
-  return { height: 640, width: 640 };
-}
-
-async function generateClip(frame, prompt, sec, onText) {
-  const { handle_file } = await gradio();
-  const dims = await imageSize(frame);
-  let lastErr;
-  for (const engine of ENGINES) {
-    onText(`Connecting to ${engine.name}…`);
-    try {
-      const payload = {
-        input_image: handle_file(frame),
-        prompt,
-        duration_seconds: Math.min(sec, engine.maxSec),
-        randomize_seed: true,
-        ...engine.extra,
-      };
-      if (engine.sized) Object.assign(payload, wan21Size(dims));
-      const data = await runSpace(engine.id, '/generate_video', payload, (s) => {
-        if (s.stage === 'pending' && s.queue && s.position != null) {
-          onText(`In line at ${engine.name}: you are number ${s.position + 1}…`);
-        } else if (s.stage === 'pending' || s.stage === 'generating' || s.stage === 'streaming') {
-          onText(`${engine.name} is animating your ${animalName()}… (about 1–2 min)`);
-        }
-      });
-      const blob = await fetchOutput(data[0]);
-      return { blob, engine };
-    } catch (e) {
-      const msg = errText(e);
-      // Quota and key problems are account-wide, so another engine won't help.
-      if (isQuotaError(msg) || /\b401\b|unauthori[sz]ed|invalid (user )?token/i.test(msg)) throw e;
-      console.warn(engine.id, msg);
-      lastErr = e;
-    }
-  }
-  throw lastErr;
-}
-
-// A random picture for Surprise mode: Pollinations first (no GPU time used), then FLUX on Hugging Face.
-async function makeSurprisePicture(prompt) {
-  const seed = Math.floor(Math.random() * 1e9);
-  try {
-    const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=576&height=1024&nologo=true&seed=${seed}`;
-    const res = await fetch(url, { signal: timeoutSignal(40000) });
-    if (res.ok && (res.headers.get('content-type') || '').startsWith('image/')) return await res.blob();
-  } catch {
-    // busy or offline: fall back to FLUX below
-  }
-  const data = await runSpace(IMAGE_SPACE, '/infer', {
-    prompt, seed, randomize_seed: false, width: 576, height: 1024, num_inference_steps: 4,
-  });
-  return fetchOutput(data[0]);
-}
-
-// ---------- Step 1: starting picture ----------
-
-function animalName() {
-  if (state.mode === 'surprise' && state.surprise) return state.surprise.animal;
-  if (state.pet === 'other') return $('#petOther').value.trim().toLowerCase() || 'animal';
-  const pet = PET_CHOICES.find((p) => p.key === state.pet);
-  return pet ? pet.label.toLowerCase() : 'animal';
-}
-
-function currentFrame() {
-  return state.mode === 'surprise' ? state.surprise && state.surprise.blob : state.upload.blob;
-}
-
-let previewUrl;
-function showPreview() {
-  const blob = currentFrame();
-  const wrap = $('#framePreviewWrap');
-  if (previewUrl) URL.revokeObjectURL(previewUrl);
-  previewUrl = null;
-  if (!blob) {
-    wrap.hidden = true;
-    return;
-  }
-  previewUrl = URL.createObjectURL(blob);
-  $('#framePreview').src = previewUrl;
-  wrap.hidden = false;
-}
-
-function setMode(mode) {
-  state.mode = mode;
-  save(KEYS.mode, mode);
-  document.querySelectorAll('.seg-btn').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.mode === mode)));
-  $('#uploadPane').hidden = mode !== 'upload';
-  $('#surprisePane').hidden = mode !== 'surprise';
-  showStatus($('#step1Status'), '');
-  if (mode === 'surprise' && !state.surprise) newSurprise();
-  showPreview();
-  refreshIdeas();
-}
-
-function renderPetChips() {
-  const box = $('#petChips');
-  box.innerHTML = '';
-  for (const p of [...PET_CHOICES, { key: 'other', label: 'Other', emoji: '✏️' }]) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'chip';
-    b.textContent = `${p.emoji} ${p.label}`;
-    b.setAttribute('aria-pressed', String(state.pet === p.key));
-    b.addEventListener('click', () => {
-      state.pet = p.key;
-      save(KEYS.pet, p.key);
-      renderPetChips();
-      if (p.key === 'other') $('#petOther').focus();
-      refreshIdeas();
-    });
-    box.appendChild(b);
-  }
-  $('#petOther').hidden = state.pet !== 'other';
-}
-
-async function useFrameCanvas(canvas) {
-  state.upload.blob = await canvasToBlob(canvas);
-  showPreview();
-}
-
-async function onSourceFile(file) {
-  if (!file) return;
-  const status = $('#step1Status');
-  const isVideo = file.type.startsWith('video/') || /\.(mov|mp4|m4v|webm|3gp)$/i.test(file.name);
-  $('#framePicker').hidden = true;
-  if (state.upload.video) {
-    URL.revokeObjectURL(state.upload.video.src);
-    state.upload.video.remove();
-    state.upload.video = null;
-  }
-  try {
-    if (!isVideo) {
-      const url = URL.createObjectURL(file);
-      try {
-        const img = new Image();
-        img.src = url;
-        await img.decode();
-        await useFrameCanvas(drawScaled(img, img.naturalWidth, img.naturalHeight, 1024));
-      } finally {
-        URL.revokeObjectURL(url);
-      }
-      showStatus(status, '');
-      return;
-    }
-    showStatus(status, 'Looking for the best moment in your clip…');
-    await loadVideoFrames(file);
-    showStatus(status, '');
-  } catch (e) {
-    showStatus(status, `${errText(e)}. Try another clip, or a screenshot/photo of the animal.`, 'bad');
-  }
-}
-
-function grabFrame(video) {
-  return drawScaled(video, video.videoWidth, video.videoHeight, 1024);
-}
-
-async function seekTo(video, t) {
-  video.currentTime = t;
-  await waitFor(video, 'seeked', 8000);
-}
-
-async function loadVideoFrames(file) {
-  const video = document.createElement('video');
-  video.muted = true;
-  video.playsInline = true;
-  video.setAttribute('playsinline', '');
-  video.preload = 'auto';
-  video.src = URL.createObjectURL(file);
-  offstage().appendChild(video);
-  state.upload.video = video;
-  await waitFor(video, 'loadeddata');
-  try {
-    // iPhones only hand out frames after playback has started once.
-    await video.play();
-    video.pause();
-  } catch {
-    // autoplay refused: seeking still works on most browsers
-  }
-  const dur = Number.isFinite(video.duration) ? video.duration : 0;
-  const count = dur > 1 ? 8 : 1;
-  const frames = [];
-  for (let i = 0; i < count; i++) {
-    if (count > 1) await seekTo(video, (dur * (i + 0.5)) / count);
-    const canvas = grabFrame(video);
-    frames.push({ t: video.currentTime, canvas, score: sharpness(canvas) });
-  }
-  const best = frames.reduce((a, b) => (b.score > a.score ? b : a));
-
-  const strip = $('#frameStrip');
-  strip.innerHTML = '';
-  for (const f of frames) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.setAttribute('aria-pressed', String(f === best));
-    b.setAttribute('aria-label', `Moment at ${f.t.toFixed(1)} seconds`);
-    const img = document.createElement('img');
-    img.src = drawScaled(f.canvas, f.canvas.width, f.canvas.height, 172).toDataURL('image/jpeg', 0.75);
-    b.appendChild(img);
-    b.addEventListener('click', async () => {
-      strip.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
-      $('#scrub').value = dur ? Math.round((f.t / dur) * 1000) : 0;
-      await useFrameCanvas(f.canvas);
-    });
-    strip.appendChild(b);
-  }
-  $('#scrub').value = dur ? Math.round((best.t / dur) * 1000) : 0;
-  $('#scrub').disabled = count === 1;
-  $('#framePicker').hidden = false;
-  await useFrameCanvas(best.canvas);
-}
-
-let scrubTimer;
-function onScrub() {
-  const video = state.upload.video;
-  if (!video || !Number.isFinite(video.duration)) return;
-  clearTimeout(scrubTimer);
-  scrubTimer = setTimeout(async () => {
-    try {
-      await seekTo(video, (Number($('#scrub').value) / 1000) * video.duration);
-      $('#frameStrip').querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', 'false'));
-      await useFrameCanvas(grabFrame(video));
-    } catch {
-      // seek failed: keep the previous frame
-    }
-  }, 150);
-}
-
-let surpriseToken = 0;
-async function newSurprise() {
-  const scene = randomScene();
-  const mine = ++surpriseToken;
-  state.surprise = { ...scene, blob: null };
-  $('#surpriseDesc').textContent = `${scene.style.t}: ${fillAnimal(scene.scene.s, scene.animal)}`;
-  showPreview();
-  refreshIdeas();
-  const btn = $('#newSurprise');
-  btn.disabled = true;
-  showStatus($('#step1Status'), '🎨 Painting a random picture… (10–40 sec)');
-  try {
-    const blob = await makeSurprisePicture(scene.prompt);
-    if (mine !== surpriseToken) return;
-    state.surprise.blob = blob;
-    showStatus($('#step1Status'), '');
-    showPreview();
-  } catch (e) {
-    if (mine !== surpriseToken) return;
-    const needKey = !state.token && isQuotaError(errText(e));
-    showStatus($('#step1Status'), needKey
-      ? 'The free picture maker is busy. Add your free key (🔑 at the top) and tap New random picture again.'
-      : friendlyError(e), 'bad');
-  } finally {
-    if (mine === surpriseToken) btn.disabled = false;
-  }
-}
-
-// ---------- Step 2: ideas ----------
-
-function refreshIdeas() {
-  const animal = animalName();
-  state.ideas = state.mode === 'surprise' && state.surprise
-    ? ideasForScene(state.surprise.scene, state.surprise.animal)
-    : ideasForPicture(animal);
-  const grid = $('#ideaGrid');
-  grid.innerHTML = '';
-  state.ideas.forEach((idea, i) => {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'idea';
-    b.innerHTML = '<span class="emoji"></span><strong></strong><small></small>';
-    b.querySelector('.emoji').textContent = idea.emoji;
-    b.querySelector('strong').textContent = idea.title;
-    b.querySelector('small').textContent = `The ${animal} ${idea.action}`;
-    b.addEventListener('click', () => chooseIdea(i));
-    grid.appendChild(b);
-  });
-  chooseIdea(0);
-}
-
-function chooseIdea(i) {
-  state.chosen = state.ideas[i];
-  document.querySelectorAll('#ideaGrid .idea').forEach((b, j) => b.setAttribute('aria-pressed', String(j === i)));
-  state.promptEdited = false;
-  updatePrompt();
-}
-
-function updatePrompt() {
-  if (!state.chosen || state.promptEdited) return;
-  $('#prompt').value = videoPrompt(state.chosen, animalName(), $('#twist').checked);
-  updateKit();
-}
-
-// ---------- Step 3: make ----------
-
-function setBusy(on, text = '') {
-  state.busy = on;
-  $('#makeVideo').disabled = on;
-  $('#progress').hidden = !on;
-  $('#progressText').textContent = text;
-}
-
-async function makeVideo() {
-  if (state.busy) return;
-  const status = $('#makeStatus');
-  const frame = currentFrame();
-  if (!frame) {
-    showStatus(status, state.mode === 'surprise'
-      ? 'Wait for the random picture to finish (step 1).'
-      : 'First choose a video or photo of your animal in step 1.', 'bad');
-    $('#step1').scrollIntoView({ behavior: 'smooth' });
-    return;
-  }
-  const prompt = $('#prompt').value.trim();
-  if (!prompt) {
-    showStatus(status, 'Pick an idea or write a prompt in step 2.', 'bad');
-    return;
-  }
-  if (!state.token) {
-    showStatus(status, 'One-time setup: add your free key, then tap Make video again.', 'bad');
-    openSettings();
-    return;
-  }
-
-  showStatus(status, '');
-  const started = Date.now();
-  let lastText = 'Starting…';
-  setBusy(true, lastText);
-  const ticker = setInterval(() => {
-    $('#progressText').textContent = `${lastText} ${Math.round((Date.now() - started) / 1000)}s`;
-  }, 1000);
-  try {
-    const { blob, engine } = await generateClip(frame, prompt, state.sec, (t) => {
-      lastText = t;
-      $('#progressText').textContent = t;
-    });
-    const idea = state.chosen;
-    await addClip({
-      blob,
-      title: idea ? `${idea.emoji} ${idea.title}` : '✍️ My idea',
-      caption: idea ? idea.caption : '',
-      source: engine.name,
-    });
-    showStatus(status, '✅ Done! Your clip is in step 4. Make more, then export.', 'good');
-    toast('New clip ready 🎉');
-  } catch (e) {
-    showStatus(status, friendlyError(e), 'bad');
-  } finally {
-    clearInterval(ticker);
-    setBusy(false);
-  }
-}
-
-// ---------- Step 4: clips (kept in IndexedDB so they survive a refresh) ----------
-
-const DB_NAME = 'animal-antics';
-const STORE = 'clips';
-let dbPromise;
-
-function openDb() {
-  if (!dbPromise) {
-    dbPromise = new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB_NAME, 1);
-      req.onupgradeneeded = () => req.result.createObjectStore(STORE, { keyPath: 'id' });
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
-    });
-  }
-  return dbPromise;
-}
-
-async function dbRun(mode, fn) {
-  try {
-    const db = await openDb();
-    return await new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE, mode);
-      const req = fn(tx.objectStore(STORE));
-      tx.oncomplete = () => resolve(req && req.result);
-      tx.onerror = () => reject(tx.error);
-    });
-  } catch {
-    return null; // storage blocked: clips live in memory for this visit only
-  }
-}
-
-function clipRecord(c) {
-  const { url, ...rest } = c;
-  return rest;
-}
-
-function persistClip(c) {
-  return dbRun('readwrite', (s) => s.put(clipRecord(c)));
-}
-
-function persistOrder() {
-  state.clips.forEach((c, i) => { c.order = i; });
-  return dbRun('readwrite', (s) => {
-    state.clips.forEach((c) => s.put(clipRecord(c)));
-  });
-}
-
-async function loadClips() {
-  const rows = (await dbRun('readonly', (s) => s.getAll())) || [];
-  rows.sort((a, b) => a.order - b.order);
-  state.clips = rows.map((r) => ({ ...r, url: URL.createObjectURL(r.blob) }));
-  renderClips();
-  updateKit();
-}
-
-async function addClip({ blob, title, caption, source }) {
-  const clip = {
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    blob, title, caption, source,
-    include: true,
-    order: state.clips.length,
-    url: URL.createObjectURL(blob),
-  };
-  state.clips.push(clip);
-  await persistClip(clip);
-  renderClips();
-  updateKit();
-  return clip;
-}
-
-function moveClip(i, dir) {
-  const j = i + dir;
-  if (j < 0 || j >= state.clips.length) return;
-  [state.clips[i], state.clips[j]] = [state.clips[j], state.clips[i]];
-  persistOrder();
-  renderClips();
-  updateKit();
-}
-
-async function deleteClip(i) {
-  const [clip] = state.clips.splice(i, 1);
-  URL.revokeObjectURL(clip.url);
-  await dbRun('readwrite', (s) => s.delete(clip.id));
-  persistOrder();
-  renderClips();
-  updateKit();
-}
-
-function renderClips() {
-  const list = $('#clipList');
-  list.innerHTML = '';
-  $('#clipCount').textContent = String(state.clips.length);
-  state.clips.forEach((clip, i) => {
-    const row = document.createElement('div');
-    row.className = 'clip' + (clip.include ? '' : ' off');
-    row.innerHTML = `
-      <video muted playsinline loop preload="metadata"></video>
-      <div class="clip-body">
-        <div class="clip-title"></div>
-        <input class="input" type="text" maxlength="80" placeholder="Text on video (optional)">
-        <div class="clip-actions">
-          <label class="toggle"><input type="checkbox"> Use</label>
-          <button type="button" class="btn ghost" data-act="up" aria-label="Move up">⬆️</button>
-          <button type="button" class="btn ghost" data-act="down" aria-label="Move down">⬇️</button>
-          <button type="button" class="btn ghost" data-act="save" aria-label="Save clip">💾</button>
-          <button type="button" class="btn ghost" data-act="del" aria-label="Delete clip">🗑️</button>
-        </div>
-      </div>`;
-    const video = $('video', row);
-    video.src = clip.url + '#t=0.1';
-    video.addEventListener('click', () => (video.paused ? video.play() : video.pause()));
-    $('.clip-title', row).textContent = `${i + 1}. ${clip.title}`;
-    const cap = $('input[type="text"]', row);
-    cap.value = clip.caption || '';
-    cap.addEventListener('change', () => {
-      clip.caption = cap.value.trim();
-      persistClip(clip);
-      updateKit();
-    });
-    const use = $('input[type="checkbox"]', row);
-    use.checked = clip.include;
-    use.addEventListener('change', () => {
-      clip.include = use.checked;
-      row.classList.toggle('off', !clip.include);
-      persistClip(clip);
-      updateKit();
-    });
-    $('[data-act="up"]', row).addEventListener('click', () => moveClip(i, -1));
-    $('[data-act="down"]', row).addEventListener('click', () => moveClip(i, 1));
-    $('[data-act="save"]', row).addEventListener('click', () => saveFile(clip.blob, `antics-clip-${i + 1}.${extFor(clip.blob.type)}`));
-    $('[data-act="del"]', row).addEventListener('click', () => {
-      if (confirm('Delete this clip?')) deleteClip(i);
-    });
-    list.appendChild(row);
-  });
-}
-
-async function onAddClips(files) {
-  for (const file of files) {
-    await addClip({ blob: file, title: `📱 ${file.name}`, caption: '', source: 'phone' });
-  }
-  if (files.length) toast(`Added ${files.length} clip${files.length > 1 ? 's' : ''}`);
-}
-
-// ---------- Step 5: export (canvas + MediaRecorder, all on the phone) ----------
-
-function offstage() {
-  let box = $('#offstage');
-  if (!box) {
-    box = document.createElement('div');
-    box.id = 'offstage';
-    box.style.cssText = 'position:fixed;left:0;bottom:0;width:2px;height:2px;overflow:hidden;opacity:0.01;pointer-events:none;';
-    document.body.appendChild(box);
-  }
-  return box;
-}
-
-function extFor(type) {
-  if (/mp4/.test(type)) return 'mp4';
-  if (/quicktime/.test(type)) return 'mov';
-  return 'webm';
-}
-
-function pickMime() {
-  if (!window.MediaRecorder) return null;
-  const options = [
-    'video/mp4;codecs=avc1.42E01E', 'video/mp4;codecs=avc1', 'video/mp4',
-    'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm',
-  ];
-  return options.find((t) => MediaRecorder.isTypeSupported(t)) || '';
-}
-
-function coverRect(sw, sh, dw, dh) {
-  const scale = Math.max(dw / sw, dh / sh);
-  const w = dw / scale;
-  const h = dh / scale;
-  return [(sw - w) / 2, (sh - h) / 2, w, h];
-}
-
-const blurCanvas = document.createElement('canvas');
-blurCanvas.width = 27;
-blurCanvas.height = 48;
-
-function drawFrame(ctx, video, caption, fill) {
-  const vw = video.videoWidth;
-  const vh = video.videoHeight;
-  if (!vw || !vh) return;
-  const ratio = (vw / vh) / (OUT_W / OUT_H);
-  if (fill || (ratio > 0.88 && ratio < 1.14)) {
-    ctx.drawImage(video, ...coverRect(vw, vh, OUT_W, OUT_H), 0, 0, OUT_W, OUT_H);
-  } else {
-    // Soft blurred copy behind, whole clip on top: works on every browser, no canvas filters needed.
-    const b = blurCanvas.getContext('2d');
-    b.drawImage(video, ...coverRect(vw, vh, blurCanvas.width, blurCanvas.height), 0, 0, blurCanvas.width, blurCanvas.height);
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(blurCanvas, 0, 0, OUT_W, OUT_H);
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-    ctx.fillRect(0, 0, OUT_W, OUT_H);
-    const s = Math.min(OUT_W / vw, OUT_H / vh);
-    ctx.drawImage(video, (OUT_W - vw * s) / 2, (OUT_H - vh * s) / 2, vw * s, vh * s);
-  }
-  if (caption) drawCaption(ctx, caption);
-}
-
-function wrapLines(ctx, text, maxWidth) {
-  const words = text.split(/\s+/);
-  const lines = [];
-  let line = '';
-  for (const word of words) {
-    const test = line ? `${line} ${word}` : word;
-    if (ctx.measureText(test).width > maxWidth && line) {
-      lines.push(line);
-      line = word;
-    } else {
-      line = test;
-    }
-  }
-  if (line) lines.push(line);
-  return lines.slice(0, 3);
-}
-
-function drawCaption(ctx, text) {
-  const size = 50;
-  ctx.font = `800 ${size}px system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'top';
-  ctx.lineJoin = 'round';
-  const lines = wrapLines(ctx, text, OUT_W * 0.84);
-  let y = OUT_H * 0.15;
-  for (const line of lines) {
-    ctx.lineWidth = 10;
-    ctx.strokeStyle = '#000';
-    ctx.strokeText(line, OUT_W / 2, y);
-    ctx.fillStyle = '#fff';
-    ctx.fillText(line, OUT_W / 2, y);
-    y += size * 1.2;
-  }
-}
-
-async function loadPlayer(url) {
-  const video = document.createElement('video');
-  video.muted = true;
-  video.playsInline = true;
-  video.setAttribute('playsinline', '');
-  video.preload = 'auto';
-  video.src = url;
-  offstage().appendChild(video);
-  await waitFor(video, 'loadeddata', 20000);
-  return video;
-}
-
-function playInto(video, ctx, caption, fill, onTick) {
-  return new Promise((resolve, reject) => {
-    let finished = false;
-    const finish = () => {
-      if (finished) return;
-      finished = true;
-      drawFrame(ctx, video, caption, fill);
-      resolve();
-    };
-    const tick = () => {
-      if (finished) return;
-      drawFrame(ctx, video, caption, fill);
-      onTick(video.currentTime);
-      if (video.ended) finish();
-      else requestAnimationFrame(tick);
-    };
-    video.addEventListener('ended', finish, { once: true });
-    video.addEventListener('error', () => reject(new Error('A clip could not be played')), { once: true });
-    // Safety net in case "ended" never fires.
-    setTimeout(finish, ((video.duration || 10) + 4) * 1000);
-    video.currentTime = 0;
-    video.play().then(() => requestAnimationFrame(tick), reject);
-  });
-}
-
-async function exportVideo() {
-  const status = $('#exportStatus');
-  const chosen = state.clips.filter((c) => c.include);
-  if (!chosen.length) {
-    showStatus(status, 'Tick at least one clip in step 4.', 'bad');
-    return;
-  }
-  const mime = pickMime();
-  const canvas = document.createElement('canvas');
-  if (mime === null || !canvas.captureStream) {
-    showStatus(status, "This browser can't export video. Open the page in Safari or Chrome.", 'bad');
-    return;
-  }
-  canvas.width = OUT_W;
-  canvas.height = OUT_H;
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, OUT_W, OUT_H);
-
-  const withCaptions = $('#optCaptions').checked;
-  const fill = $('#optFill').checked;
-  $('#exportVideo').disabled = true;
-  $('#exportProgress').hidden = false;
-  $('#exportResult').hidden = true;
-  $('#exportBar').style.width = '0%';
-  $('#exportText').textContent = 'Getting clips ready… keep this screen open.';
-  showStatus(status, '');
-
-  const players = [];
-  try {
-    for (const clip of chosen) players.push(await loadPlayer(clip.url));
-    const total = players.reduce((sum, v) => sum + (Number.isFinite(v.duration) ? v.duration : 5), 0);
-
-    const stream = canvas.captureStream(FPS);
-    const recorder = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 8000000 } : undefined);
-    const chunks = [];
-    recorder.ondataavailable = (e) => {
-      if (e.data && e.data.size) chunks.push(e.data);
-    };
-    const stopped = new Promise((resolve) => { recorder.onstop = resolve; });
-
-    drawFrame(ctx, players[0], withCaptions ? chosen[0].caption : '', fill);
-    recorder.start(500);
-    let done = 0;
-    for (let i = 0; i < players.length; i++) {
-      $('#exportText').textContent = `Recording clip ${i + 1} of ${players.length}… keep this screen open.`;
-      await playInto(players[i], ctx, withCaptions ? chosen[i].caption : '', fill, (t) => {
-        $('#exportBar').style.width = `${Math.min(100, ((done + t) / total) * 100)}%`;
-      });
-      done += Number.isFinite(players[i].duration) ? players[i].duration : 5;
-    }
-    recorder.stop();
-    await stopped;
-    stream.getTracks().forEach((t) => t.stop());
-
-    const type = (recorder.mimeType || mime || 'video/webm').split(';')[0];
-    state.exportBlob = new Blob(chunks, { type });
-    const url = URL.createObjectURL(state.exportBlob);
-    const el = $('#exportVideoEl');
-    if (el.src) URL.revokeObjectURL(el.src);
-    el.src = url;
-    const link = $('#downloadVideo');
-    link.href = url;
-    link.download = `animal-antics-${Date.now()}.${extFor(type)}`;
-    $('#exportBar').style.width = '100%';
-    $('#exportResult').hidden = false;
-    showStatus(status, '✅ Your TikTok video is ready. Save it, then add a sound in TikTok.', 'good');
-  } catch (e) {
-    showStatus(status, `Export failed: ${errText(e)}`, 'bad');
-  } finally {
-    players.forEach((v) => v.remove());
-    $('#exportVideo').disabled = false;
-    $('#exportProgress').hidden = true;
-  }
-}
-
-// ---------- Posting kit ----------
-
-function updateKit() {
-  const first = state.clips.find((c) => c.include && c.caption);
-  const caption = first ? first.caption : state.chosen ? state.chosen.caption : 'Okay...';
-  $('#kitCaption').textContent = `${caption} ${HASHTAGS}`;
-}
-
-function renderSounds() {
-  const box = $('#soundChips');
-  for (const name of SOUND_IDEAS) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'chip';
-    b.textContent = `🎵 ${name}`;
-    b.addEventListener('click', () => copyText(name));
-    box.appendChild(b);
-  }
-}
-
-// ---------- Free key settings ----------
-
-function renderKeyState() {
-  $('#keyState').classList.toggle('on', Boolean(state.token));
-}
+// ---------- Settings ----------
 
 function openSettings() {
-  $('#tokenInput').value = state.token;
-  showStatus($('#tokenStatus'), '');
-  const dlg = $('#settings');
-  if (dlg.showModal) dlg.showModal();
-  else dlg.setAttribute('open', '');
+  renderSettings();
+  note($('#setupNote'), state.pending ? 'One quick setup first, then your video starts by itself.' : '');
+  openDialog($('#settings'));
 }
 
-async function saveToken() {
-  const tok = $('#tokenInput').value.trim();
-  const status = $('#tokenStatus');
-  if (!/^hf_[A-Za-z0-9]{20,}$/.test(tok)) {
-    showStatus(status, 'That doesn\'t look like a key. It should start with hf_', 'bad');
-    return;
+function renderSettings() {
+  const ready = Boolean(state.worker);
+  $('#setupPane').hidden = ready;
+  $('#optionsPane').hidden = !ready;
+  if (ready) {
+    const link = $('#workerLink');
+    link.href = `${HF}/spaces/${state.worker.space}`;
+    link.textContent = state.worker.space;
+    $('#workerState').textContent = state.online ? '(running)' : '(asleep or starting)';
   }
-  showStatus(status, 'Checking…');
-  try {
-    const res = await fetch('https://huggingface.co/api/whoami-v2', { headers: { Authorization: `Bearer ${tok}` } });
-    if (res.status === 401) {
-      showStatus(status, 'Hugging Face says this key is not valid. Copy it again.', 'bad');
-      return;
-    }
-    const who = res.ok ? await res.json() : null;
-    state.token = tok;
-    save(KEYS.token, tok);
-    renderKeyState();
-    showStatus(status, who && who.name ? `✅ Saved. Hi ${who.name}! You can make videos now.` : '✅ Saved.', 'good');
-  } catch {
-    state.token = tok;
-    save(KEYS.token, tok);
-    renderKeyState();
-    showStatus(status, 'Saved, but I could not check it right now (no connection?).', 'good');
-  }
+  document.querySelectorAll('#clipsSeg button').forEach((b) => b.setAttribute('aria-pressed', String(Number(b.dataset.clips) === state.clips)));
+  $('#captionsOpt').checked = state.captions;
 }
-
-function clearToken() {
-  state.token = '';
-  save(KEYS.token, '');
-  $('#tokenInput').value = '';
-  renderKeyState();
-  showStatus($('#tokenStatus'), 'Key removed from this phone.');
-}
-
-// ---------- Wire up ----------
 
 function init() {
-  state.token = load(KEYS.token, '');
-  state.pet = load(KEYS.pet, 'dog');
-  state.sec = load(KEYS.sec, 5);
-  $('#petOther').value = load(KEYS.petOther, '');
+  state.worker = load(KEYS.worker, null);
+  state.clips = load(KEYS.clips, 3);
+  state.captions = load(KEYS.captions, true);
 
-  document.querySelectorAll('.seg-btn').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
-  $('#sourceFile').addEventListener('change', (e) => onSourceFile(e.target.files[0]));
-  $('#scrub').addEventListener('input', onScrub);
-  $('#petOther').addEventListener('input', () => {
-    save(KEYS.petOther, $('#petOther').value);
-    updatePrompt();
+  $('#makeForm').addEventListener('submit', onMake);
+  $('#pasteBtn').addEventListener('click', async () => {
+    try {
+      $('#link').value = (await navigator.clipboard.readText()).trim();
+    } catch {
+      $('#link').focus();
+      toast('Long-press the box and tap Paste');
+    }
   });
-  $('#petOther').addEventListener('change', refreshIdeas);
-  $('#newSurprise').addEventListener('click', newSurprise);
-  $('#saveFrame').addEventListener('click', () => {
-    const blob = currentFrame();
-    if (blob) saveFile(blob, `antics-picture-${Date.now()}.jpg`);
-  });
-
-  $('#shuffleIdeas').addEventListener('click', refreshIdeas);
-  $('#twist').addEventListener('change', updatePrompt);
-  $('#prompt').addEventListener('input', () => { state.promptEdited = true; });
-
-  document.querySelectorAll('#lenChips .chip').forEach((b) => {
-    b.setAttribute('aria-pressed', String(Number(b.dataset.sec) === state.sec));
-    b.addEventListener('click', () => {
-      state.sec = Number(b.dataset.sec);
-      save(KEYS.sec, state.sec);
-      document.querySelectorAll('#lenChips .chip').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
-    });
-  });
-  $('#makeVideo').addEventListener('click', makeVideo);
-  $('#copyPrompt').addEventListener('click', () => copyText($('#prompt').value));
-
-  $('#addClip').addEventListener('change', async (e) => {
-    await onAddClips([...e.target.files]);
-    e.target.value = '';
-  });
-
-  $('#exportVideo').addEventListener('click', exportVideo);
-  $('#shareVideo').addEventListener('click', () => {
-    if (state.exportBlob) saveFile(state.exportBlob, $('#downloadVideo').download);
-  });
-  $('#copyCaption').addEventListener('click', () => copyText($('#kitCaption').textContent));
+  $('#file').addEventListener('change', (e) => setFile(e.target.files[0] || null));
+  $('#clearFile').addEventListener('click', () => setFile(null));
+  $('#surpriseBtn').addEventListener('click', () => submit({ kind: 'surprise' }));
 
   $('#openSettings').addEventListener('click', openSettings);
-  $('#saveToken').addEventListener('click', saveToken);
-  $('#clearToken').addEventListener('click', clearToken);
+  $('#closeSettings').addEventListener('click', () => closeDialog($('#settings')));
+  $('#setupBtn').addEventListener('click', setupWorker);
+  $('#redoSetup').addEventListener('click', () => {
+    $('#setupPane').hidden = false;
+    $('#optionsPane').hidden = true;
+  });
+  $('#disconnect').addEventListener('click', () => {
+    if (!confirm('Disconnect this phone from your worker? Your videos stay in your Hugging Face account.')) return;
+    state.worker = null;
+    save(KEYS.worker, null);
+    state.jobs = [];
+    renderJobs();
+    renderWorkerDot(false);
+    renderSettings();
+  });
+  document.querySelectorAll('#clipsSeg button').forEach((b) => b.addEventListener('click', () => {
+    state.clips = Number(b.dataset.clips);
+    save(KEYS.clips, state.clips);
+    renderSettings();
+  }));
+  $('#captionsOpt').addEventListener('change', (e) => {
+    state.captions = e.target.checked;
+    save(KEYS.captions, state.captions);
+  });
 
-  renderPetChips();
-  renderSounds();
-  renderKeyState();
-  setMode(load(KEYS.mode, 'upload') === 'surprise' ? 'surprise' : 'upload');
-  loadClips();
+  $('#saveBtn').addEventListener('click', saveVideo);
+  $('#copyBtn').addEventListener('click', () => copyText(state.playing ? state.playing.caption || '' : ''));
+  $('#closePlayer').addEventListener('click', () => closeDialog($('#player')));
+  $('#player').addEventListener('close', () => {
+    $('#playerVideo').pause();
+    state.playing = null;
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshJobs();
+  });
+
+  renderWorkerDot(false);
+  if (state.worker) refreshJobs();
 }
 
 init();
