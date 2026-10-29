@@ -457,7 +457,7 @@ function describe(job) {
   if (job.status === 'waiting') {
     const at = job.retry_at ? new Date(job.retry_at * 1000) : null;
     const when = at ? at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'later';
-    return `Out of free time for today. Finishes by itself around ${when}.`;
+    return `${job.stage || 'Waiting for free time.'} Next try around ${when}.`;
   }
   if (job.status === 'failed') return job.error || 'Something went wrong.';
   const len = job.seconds_long ? `${Math.round(job.seconds_long)} sec` : '';

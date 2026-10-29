@@ -43,7 +43,8 @@ MAX_CLIPS = 3
 # Free Wan image-to-video Spaces, tried in order. They all spend the same daily free GPU time.
 ENGINES = [
     {'id': 'zerogpu-aoti/wan2-2-fp8da-aoti-faster', 'name': 'Wan 2.2', 'max_sec': 5, 'extra': {'steps': 6}},
-    {'id': 'r3gm/wan2-2-fp8da-aoti-preview', 'name': 'Wan 2.2 backup', 'max_sec': 5, 'extra': {'steps': 6}},
+    {'id': 'r3gm/wan2-2-fp8da-aoti-preview', 'name': 'Wan 2.2 backup', 'max_sec': 5,
+     'extra': {'steps': 6, 'last_image': None}},
     {'id': 'multimodalart/wan2-1-fast', 'name': 'Wan 2.1 backup', 'max_sec': 3.4, 'extra': {'steps': 4}, 'sized': True},
 ]
 IMAGE_SPACE = 'black-forest-labs/FLUX.1-schnell'
@@ -61,8 +62,18 @@ class QuotaError(Exception):
         self.wait_seconds = (int(wait[1]) * 3600 + int(wait[2]) * 60 + int(wait[3])) if wait else 3600
 
 
+class BusyError(Exception):
+    """Every free GPU is taken right now; worth trying again in a few minutes."""
+
+    wait_seconds = 600
+
+
 def is_quota(msg):
     return bool(re.search(r'quota|runs limit|gpu limit|exceeded your', msg, re.I))
+
+
+def is_busy(msg):
+    return bool(re.search(r'no gpu was available|queue is full|too many requests|is busy|temporarily unavailable', msg, re.I))
 
 
 def is_auth(msg):
@@ -335,7 +346,7 @@ def wan21_size(picture):
 def make_clip(picture, prompt, seconds, out):
     """Animate one picture. Tries each free engine; stops early on quota or key problems."""
     from gradio_client import Client, handle_file
-    last = None
+    last, busy = None, False
     for engine in ENGINES:
         try:
             client = Client(engine['id'], token=HF_TOKEN, verbose=False)
@@ -349,14 +360,17 @@ def make_clip(picture, prompt, seconds, out):
             shutil.copy(path, out)
             return engine['name']
         except Exception as e:
-            msg = str(e)
+            msg = str(e) or type(e).__name__
             if is_quota(msg):
                 raise QuotaError(msg)
             if is_auth(msg):
                 raise RuntimeError('The Hugging Face key was refused. Set up the worker again with a new key.')
+            busy = busy or is_busy(msg)
             log.warning('%s failed: %s', engine['id'], msg)
-            last = e
-    raise RuntimeError(f'The free video engines are busy or offline right now ({last})')
+            last = msg
+    if busy:
+        raise BusyError(last)
+    raise RuntimeError(f'The free video engines are offline right now ({last})')
 
 
 # ---------- Step 3: join clips into one TikTok video ----------
@@ -465,8 +479,9 @@ def process(job):
         picture = local_file(job, job['inputs'][i % len(job['inputs'])])
         try:
             make_clip(picture, ideas.video_prompt(idea, animal), job['seconds'], out)
-        except QuotaError:
+        except Exception:
             if clips:
+                log.exception('%s: clip %d failed, finishing with %d', job['id'], i + 1, len(clips))
                 break  # finish now with the clips we have
             raise
         clips.append(out)
@@ -482,7 +497,7 @@ def process(job):
     run(['ffmpeg', '-v', 'error', '-y', '-ss', '1', '-i', str(folder / 'final.mp4'), '-frames:v', '1',
          '-vf', 'scale=360:-2', str(folder / 'thumb.jpg')])
     _, _, seconds_long = probe(folder / 'final.mp4')
-    note = '' if len(clips) == wanted else f'Made {len(clips)} of {wanted} clips (free time ran out).'
+    note = '' if len(clips) == wanted else f'Made {len(clips)} of {wanted} clips (the free engines were busy or out of time).'
     update(job, status='done', stage=note, progress=1, error='', thumb='thumb.jpg', made=len(clips),
            seconds_long=round(seconds_long, 1))
     save(job, ['final.mp4', 'thumb.jpg'])
@@ -498,8 +513,10 @@ def worker_loop():
         try:
             process(job)
             log.info('%s done', job_id)
-        except QuotaError as e:
-            update(job, status='waiting', stage='Out of free video time for today. It will finish by itself.',
+        except (QuotaError, BusyError) as e:
+            why = ('Out of free video time for today.' if isinstance(e, QuotaError)
+                   else 'The free GPUs are all busy right now.')
+            update(job, status='waiting', stage=f'{why} It will finish by itself.',
                    retry_at=time.time() + e.wait_seconds + 60, progress=0)
             save(job)
         except Exception as e:
