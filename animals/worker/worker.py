@@ -302,7 +302,9 @@ def surprise_picture(prompt, path):
         res = requests.get(f'https://image.pollinations.ai/prompt/{requests.utils.quote(prompt)}',
                            params={'width': 576, 'height': 1024, 'nologo': 'true', 'seed': seed}, timeout=60)
         if res.ok and res.headers.get('content-type', '').startswith('image/'):
-            path.write_bytes(res.content)
+            img = Image.open(BytesIO(res.content))
+            # Trim the small pollinations.ai mark in the bottom corner.
+            save_picture(img.crop((0, 0, img.width, int(img.height * 0.95))), path)
             return
     except requests.RequestException:
         pass

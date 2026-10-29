@@ -24,6 +24,8 @@ jobs:
             source: "commons:cat"
           - name: surprise
             source: surprise
+          - name: surprise-2
+            source: surprise
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

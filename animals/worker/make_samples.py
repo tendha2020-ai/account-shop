@@ -1,9 +1,11 @@
 # make_samples.py: runs the worker pipeline once, end to end, outside the Space.
 # Used by the samples test workflow: python make_samples.py <source> <clips> <out_dir>
-#   source = "commons:<search words>" (a free-licensed Wikimedia Commons video), "surprise", or a link.
+#   source = "commons:<animal>" (a free-licensed Wikimedia Commons video), "surprise", or a link.
 
 import json
 import os
+import random
+import re
 import shutil
 import sys
 import time
@@ -12,25 +14,40 @@ import requests
 
 import worker
 
+API = 'https://commons.wikimedia.org/w/api.php'
 UA = {'User-Agent': 'AnimalAnticsSamples/1.0 (https://github.com/tendha2020-ai/account-shop)'}
 
 
-def commons_video(words):
-    """A short free-licensed animal video from Wikimedia Commons, with its credit line."""
-    res = requests.get('https://commons.wikimedia.org/w/api.php', headers=UA, timeout=30, params={
-        'action': 'query', 'format': 'json', 'generator': 'search', 'gsrnamespace': 6, 'gsrlimit': 20,
-        'gsrsearch': f'{words} filetype:video', 'prop': 'imageinfo',
-        'iiprop': 'url|size|mime|extmetadata', 'iiextmetadatafilter': 'LicenseShortName|Artist'})
+def commons_files(params):
+    res = requests.get(API, headers=UA, timeout=30, params={
+        'action': 'query', 'format': 'json', 'prop': 'imageinfo',
+        'iiprop': 'url|size|mime|extmetadata', 'iiextmetadatafilter': 'LicenseShortName|Artist', **params})
     res.raise_for_status()
-    pages = sorted(res.json()['query']['pages'].values(), key=lambda p: p.get('index', 0))
-    for page in pages:
-        info = page['imageinfo'][0]
-        if info['mime'].startswith('video/') and info['size'] < 60_000_000:
-            meta = info.get('extmetadata', {})
-            credit = f"{page['title']} by {meta.get('Artist', {}).get('value', 'unknown')} " \
-                     f"({meta.get('LicenseShortName', {}).get('value', 'see Commons')})"
-            return info['url'], credit
-    raise RuntimeError(f'No Commons video found for {words}')
+    pages = res.json().get('query', {}).get('pages', {}).values()
+    return [p for p in pages if p.get('imageinfo') and p['imageinfo'][0]['mime'].startswith('video/')
+            and 500_000 < p['imageinfo'][0]['size'] < 40_000_000
+            and not re.search(r'cgi|animat|cartoon|render', p['title'], re.I)]
+
+
+def commons_video(animal, folder):
+    """Downloads a random short free-licensed video of the animal. Returns (path, credit, artist)."""
+    files = commons_files({'generator': 'categorymembers', 'gcmtitle': f'Category:Videos of {animal}s',
+                           'gcmtype': 'file', 'gcmlimit': 200})
+    if not files:
+        files = commons_files({'generator': 'search', 'gsrnamespace': 6, 'gsrlimit': 50,
+                               'gsrsearch': f'{animal} filetype:video'})
+    page = random.choice(files)
+    info = page['imageinfo'][0]
+    meta = info.get('extmetadata', {})
+    artist = re.sub(r'<[^>]+>', '', meta.get('Artist', {}).get('value', 'unknown')).strip()
+    credit = f"{page['title']} by {artist} ({meta.get('LicenseShortName', {}).get('value', 'see Commons')})"
+    path = folder / ('source' + os.path.splitext(info['url'].split('?')[0])[1])
+    with requests.get(info['url'], headers=UA, timeout=120, stream=True) as res:
+        res.raise_for_status()
+        with open(path, 'wb') as f:
+            for chunk in res.iter_content(1 << 20):
+                f.write(chunk)
+    return path, credit, artist
 
 
 def main():
@@ -38,20 +55,22 @@ def main():
     os.makedirs(out, exist_ok=True)
     job = {'id': f'sample-{int(time.time())}', 'created': time.time(), 'status': 'working', 'wanted': clips,
            'made': 0, 'captions': True, 'seconds': 5, 'animal': '', 'label': ''}
-    credit = ''
-    if source == 'surprise':
-        job['kind'] = 'surprise'
-    elif source.startswith('commons:'):
-        url, credit = commons_video(source.split(':', 1)[1])
-        job.update(kind='link', url=url)
-    else:
-        job.update(kind='link', url=source)
     worker.jobs[job['id']] = job
+    folder = worker.job_dir(job['id'])
+    credit = ''
     try:
+        if source == 'surprise':
+            job['kind'] = 'surprise'
+        elif source.startswith('commons:'):
+            animal = source.split(':', 1)[1]
+            path, credit, artist = commons_video(animal, folder)
+            job.update(kind='images', inputs=worker.pick_frames(path, clips, folder), animal=animal,
+                       label=f'Wikimedia Commons · {artist}'[:80])
+        else:
+            job.update(kind='link', url=source)
         worker.process(job)
     except Exception as e:
         job.update(status='failed', error=f'{type(e).__name__}: {e}')
-    folder = worker.job_dir(job['id'])
     for name in ['final.mp4', 'thumb.jpg'] + job.get('inputs', []):
         if (folder / name).exists():
             shutil.copy(folder / name, os.path.join(out, name))
