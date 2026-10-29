@@ -1,0 +1,41 @@
+{
+ "id": "sample-1793274588",
+ "created": 1793274588.6228836,
+ "status": "done",
+ "wanted": 2,
+ "made": 1,
+ "captions": true,
+ "seconds": 5,
+ "animal": "dog",
+ "label": "Wikimedia Commons \u00b7 RG72",
+ "kind": "images",
+ "inputs": [
+  "input_0.jpg",
+  "input_1.jpg"
+ ],
+ "ideas": [
+  {
+   "title": "Dab",
+   "action": "stands up on its hind legs and does a dab, then a second dab the other way, very proud of itself",
+   "caption": "Not him doing this again \ud83d\udc80",
+   "twist": "At the end it trips over its own feet and tumbles over.",
+   "style": null
+  },
+  {
+   "title": "Impatient",
+   "action": "stands up on its hind legs, crosses its front legs, taps one foot impatiently and looks at its wrist like checking a watch",
+   "caption": "Waiting for my food like",
+   "twist": "Suddenly it notices the camera, freezes, and drops back down on all fours like nothing happened.",
+   "style": null
+  }
+ ],
+ "caption": "Not him doing this again \ud83d\udc80 #funnyanimals #animalsoftiktok #aivideo #funnyvideos #fyp #viral",
+ "sound": "Caramelldansen",
+ "stage": "Made 1 of 2 clips (the free engines were busy or out of time).",
+ "progress": 1,
+ "error": "",
+ "thumb": "thumb.jpg",
+ "seconds_long": 5.0,
+ "updated": 1793274737.7811942,
+ "credit": "File:Fontano sur la placo de la 400-a datreveno de Tjumeno.webm by RG72 (CC BY-SA 4.0)"
+}

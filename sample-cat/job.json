@@ -1,0 +1,41 @@
+{
+ "id": "sample-1793274582",
+ "created": 1793274582.1462576,
+ "status": "done",
+ "wanted": 2,
+ "made": 2,
+ "captions": true,
+ "seconds": 5,
+ "animal": "cat",
+ "label": "Wikimedia Commons \u00b7 Nesnad",
+ "kind": "images",
+ "inputs": [
+  "input_0.jpg",
+  "input_1.jpg"
+ ],
+ "ideas": [
+  {
+   "title": "Impatient",
+   "action": "stands up on its hind legs, crosses its front legs, taps one foot impatiently and looks at its wrist like checking a watch",
+   "caption": "You're late \u231a",
+   "twist": "",
+   "style": null
+  },
+  {
+   "title": "Gasps and runs",
+   "action": "stands up on its hind legs, sees the camera, gasps with its mouth wide open and runs away on two legs like a human",
+   "caption": "Caught in 4K \ud83d\ude31",
+   "twist": "",
+   "style": null
+  }
+ ],
+ "caption": "You're late \u231a #funnyanimals #animalsoftiktok #aivideo #funnyvideos #fyp #viral",
+ "sound": "Cha Cha Slide",
+ "stage": "",
+ "progress": 1,
+ "error": "",
+ "thumb": "thumb.jpg",
+ "seconds_long": 10.0,
+ "updated": 1793274758.7269127,
+ "credit": "File:Catblinking-tokyo-area-2018-4-9.webm by Nesnad (CC BY-SA 4.0)"
+}

@@ -1,0 +1,50 @@
+{
+ "id": "sample-1793274580",
+ "created": 1793274580.2172914,
+ "status": "done",
+ "wanted": 2,
+ "made": 1,
+ "captions": true,
+ "seconds": 5,
+ "animal": "chicken",
+ "label": "Surprise: a chicken standing upright on its hind legs like a person on a busy st",
+ "kind": "surprise",
+ "stage": "Made 1 of 2 clips (the free engines were busy or out of time).",
+ "progress": 1,
+ "scene": {
+  "scene": {
+   "subject": "a {a} standing upright on its hind legs like a person on a busy street sidewalk in Vietnam, scooters parked nearby, shop signs",
+   "style": "phone"
+  },
+  "animal": "chicken",
+  "style": "Phone video",
+  "subject": "a chicken standing upright on its hind legs like a person on a busy street sidewalk in Vietnam, scooters parked nearby, shop signs",
+  "prompt": "Photorealistic candid amateur smartphone photo, vertical, natural lighting, slightly imperfect framing. a chicken standing upright on its hind legs like a person on a busy street sidewalk in Vietnam, scooters parked nearby, shop signs. Realistic fur, real animal anatomy and face, believable everyday footage, no text, no watermark."
+ },
+ "inputs": [
+  "input_0.jpg"
+ ],
+ "updated": 1793274683.887558,
+ "ideas": [
+  {
+   "title": "Tai chi",
+   "action": "stands up on its hind legs and does slow tai chi moves with its front paws, completely calm",
+   "caption": "Zen master \u262f\ufe0f",
+   "twist": "",
+   "style": "phone"
+  },
+  {
+   "title": "Runway model",
+   "action": "stands up on its hind legs and walks like a runway model, then stops, poses and turns around dramatically",
+   "caption": "Paris fashion week",
+   "twist": "Suddenly it notices the camera, freezes, and drops back down on all fours like nothing happened.",
+   "style": "phone"
+  }
+ ],
+ "caption": "Zen master \u262f\ufe0f #funnyanimals #animalsoftiktok #aivideo #funnyvideos #fyp #viral",
+ "sound": "Caramelldansen",
+ "error": "",
+ "thumb": "thumb.jpg",
+ "seconds_long": 5.0,
+ "credit": ""
+}

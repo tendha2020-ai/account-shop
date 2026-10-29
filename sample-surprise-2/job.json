@@ -1,0 +1,53 @@
+{
+ "id": "sample-1793274577",
+ "created": 1793274577.8612328,
+ "status": "done",
+ "wanted": 2,
+ "made": 2,
+ "captions": true,
+ "seconds": 5,
+ "animal": "goat",
+ "label": "Surprise: a goat standing upright pushing a shopping cart in a supermarket aisle",
+ "kind": "surprise",
+ "stage": "",
+ "progress": 1,
+ "scene": {
+  "scene": {
+   "subject": "a {a} standing upright pushing a shopping cart in a supermarket aisle",
+   "style": "cctv",
+   "actions": [
+    "pushes the shopping cart, grabs a bag of snacks from the shelf and sneakily hides it in the cart, looking around"
+   ]
+  },
+  "animal": "goat",
+  "style": "CCTV",
+  "subject": "a goat standing upright pushing a shopping cart in a supermarket aisle",
+  "prompt": "Photorealistic high-angle CCTV security camera still, wide angle, slightly washed-out colours. a goat standing upright pushing a shopping cart in a supermarket aisle. Realistic fur, real animal anatomy and face, believable everyday footage, no text, no watermark."
+ },
+ "inputs": [
+  "input_0.jpg"
+ ],
+ "updated": 1793274742.252484,
+ "ideas": [
+  {
+   "title": "Made for this scene",
+   "action": "pushes the shopping cart, grabs a bag of snacks from the shelf and sneakily hides it in the cart, looking around",
+   "caption": "Not him doing this again \ud83d\udc80",
+   "twist": "",
+   "style": "cctv"
+  },
+  {
+   "title": "Shy dance",
+   "action": "stands up on its hind legs and does a little shy dance, covering its face with its front paws and wiggling",
+   "caption": "Shy but talented",
+   "twist": "",
+   "style": "cctv"
+  }
+ ],
+ "caption": "Not him doing this again \ud83d\udc80 #funnyanimals #animalsoftiktok #aivideo #funnyvideos #fyp #viral",
+ "sound": "Caramelldansen",
+ "error": "",
+ "thumb": "thumb.jpg",
+ "seconds_long": 10.0,
+ "credit": ""
+}
