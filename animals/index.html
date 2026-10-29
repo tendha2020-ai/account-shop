@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#120a1f">
+  <title>Animal Antics</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="ideas.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <header class="top">
+    <h1>Animal Antics</h1>
+    <p class="tag">Turn any animal clip into a funny AI video where it acts like a human. 100% free.</p>
+    <button type="button" id="openSettings" class="btn ghost small key-btn">🔑 Free key <span id="keyState" class="dot"></span></button>
+  </header>
+
+  <main>
+    <!-- Step 1: starting picture -->
+    <section class="card" id="step1">
+      <h2><span class="num">1</span> Pick your animal</h2>
+      <div class="seg" role="tablist" aria-label="Source">
+        <button type="button" role="tab" data-mode="upload" class="seg-btn">📹 My clip / photo</button>
+        <button type="button" role="tab" data-mode="surprise" class="seg-btn">🎲 Surprise me</button>
+      </div>
+
+      <div id="uploadPane">
+        <label class="drop" id="drop">
+          <input type="file" id="sourceFile" accept="video/*,image/*">
+          <span class="drop-icon">⬆️</span>
+          <span><strong>Choose a video or photo</strong><br><small>Your dog, a cat, any animal clip you found</small></span>
+        </label>
+        <div id="framePicker" class="frame-picker" hidden>
+          <p class="hint">Tap the moment where the animal is clearest. I picked the sharpest one for you.</p>
+          <div id="frameStrip" class="frame-strip"></div>
+          <input type="range" id="scrub" min="0" max="1000" value="0" aria-label="Fine-tune the moment">
+        </div>
+        <div class="field">
+          <span class="label">What animal is it?</span>
+          <div id="petChips" class="chips"></div>
+          <input type="text" id="petOther" class="input" placeholder="Other animal, e.g. hamster" hidden>
+        </div>
+      </div>
+
+      <div id="surprisePane" hidden>
+        <p class="hint">I'll invent a random animal in a random place, like the doorbell-cam bears or the volleyball dog.</p>
+        <p id="surpriseDesc" class="surprise-desc"></p>
+        <button type="button" id="newSurprise" class="btn">🎲 New random picture</button>
+      </div>
+
+      <figure id="framePreviewWrap" class="frame-preview" hidden>
+        <img id="framePreview" alt="Starting picture">
+        <button type="button" id="saveFrame" class="btn ghost small">💾 Save picture</button>
+      </figure>
+      <p id="step1Status" class="status" hidden></p>
+    </section>
+
+    <!-- Step 2: idea -->
+    <section class="card" id="step2">
+      <h2><span class="num">2</span> Pick an idea</h2>
+      <div id="ideaGrid" class="idea-grid"></div>
+      <div class="row">
+        <button type="button" id="shuffleIdeas" class="btn">🎲 New ideas</button>
+        <label class="toggle"><input type="checkbox" id="twist" checked> Twist ending</label>
+      </div>
+      <details class="prompt-box" id="promptBox">
+        <summary>✍️ See or write the prompt</summary>
+        <textarea id="prompt" rows="5" class="input" placeholder="Describe what the animal does, e.g. The dog stands up and dances salsa."></textarea>
+      </details>
+    </section>
+
+    <!-- Step 3: make -->
+    <section class="card" id="step3">
+      <h2><span class="num">3</span> Make the video</h2>
+      <div class="row">
+        <span class="label">Length</span>
+        <div class="chips" id="lenChips">
+          <button type="button" class="chip" data-sec="3">3 sec</button>
+          <button type="button" class="chip" data-sec="5">5 sec</button>
+        </div>
+      </div>
+      <button type="button" id="makeVideo" class="btn primary big">✨ Make video (free)</button>
+      <div id="progress" class="progress" hidden>
+        <div class="spinner" aria-hidden="true"></div>
+        <p id="progressText">Starting…</p>
+      </div>
+      <p id="makeStatus" class="status" hidden></p>
+
+      <details class="free-apps">
+        <summary>📋 Out of free tries? Use a free app instead</summary>
+        <ol>
+          <li>Tap <strong>Save picture</strong> above and <button type="button" id="copyPrompt" class="btn ghost small">Copy prompt</button></li>
+          <li>Open a free app, upload the picture and paste the prompt:
+            <div class="app-links">
+              <a href="https://www.meta.ai/" target="_blank" rel="noopener">Meta AI</a>
+              <a href="https://app.klingai.com/global/" target="_blank" rel="noopener">Kling AI</a>
+              <a href="https://grok.com/imagine" target="_blank" rel="noopener">Grok Imagine</a>
+              <a href="https://hailuoai.video/" target="_blank" rel="noopener">Hailuo</a>
+            </div>
+            <small>These give free daily credits (their limits change).</small>
+          </li>
+          <li>Save the video, then add it in step 4 with <strong>Add clip from phone</strong>.</li>
+        </ol>
+      </details>
+    </section>
+
+    <!-- Step 4: clips -->
+    <section class="card" id="step4">
+      <h2><span class="num">4</span> My clips <span id="clipCount" class="pill">0</span></h2>
+      <p class="hint">Clips stay saved on this phone. Tick the ones you want in your TikTok and put them in order.</p>
+      <div id="clipList" class="clip-list"></div>
+      <label class="btn add-clip">
+        <input type="file" id="addClip" accept="video/*" multiple>
+        ➕ Add clip from phone
+      </label>
+    </section>
+
+    <!-- Step 5: export -->
+    <section class="card" id="step5">
+      <h2><span class="num">5</span> Export for TikTok</h2>
+      <div class="row wrap">
+        <label class="toggle"><input type="checkbox" id="optCaptions" checked> Text on video</label>
+        <label class="toggle"><input type="checkbox" id="optFill"> Zoom to fill screen</label>
+      </div>
+      <button type="button" id="exportVideo" class="btn primary big">🎬 Export video</button>
+      <div id="exportProgress" class="progress" hidden>
+        <div class="bar"><span id="exportBar"></span></div>
+        <p id="exportText">Keep this screen open…</p>
+      </div>
+      <p id="exportStatus" class="status" hidden></p>
+      <div id="exportResult" class="export-result" hidden>
+        <video id="exportVideoEl" controls playsinline loop></video>
+        <div class="row">
+          <button type="button" id="shareVideo" class="btn primary">📤 Save / Share</button>
+          <a id="downloadVideo" class="btn" download="animal-antics.mp4">⬇️ Download</a>
+        </div>
+      </div>
+
+      <div class="post-kit">
+        <h3>Posting kit</h3>
+        <div class="kit-row">
+          <p id="kitCaption" class="kit-caption"></p>
+          <button type="button" id="copyCaption" class="btn ghost small">Copy</button>
+        </div>
+        <p class="hint">Sounds to search in TikTok's <strong>Add sound</strong>, or pick any trending one:</p>
+        <div id="soundChips" class="chips"></div>
+        <p class="hint">Before posting, open <strong>More options</strong> and turn on <strong>AI-generated content</strong>. TikTok asks for it on realistic AI videos.</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- Free key setup -->
+  <dialog id="settings" class="sheet">
+    <form method="dialog" class="sheet-body">
+      <h2>🔑 Your free Hugging Face key</h2>
+      <p>The videos are made by Wan 2.2, a free AI model on Hugging Face. A free account gives you a few videos a day (about 3–5). No card needed.</p>
+      <ol class="steps">
+        <li>Make a free account at <a href="https://huggingface.co/join" target="_blank" rel="noopener">huggingface.co/join</a></li>
+        <li>Open <a href="https://huggingface.co/settings/tokens/new?tokenType=read" target="_blank" rel="noopener">Access Tokens → Create new token</a>, choose <strong>Read</strong>, give it any name, tap <strong>Create</strong></li>
+        <li>Copy the key (starts with <code>hf_</code>) and paste it here:</li>
+      </ol>
+      <input type="password" id="tokenInput" class="input" placeholder="hf_…" autocomplete="off" spellcheck="false">
+      <p id="tokenStatus" class="status" hidden></p>
+      <p class="hint">The key stays on this phone only.</p>
+      <div class="row">
+        <button type="button" id="saveToken" class="btn primary">Save &amp; check</button>
+        <button type="button" id="clearToken" class="btn ghost">Remove</button>
+        <button value="close" class="btn ghost">Close</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
