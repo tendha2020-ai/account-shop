@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#fff3dc">
+  <title>antics</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&display=swap">
+  <link rel="stylesheet" href="style.css">
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <header class="bar">
+    <div class="brand">
+      <span class="logo">antics</span>
+      <span class="sub">animals doing human stuff</span>
+    </div>
+    <button type="button" id="openSettings" class="icon-btn" aria-label="Settings">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Zm8.4-2.1.1-1.4-.1-1.4 2-1.6-2-3.4-2.4 1a8 8 0 0 0-2.4-1.4L15.2 2h-4l-.4 2.6a8 8 0 0 0-2.4 1.4l-2.4-1-2 3.4 2 1.6-.1 1.4.1 1.4-2 1.6 2 3.4 2.4-1a8 8 0 0 0 2.4 1.4l.4 2.6h4l.4-2.6a8 8 0 0 0 2.4-1.4l2.4 1 2-3.4-2-1.6Z"/></svg>
+      <span id="workerDot" class="dot"></span>
+    </button>
+  </header>
+
+  <main>
+    <form id="makeForm" class="maker" autocomplete="off">
+      <div class="field" id="linkField">
+        <input type="url" id="link" inputmode="url" placeholder="Paste a TikTok or YouTube link" aria-label="Video link">
+        <button type="button" id="pasteBtn" class="mini">Paste</button>
+      </div>
+      <div class="file-chip" id="fileChip" hidden>
+        <span id="fileName"></span>
+        <button type="button" id="clearFile" class="mini" aria-label="Remove file">✕</button>
+      </div>
+      <div class="alt">
+        <label class="link-btn">
+          <input type="file" id="file" accept="video/*,image/*">
+          upload a video
+        </label>
+        <span aria-hidden="true">·</span>
+        <button type="button" id="surpriseBtn" class="link-btn">surprise me</button>
+      </div>
+      <div class="picks">
+        <div class="pick">
+          <span class="pick-label">Style</span>
+          <div class="pick-row" id="styleRow"></div>
+        </div>
+        <div class="pick">
+          <span class="pick-label">Music</span>
+          <div class="pick-row" id="musicRow"></div>
+        </div>
+        <p id="musicNote" class="fine" hidden>TikTok may mute songs it doesn't have the rights to. Its own sounds are the safest.</p>
+      </div>
+      <button type="submit" id="makeBtn" class="go">Make it</button>
+      <p id="note" class="note" hidden></p>
+    </form>
+
+    <section class="list" aria-label="Your videos">
+      <h2>Your videos <span id="pcChip" class="pc-chip" hidden>made on your PC</span></h2>
+      <p id="wakeNote" class="wake" hidden>Waking up your worker…</p>
+      <div id="jobs"></div>
+      <p id="emptyNote" class="empty">Nothing yet. Paste a link and hit <b>Make it</b>. You can close the app, it keeps working.</p>
+    </section>
+  </main>
+
+  <!-- Player -->
+  <dialog id="player" class="player">
+    <div class="player-body">
+      <video id="playerVideo" playsinline controls loop></video>
+      <div class="player-info">
+        <p id="playerCaption" class="caption-text"></p>
+        <div class="row">
+          <button type="button" id="saveBtn" class="go small">Save video</button>
+          <button type="button" id="copyBtn" class="plain">Copy caption</button>
+        </div>
+        <p class="tip" id="playerTip"></p>
+        <button type="button" id="closePlayer" class="plain close">Close</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Setup / settings -->
+  <dialog id="settings" class="sheet">
+    <div class="sheet-body">
+      <div id="setupPane">
+        <h2>One-time setup</h2>
+        <p>Your videos are made on your own free Hugging Face worker, so it keeps going when your phone is locked.</p>
+        <ol class="how">
+          <li>Open <a href="https://huggingface.co/settings/tokens/new?tokenType=write" target="_blank" rel="noopener">this page</a> (sign in if asked).</li>
+          <li>Pick <b>Write</b>, type any name, tap <b>Create token</b>, copy it.</li>
+          <li>Paste it here:</li>
+        </ol>
+        <input type="password" id="token" placeholder="hf_…" autocomplete="off" spellcheck="false" aria-label="Hugging Face key">
+        <button type="button" id="setupBtn" class="go small">Set up my worker</button>
+        <ul id="steps" class="steps" hidden>
+          <li data-step="key">Checking your key</li>
+          <li data-step="create">Creating your worker</li>
+          <li data-step="build">Building it (2–5 min, only once)</li>
+          <li data-step="ready">Ready</li>
+        </ul>
+        <p id="setupNote" class="note" hidden></p>
+        <p class="fine">The key is stored inside your worker as a secret, not on this phone.</p>
+      </div>
+
+      <div id="optionsPane" hidden>
+        <h2>Settings</h2>
+        <p class="worker-line">Worker: <a id="workerLink" target="_blank" rel="noopener"></a> <span id="workerState"></span></p>
+        <div class="opt">
+          <span>Clips per video</span>
+          <div class="seg" id="clipsSeg">
+            <button type="button" data-clips="1">1</button>
+            <button type="button" data-clips="2">2</button>
+            <button type="button" data-clips="3">3</button>
+          </div>
+        </div>
+        <label class="opt">
+          <span>Text on video</span>
+          <input type="checkbox" id="captionsOpt" checked>
+        </label>
+        <p class="fine">Free Hugging Face time makes about 3–5 clips a day. When it runs out, unfinished videos wait and finish by themselves.</p>
+        <p id="updateNote" class="note bad" hidden>Your worker is out of date. Tap <b>Set up again</b> below (you'll need your Hugging Face key).</p>
+
+        <div class="pc-box">
+          <div class="opt">
+            <span>Use my PC</span>
+            <span id="pcState" class="pc-state">not connected</span>
+          </div>
+          <p class="fine">Unlimited free videos on your own NVIDIA graphics card. When the PC is off, the free online time is used instead.</p>
+          <div class="row">
+            <a class="plain" href="pc.html" target="_blank" rel="noopener">How to set up my PC</a>
+            <button type="button" id="pairBtn" class="plain">Get connect code</button>
+          </div>
+          <div id="pairBox" class="pair" hidden>
+            <p>When the helper on your PC asks, type:</p>
+            <p>Username: <b id="pairUser"></b></p>
+            <p>Code: <b id="pairCode" class="code"></b> <span class="fine">(works for 10 minutes)</span></p>
+          </div>
+        </div>
+
+        <div class="row">
+          <button type="button" id="redoSetup" class="plain">Set up again</button>
+          <button type="button" id="disconnect" class="plain danger">Disconnect</button>
+        </div>
+      </div>
+      <button type="button" id="closeSettings" class="plain close">Close</button>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

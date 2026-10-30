@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#fff3dc">
+  <title>antics · use my PC</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="bar">
+    <div class="brand">
+      <span class="logo">antics</span>
+      <span class="sub">use my PC</span>
+    </div>
+    <a class="plain" href="index.html">Back</a>
+  </header>
+
+  <main class="guide">
+    <p>Make unlimited antics videos for free on your own graphics card. When the PC is off, antics uses the free online time instead.</p>
+
+    <div class="need">
+      <p><b>You need:</b> Windows 10 or 11, an NVIDIA graphics card with 8 GB or more, 32 GB of memory, about 32 GB of free disk space, and antics already set up on your phone.</p>
+    </div>
+
+    <ol>
+      <li>
+        <p><b>On your PC, open PowerShell.</b> Press the Windows key, type <b>PowerShell</b> and press Enter.</p>
+      </li>
+      <li>
+        <p><b>Copy this line, paste it into PowerShell</b> (right-click pastes) <b>and press Enter:</b></p>
+        <code id="cmd" class="cmd"></code>
+        <button type="button" id="copyCmd" class="plain">Copy</button>
+      </li>
+      <li>
+        <p><b>Wait while it downloads</b> (about 25 GB, 30–60 minutes). You can keep using your PC. If it stops, run the same line again; it continues where it stopped.</p>
+      </li>
+      <li>
+        <p><b>When it asks, type your Hugging Face username and the 6-digit code.</b> Get the code in the antics app: Settings, Use my PC, <b>Get connect code</b>.</p>
+      </li>
+      <li>
+        <p><b>That's it.</b> From now on, double-click <b>antics PC helper</b> on your Desktop whenever you want your PC to make the videos. Keep its window open (minimised is fine) and close it to stop. The app shows "made on your PC" while it's connected.</p>
+      </li>
+    </ol>
+
+    <p class="fine">Each 5-second clip takes about 3–5 minutes on an 8 GB card. Close games and other big programs while it works. To remove everything, delete the <b>antics</b> folder in your user folder and the Desktop shortcut.</p>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script>
+    // Setup files come from GitHub's raw file server, which always sends scripts as plain text.
+    const preview = location.href.match(/raw\.githack\.com\/([^/]+)\/([^/]+)\/(.+)\/animals\//);
+    const base = preview
+      ? `https://raw.githubusercontent.com/${preview[1]}/${preview[2]}/${preview[3]}/animals/pc`
+      : 'https://raw.githubusercontent.com/tendha2020-ai/account-shop/main/animals/pc';
+    const line = `$antics='${base}'; irm "$antics/setup-pc.ps1" | iex`;
+    document.getElementById('cmd').textContent = line;
+    document.getElementById('copyCmd').addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(line);
+      } catch {
+        const ta = document.createElement('textarea');
+        ta.value = line;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+      }
+      const toast = document.getElementById('toast');
+      toast.textContent = 'Copied';
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2000);
+    });
+  </script>
+</body>
+</html>
