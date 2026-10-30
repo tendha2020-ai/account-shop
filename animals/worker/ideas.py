@@ -304,6 +304,45 @@ SOUND_IDEAS = ['Monkeys Spinning Monkeys',
  'Cha Cha Slide',
  'phonk remix']
 
+# Free meme classics by Kevin MacLeod (incompetech.com), licensed CC BY 4.0: free to use with credit.
+MUSIC = {
+    'Monkeys Spinning Monkeys': 'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Monkeys%20Spinning%20Monkeys.mp3',
+    'Sneaky Snitch': 'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Sneaky%20Snitch.mp3',
+    'Fluffing a Duck': 'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Fluffing%20a%20Duck.mp3',
+    'Investigations': 'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Investigations.mp3',
+    'Run Amok': 'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Run%20Amok.mp3',
+    'Local Forecast - Elevator': 'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Local%20Forecast%20-%20Elevator.mp3',
+}
+MUSIC_CREDIT = 'Music: "{track}" by Kevin MacLeod (incompetech.com), CC BY 4.0'
+
+FAIL_TWISTS = [
+    'At the end it loses its balance and falls flat on its back.',
+    'At the end it trips over its own feet and tumbles over.',
+    'At the end it slips and crashes down in a heap, then looks around embarrassed.',
+]
+
+# Styles the user can pick in the app: the moves each one uses and the tracks that suit it.
+TEMPLATES = {
+    'random': {'label': 'Random', 'moves': [], 'music': list(MUSIC)},
+    'dance': {'label': 'Dance', 'music': ['Monkeys Spinning Monkeys', 'Fluffing a Duck'],
+              'moves': ['Hip-hop dancer', 'Moonwalk', 'Floss dance', 'Twerk', 'Ballet spin', 'Macarena', 'Shy dance',
+                        'Chicken dance', 'Cha cha slide', 'Dab']},
+    'walk': {'label': 'Walk like a human', 'music': ['Sneaky Snitch', 'Investigations'],
+             'moves': ['Walks like a boss', 'Runway model', 'Sneaky burglar', 'Morning jog', 'Shrug and leave',
+                       'Gasps and runs', 'Taxi!', 'Soldier march']},
+    'fight': {'label': 'Fight', 'music': ['Run Amok', 'Monkeys Spinning Monkeys'],
+              'moves': ['Boxer', 'Karate master', 'Gym workout', 'Jumping jacks', 'Tantrum', 'Backflip']},
+    'fail': {'label': 'Fail', 'music': ['Run Amok', 'Fluffing a Duck'], 'twists': FAIL_TWISTS,
+             'moves': ['Slip and fall', 'Walks like a boss', 'Moonwalk', 'Ballet spin', 'Backflip', 'Runway model',
+                       'Morning jog']},
+    'sassy': {'label': 'Sassy', 'music': ['Local Forecast - Elevator', 'Sneaky Snitch'],
+              'moves': ['Judging you', 'Slow clap', 'Impatient', 'Laughing at you', 'Thinker', 'Phone call',
+                        'Coffee break', 'Reads the news', 'Gentleman bow']},
+    'star': {'label': 'Star moment', 'music': ['Monkeys Spinning Monkeys', 'Fluffing a Duck'],
+             'moves': ['Goal celebration', 'Air guitar', 'Sings into a mic', 'Orchestra conductor', 'Fist pump',
+                       'High five', 'Yoga', 'Tai chi']},
+}
+
 # Words in a video's title or description that tell us which animal it is.
 ANIMAL_WORDS = {
     'dog': ['dog', 'dogs', 'puppy', 'puppies', 'pup', 'doggo', 'doggy', 'retriever', 'labrador', 'husky',
@@ -358,25 +397,43 @@ def _fill(text, animal):
     return text.replace('{a}', animal)
 
 
-def ideas_for_picture(animal, count):
-    """Ideas for a clip or photo the user brought: actions that fit anywhere."""
+def template_moves(template):
+    """The moves a style uses (every move for Random)."""
+    names = TEMPLATES.get(template, TEMPLATES['random'])['moves']
+    return [a for a in ACTIONS if a['title'] in names] or ACTIONS
+
+
+def pick_twist(template):
+    twists = TEMPLATES.get(template, {}).get('twists')
+    if twists:
+        return random.choice(twists)
+    return random.choice(TWISTS) if random.random() < 0.5 else ''
+
+
+def pick_music(template):
+    """A free track that suits the style."""
+    return random.choice(TEMPLATES.get(template, TEMPLATES['random'])['music'])
+
+
+def ideas_for_picture(animal, count, template='random'):
+    """Ideas for a clip or photo the user brought: moves that fit anywhere."""
     out = []
-    for act in random.sample(ACTIONS, count):
+    for act in random.sample(template_moves(template), count):
         caption = random.choice(act['captions']) if random.random() < 0.75 else _fill(random.choice(GENERIC_CAPTIONS), animal)
         out.append({'title': act['title'], 'action': act['action'], 'caption': caption,
-                    'twist': random.choice(TWISTS) if random.random() < 0.5 else '', 'style': None})
+                    'twist': pick_twist(template), 'style': None})
     return out
 
 
-def ideas_for_scene(scene, animal, count):
-    """Ideas for a Surprise scene: the scene's own moves first, then random ones."""
+def ideas_for_scene(scene, animal, count, template='random'):
+    """Ideas for a Surprise scene: with Random, the scene's own moves come first."""
     own = [{'title': 'Made for this scene', 'action': a, 'caption': _fill(random.choice(GENERIC_CAPTIONS), animal)}
-           for a in scene.get('actions', [])]
+           for a in scene.get('actions', [])] if template in ('random', '', None) else []
     extra = [{'title': a['title'], 'action': a['action'], 'caption': random.choice(a['captions'])}
-             for a in random.sample(ACTIONS, count)]
+             for a in random.sample(template_moves(template), count)]
     picked = (own + extra)[:count]
     for idea in picked:
-        idea['twist'] = random.choice(TWISTS) if random.random() < 0.5 else ''
+        idea['twist'] = pick_twist(template)
         idea['style'] = scene['style']
     return picked
 

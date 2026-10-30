@@ -30,7 +30,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 import ideas
 
-VERSION = '2'
+VERSION = '3'
 HF_TOKEN = os.environ.get('HF_TOKEN') or None
 ANTICS_KEY = os.environ.get('ANTICS_KEY', '')
 DATASET = os.environ.get('ANTICS_DATASET', '')
@@ -109,7 +109,7 @@ def job_dir(job_id):
 
 def public(job):
     keys = ['id', 'created', 'status', 'stage', 'progress', 'error', 'label', 'kind', 'caption', 'sound',
-            'made', 'wanted', 'retry_at', 'seconds_long']
+            'made', 'wanted', 'retry_at', 'seconds_long', 'template', 'music', 'track', 'music_used']
     view = {k: job.get(k) for k in keys}
     view['has_video'] = job.get('status') == 'done'
     view['has_thumb'] = bool(job.get('thumb'))
@@ -190,9 +190,12 @@ def save_picture(img, path):
 
 def download_link(job, folder):
     import yt_dlp
+    with_sound = job.get('music') == 'mine'
     opts = {
         'outtmpl': str(folder / 'source.%(ext)s'),
-        'format': 'bv*[height<=1080]/b[height<=1080]/bv*/b',
+        'format': ('bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b' if with_sound
+                   else 'bv*[height<=1080]/b[height<=1080]/bv*/b'),
+        'merge_output_format': 'mp4',
         'noplaylist': True,
         'quiet': True,
         'no_warnings': True,
@@ -277,6 +280,30 @@ def link_pictures(job, folder, count):
         save_picture(img, folder / f'input_{i}.jpg')
         names.append(f'input_{i}.jpg')
     return names, label, title
+
+
+def extract_sound(source, out):
+    """Keeps the sound of the user's own video (for "my video's sound"). False if it has none."""
+    try:
+        run(['ffmpeg', '-v', 'error', '-y', '-i', str(source), '-vn', '-ac', '2', '-ar', '44100',
+             '-c:a', 'aac', '-b:a', '160k', str(out)])
+    except subprocess.CalledProcessError:
+        out.unlink(missing_ok=True)
+        return False
+    return out.exists() and out.stat().st_size > 2000
+
+
+def music_file(track):
+    """A free meme track, downloaded once and kept."""
+    path = DATA / 'music' / (re.sub(r'[^A-Za-z0-9]+', '_', track) + '.mp3')
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        res = requests.get(ideas.MUSIC[track], timeout=120)
+        res.raise_for_status()
+        part = path.with_suffix('.part')
+        part.write_bytes(res.content)
+        part.rename(path)
+    return path
 
 
 def pick_frames(source, count, folder):
@@ -444,8 +471,9 @@ def caption_png(text, path):
     img.save(path)
 
 
-def join_clips(clips, captions, out):
-    """Each clip fills a 720x1280 frame (cropped if close to vertical, else on a blurred copy)."""
+def join_clips(clips, captions, out, audio=None):
+    """Each clip fills a 720x1280 frame (cropped if close to vertical, else on a blurred copy).
+    audio is a music or sound file laid under the whole video (looped, faded out), else silence."""
     cmd = ['ffmpeg', '-v', 'error', '-y']
     parts = []
     n = len(clips)
@@ -453,9 +481,14 @@ def join_clips(clips, captions, out):
         cmd += ['-i', str(clip)]
     for cap in captions:
         cmd += ['-i', str(cap)]
-    cmd += ['-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo']
+    if audio:
+        cmd += ['-stream_loop', '-1', '-i', str(audio)]
+    else:
+        cmd += ['-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo']
+    total = 0.0
     for i, clip in enumerate(clips):
-        w, h, _ = probe(clip)
+        w, h, seconds = probe(clip)
+        total += seconds
         ratio = (w / h) / (OUT_W / OUT_H)
         if 0.85 < ratio < 1.18:
             parts.append(f'[{i}:v]scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=increase,crop={OUT_W}:{OUT_H},setsar=1[b{i}]')
@@ -467,9 +500,10 @@ def join_clips(clips, captions, out):
                          f'[bg{i}][fg{i}]overlay=(W-w)/2:(H-h)/2,setsar=1[b{i}]')
         parts.append(f'[b{i}][{n + i}:v]overlay=0:0,fps={FPS},format=yuv420p[v{i}]')
     parts.append(''.join(f'[v{i}]' for i in range(n)) + f'concat=n={n}:v=1:a=0[out]')
-    cmd += ['-filter_complex', ';'.join(parts), '-map', '[out]', '-map', f'{2 * n}:a', '-shortest',
+    parts.append(f'[{2 * n}:a]aresample=44100,afade=t=in:d=0.1,afade=t=out:st={max(0.0, total - 0.8):.2f}:d=0.8[aout]')
+    cmd += ['-filter_complex', ';'.join(parts), '-map', '[out]', '-map', '[aout]', '-t', f'{total:.2f}',
             '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', '-pix_fmt', 'yuv420p',
-            '-c:a', 'aac', '-b:a', '64k', '-movflags', '+faststart', str(out)]
+            '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', str(out)]
     run(cmd)
 
 
@@ -486,6 +520,8 @@ def process(job):
                 source, label, text = download_link(job, folder)
                 update(job, stage='Finding the best moments…', progress=0.12)
                 inputs = pick_frames(source, wanted, folder)
+                if job.get('music') == 'mine' and extract_sound(source, folder / 'sound.m4a'):
+                    update(job, has_sound=True)
                 source.unlink(missing_ok=True)
             except Exception as e:
                 # Some sites (YouTube especially) block servers. Their public pictures still work.
@@ -501,16 +537,18 @@ def process(job):
             update(job, animal=scene['animal'], label=f"Surprise: {scene['subject']}"[:80], scene=scene)
             inputs = ['input_0.jpg']
         update(job, inputs=inputs)
-        save(job, inputs)
+        save(job, inputs + (['sound.m4a'] if job.get('has_sound') else []))
 
     animal = job.get('animal') or 'animal'
     if not job.get('ideas'):
+        template = job.get('template') or 'random'
         if job.get('scene'):
-            picked = ideas.ideas_for_scene(job['scene']['scene'], animal, wanted)
+            picked = ideas.ideas_for_scene(job['scene']['scene'], animal, wanted, template)
         else:
-            picked = ideas.ideas_for_picture(animal, wanted)
+            picked = ideas.ideas_for_picture(animal, wanted, template)
         caption = f"{picked[0]['caption']} {ideas.HASHTAGS}"
-        update(job, ideas=picked, caption=caption, sound=random.choice(ideas.SOUND_IDEAS))
+        update(job, ideas=picked, caption=caption, track=ideas.pick_music(template),
+               sound=random.choice(ideas.SOUND_IDEAS))
 
     clips = []
     for i, idea in enumerate(job['ideas']):
@@ -537,7 +575,19 @@ def process(job):
         path = folder / f'caption_{i}.png'
         caption_png(job['ideas'][i]['caption'] if job['captions'] else '', path)
         captions.append(path)
-    join_clips(clips, captions, folder / 'final.mp4')
+    audio, credit = None, ''
+    if job.get('music') == 'mine' and job.get('has_sound'):
+        audio = local_file(job, 'sound.m4a')
+    elif job.get('music', 'funny') != 'none':  # funny music, or "mine" when the video had no sound
+        try:
+            audio = music_file(job['track'])
+            credit = ideas.MUSIC_CREDIT.format(track=job['track'])
+        except requests.RequestException as e:
+            log.warning('%s: no music this time (%s)', job['id'], e)
+    join_clips(clips, captions, folder / 'final.mp4', audio)
+    if credit and credit not in job['caption']:
+        update(job, caption=f"{job['caption']}\n{credit}")
+    update(job, music_used='mine' if job.get('music') == 'mine' and job.get('has_sound') else ('funny' if credit else 'none'))
     run(['ffmpeg', '-v', 'error', '-y', '-ss', '1', '-i', str(folder / 'final.mp4'), '-frames:v', '1',
          '-vf', 'scale=360:-2', str(folder / 'thumb.jpg')])
     _, _, seconds_long = probe(folder / 'final.mp4')
@@ -636,7 +686,7 @@ def list_jobs(x_antics_key: str = Header(None)):
 
 
 @app.post('/jobs')
-async def create_job(
+def create_job(
     x_antics_key: str = Header(None),
     url: str = Form(''),
     surprise: bool = Form(False),
@@ -644,7 +694,10 @@ async def create_job(
     captions: bool = Form(True),
     animal: str = Form(''),
     seconds: float = Form(5),
+    template: str = Form('random'),
+    music: str = Form('funny'),
     images: list[UploadFile] = File(None),
+    source: UploadFile = File(None),
 ):
     check(x_antics_key)
     wanted = max(1, min(MAX_CLIPS, clips))
@@ -653,6 +706,8 @@ async def create_job(
         'created': time.time(), 'status': 'queued', 'stage': 'In line…', 'progress': 0, 'error': '',
         'wanted': wanted, 'made': 0, 'captions': captions, 'seconds': max(2, min(5, seconds)),
         'animal': re.sub(r'[^a-zA-Z ]', '', animal).strip().lower()[:30],
+        'template': template if template in ideas.TEMPLATES else 'random',
+        'music': music if music in ('funny', 'mine', 'none') else 'funny',
     }
     url = url.strip()
     if images:
@@ -667,6 +722,13 @@ async def create_job(
             save_picture(img, folder / f'input_{i}.jpg')
             names.append(f'input_{i}.jpg')
         job.update(kind='images', inputs=names, label='Your video')
+        if source and job['music'] == 'mine':
+            original = folder / 'original'
+            with open(original, 'wb') as f:
+                shutil.copyfileobj(source.file, f)
+            if extract_sound(original, folder / 'sound.m4a'):
+                job['has_sound'] = True
+            original.unlink(missing_ok=True)
     elif surprise:
         job.update(kind='surprise', label='Surprise me')
     elif re.match(r'^https?://\S+$', url):
@@ -675,7 +737,7 @@ async def create_job(
         raise HTTPException(400, 'Paste a video link, upload a video, or tap Surprise me')
     with jobs_lock:
         jobs[job['id']] = job
-    save(job, job.get('inputs', []))
+    save(job, job.get('inputs', []) + (['sound.m4a'] if job.get('has_sound') else []))
     work_queue.put(job['id'])
     return public(job)
 

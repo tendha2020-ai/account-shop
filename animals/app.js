@@ -6,8 +6,25 @@ const HF = 'https://huggingface.co';
 const SPACE_NAME = 'antics-worker';
 const DATASET_NAME = 'antics-videos';
 const WORKER_FILES = ['Dockerfile', 'README.md', 'requirements.txt', 'worker.py', 'ideas.py'];
-const WORKER_VERSION = '2'; // bump with VERSION in worker/worker.py
-const KEYS = { worker: 'antics.worker', clips: 'antics.clips', captions: 'antics.captions' };
+const WORKER_VERSION = '3'; // bump with VERSION in worker/worker.py
+const KEYS = {
+  worker: 'antics.worker', clips: 'antics.clips', captions: 'antics.captions', style: 'antics.style', music: 'antics.music',
+};
+// Keys match TEMPLATES in worker/ideas.py.
+const STYLES = [
+  { key: 'random', label: 'Random' },
+  { key: 'dance', label: 'Dance' },
+  { key: 'walk', label: 'Walk like a human' },
+  { key: 'fight', label: 'Fight' },
+  { key: 'fail', label: 'Fail' },
+  { key: 'sassy', label: 'Sassy' },
+  { key: 'star', label: 'Star moment' },
+];
+const MUSIC = [
+  { key: 'funny', label: 'Funny meme music' },
+  { key: 'mine', label: "My video's sound" },
+  { key: 'none', label: "None (I'll add a TikTok sound)" },
+];
 
 const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -22,6 +39,8 @@ const state = {
   playing: null,
   playingBlob: null,
   health: null, // the worker's /health: version and whether the user's PC is connected
+  style: 'random',
+  music: 'funny',
 };
 
 function load(key, fallback) {
@@ -320,11 +339,18 @@ async function submit(what) {
     const form = new FormData();
     form.append('clips', String(state.clips));
     form.append('captions', String(state.captions));
+    form.append('template', state.style);
+    // A surprise scene has no sound of its own, so it gets funny music instead.
+    form.append('music', what.kind === 'surprise' && state.music === 'mine' ? 'funny' : state.music);
     if (what.kind === 'link') form.append('url', what.url);
     if (what.kind === 'surprise') form.append('surprise', 'true');
     if (what.kind === 'file') {
       const pictures = await picturesFromFile(what.file, state.clips);
       pictures.forEach((blob, i) => form.append('images', blob, `picture_${i}.jpg`));
+      if (state.music === 'mine' && isVideoFile(what.file)) {
+        if (what.file.size < 150 * 1024 * 1024) form.append('source', what.file);
+        else toast('That video is too big to keep its sound, so it gets funny music.');
+      }
       btn.textContent = 'Sending…';
     }
     const job = await sendJob(form);
@@ -401,8 +427,12 @@ function toJpeg(canvas) {
   });
 }
 
+function isVideoFile(file) {
+  return file.type.startsWith('video/') || /\.(mov|mp4|m4v|webm|3gp)$/i.test(file.name);
+}
+
 async function picturesFromFile(file, count) {
-  const isVideo = file.type.startsWith('video/') || /\.(mov|mp4|m4v|webm|3gp)$/i.test(file.name);
+  const isVideo = isVideoFile(file);
   const url = URL.createObjectURL(file);
   try {
     if (!isVideo) {
@@ -572,13 +602,58 @@ async function deleteJob(job) {
 
 // ---------- Player + saving ----------
 
+function renderPlayerTip(job) {
+  const tip = $('#playerTip');
+  tip.textContent = '';
+  const add = (text, bold) => {
+    const el = bold ? document.createElement('b') : document.createTextNode(text);
+    if (bold) el.textContent = text;
+    tip.appendChild(el);
+  };
+  if (job.music_used === 'funny') add('Funny music is already in the video (its credit is in the caption). ');
+  else if (job.music_used === 'mine') add("Your video's sound is already in it. ");
+  else {
+    add('Sound idea: ');
+    add(job.sound || 'any trending sound', true);
+    add('. Add it in TikTok. ');
+  }
+  add('Before posting, switch on ');
+  add('AI-generated content', true);
+  add('.');
+}
+
+function renderPicks() {
+  const fill = (box, items, current, onPick) => {
+    box.innerHTML = '';
+    for (const item of items) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = item.label;
+      b.setAttribute('aria-pressed', String(item.key === current));
+      b.addEventListener('click', () => onPick(item.key));
+      box.appendChild(b);
+    }
+  };
+  fill($('#styleRow'), STYLES, state.style, (key) => {
+    state.style = key;
+    save(KEYS.style, key);
+    renderPicks();
+  });
+  fill($('#musicRow'), MUSIC, state.music, (key) => {
+    state.music = key;
+    save(KEYS.music, key);
+    renderPicks();
+  });
+  $('#musicNote').hidden = state.music !== 'mine';
+}
+
 function openPlayer(job) {
   state.playing = job;
   state.playingBlob = null;
   const video = $('#playerVideo');
   video.src = mediaUrl(job, 'video');
   $('#playerCaption').textContent = job.caption || '';
-  $('#playerSound').textContent = job.sound || 'any trending sound';
+  renderPlayerTip(job);
   openDialog($('#player'));
   video.play().catch(() => {});
   // Fetch the file now so Save can open the share sheet straight away.
@@ -683,6 +758,9 @@ function init() {
   state.worker = load(KEYS.worker, null);
   state.clips = load(KEYS.clips, 3);
   state.captions = load(KEYS.captions, true);
+  state.style = STYLES.some((x) => x.key === load(KEYS.style, '')) ? load(KEYS.style, '') : 'random';
+  state.music = MUSIC.some((x) => x.key === load(KEYS.music, '')) ? load(KEYS.music, '') : 'funny';
+  renderPicks();
 
   $('#makeForm').addEventListener('submit', onMake);
   $('#pasteBtn').addEventListener('click', async () => {

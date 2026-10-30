@@ -708,3 +708,52 @@ dialog::backdrop {
   box-shadow: var(--pop);
   padding: 4px 16px;
 }
+
+/* Style and music choices */
+.picks {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.pick {
+  display: grid;
+  gap: 6px;
+}
+
+.pick-label {
+  font-weight: 800;
+  font-size: 0.9rem;
+}
+
+.pick-row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 4px 6px 2px;
+  scrollbar-width: none;
+}
+
+.pick-row::-webkit-scrollbar {
+  display: none;
+}
+
+.pick-row button {
+  flex: 0 0 auto;
+  border: 2px solid var(--ink);
+  border-radius: 99px;
+  background: var(--card);
+  font-weight: 700;
+  font-size: 0.92rem;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+
+.pick-row button[aria-pressed="true"] {
+  background: var(--lime);
+  box-shadow: 2px 2px 0 var(--ink);
+}
+
+.picks .fine {
+  margin: 0;
+}

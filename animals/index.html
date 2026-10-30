@@ -41,6 +41,17 @@
         <span aria-hidden="true">·</span>
         <button type="button" id="surpriseBtn" class="link-btn">surprise me</button>
       </div>
+      <div class="picks">
+        <div class="pick">
+          <span class="pick-label">Style</span>
+          <div class="pick-row" id="styleRow"></div>
+        </div>
+        <div class="pick">
+          <span class="pick-label">Music</span>
+          <div class="pick-row" id="musicRow"></div>
+        </div>
+        <p id="musicNote" class="fine" hidden>TikTok may mute songs it doesn't have the rights to. Its own sounds are the safest.</p>
+      </div>
       <button type="submit" id="makeBtn" class="go">Make it</button>
       <p id="note" class="note" hidden></p>
     </form>
@@ -63,7 +74,7 @@
           <button type="button" id="saveBtn" class="go small">Save video</button>
           <button type="button" id="copyBtn" class="plain">Copy caption</button>
         </div>
-        <p class="tip">Sound idea: <b id="playerSound"></b>. Add it in TikTok, and switch on <b>AI-generated content</b> before posting.</p>
+        <p class="tip" id="playerTip"></p>
         <button type="button" id="closePlayer" class="plain close">Close</button>
       </div>
     </div>
