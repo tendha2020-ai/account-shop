@@ -32,7 +32,7 @@ from PIL import Image, ImageDraw, ImageFont
 import beats
 import ideas
 
-VERSION = '5'
+VERSION = '6'
 HF_TOKEN = os.environ.get('HF_TOKEN') or None
 ANTICS_KEY = os.environ.get('ANTICS_KEY', '')
 DATASET = os.environ.get('ANTICS_DATASET', '')
@@ -102,6 +102,7 @@ jobs = {}
 jobs_lock = threading.Lock()
 work_queue = queue.Queue()
 hub = None
+token_ok = True  # False when the Hugging Face key stored in the Space no longer works
 
 
 def job_dir(job_id):
@@ -154,12 +155,19 @@ def update(job, **fields):
 
 def load_jobs():
     """Bring back jobs after a restart and put unfinished ones back in line."""
-    global hub
+    global hub, token_ok
     if DATASET and HF_TOKEN:
         from huggingface_hub import HfApi, hf_hub_download
-        hub = HfApi(token=HF_TOKEN)
-        hub.create_repo(DATASET, repo_type='dataset', private=True, exist_ok=True)
-        for name in hub.list_repo_files(DATASET, repo_type='dataset'):
+        try:
+            api = HfApi(token=HF_TOKEN)
+            api.create_repo(DATASET, repo_type='dataset', private=True, exist_ok=True)
+            names = api.list_repo_files(DATASET, repo_type='dataset')
+            hub = api
+        except Exception as e:
+            # Keep running so the app can tell the user to paste a new key, instead of crashing.
+            log.error('the Hugging Face key does not work (%s); saved videos are unavailable', e)
+            token_ok, names = False, []
+        for name in names:
             if name.endswith('/job.json'):
                 try:
                     job = json.loads(Path(hf_hub_download(DATASET, name, repo_type='dataset', token=HF_TOKEN)).read_text())
@@ -666,10 +674,13 @@ def process(job):
             log.warning('%s: no music this time (%s)', job['id'], e)
     start = 0.0
     if audio:
-        part = job.get('song_part') if job.get('song_part') in ('start', 'drop') else natural
+        part = job.get('song_part') if job.get('song_part') in ('start', 'drop', 'custom') else natural
         try:
             info = beats.analyse(audio)
-            start = beats.pick_start(info, sum(lengths), part)
+            if part == 'custom':  # the user's own start time, nudged onto the nearest beat
+                start = beats.nearest_beat(info, max(0.0, float(job.get('song_start') or 0)))
+            else:
+                start = beats.pick_start(info, sum(lengths), part)
             lengths = beats.snap_cuts(info, start, lengths)  # cuts land on the beat
         except Exception as e:  # the beat finder must never cost a video
             log.warning('%s: beat finder skipped (%s)', job['id'], e)
@@ -774,7 +785,7 @@ def home():
 
 @app.get('/health')
 def health():
-    return {'ok': True, 'version': VERSION, 'storage': bool(hub), 'token': bool(HF_TOKEN),
+    return {'ok': True, 'version': VERSION, 'storage': bool(hub), 'token': bool(HF_TOKEN), 'token_ok': token_ok,
             'pc': pc_online(), 'pc_name': pc['name']}
 
 
@@ -799,6 +810,7 @@ def create_job(
     music: str = Form('funny'),
     track: str = Form(''),
     song_part: str = Form('auto'),
+    song_start: float = Form(0),
     speed: str = Form('normal'),
     idea: str = Form(''),
     images: list[UploadFile] = File(None),
@@ -816,7 +828,8 @@ def create_job(
         'template': template if template in ideas.TEMPLATES else 'random',
         'music': music if music in ('funny', 'track', 'upload', 'mine', 'none') else 'funny',
         'track': track if music == 'track' and track in ideas.MUSIC else '',
-        'song_part': song_part if song_part in ('auto', 'start', 'drop') else 'auto',
+        'song_part': song_part if song_part in ('auto', 'start', 'drop', 'custom') else 'auto',
+        'song_start': max(0.0, min(3600.0, song_start)),
         'speed': speed if speed in SPEEDS else 'normal',
         'idea': re.sub(r'\s+', ' ', idea).strip()[:160],
     }

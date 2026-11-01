@@ -6,7 +6,7 @@ const HF = 'https://huggingface.co';
 const SPACE_NAME = 'antics-worker';
 const DATASET_NAME = 'antics-videos';
 const WORKER_FILES = ['Dockerfile', 'README.md', 'requirements.txt', 'worker.py', 'ideas.py', 'beats.py'];
-const WORKER_VERSION = '5'; // bump with VERSION in worker/worker.py
+const WORKER_VERSION = '6'; // bump with VERSION in worker/worker.py
 const KEYS = {
   worker: 'antics.worker', clips: 'antics.clips', captions: 'antics.captions', style: 'antics.style', music: 'antics.music',
   track: 'antics.track', part: 'antics.part', seconds: 'antics.seconds', speed: 'antics.speed', animal: 'antics.animal',
@@ -23,6 +23,8 @@ const STYLES = [
   { key: 'fail', label: 'Fail' },
   { key: 'sassy', label: 'Sassy' },
   { key: 'star', label: 'Star moment' },
+  { key: 'twerk', label: 'Twerk' },
+  { key: 'honest', label: 'Moment of honesty' },
 ];
 const MUSIC = [
   { key: 'funny', label: 'Meme song for the style' },
@@ -60,8 +62,10 @@ const state = {
   part: 'auto',
   seconds: 5,
   speed: 'normal',
-  setupMode: 'setup', // or 'update': upload the new worker files to the existing Space
+  setupMode: 'setup', // or 'update': rebuild the worker with a new key
   brand: true,
+  songStart: 0, // seconds into the song, when Song part is "Pick myself"
+  songDuration: 0,
 };
 
 function load(key, fallback) {
@@ -208,9 +212,10 @@ async function setupWorker() {
     step('key', 'done');
 
     step('create', 'active');
-    // Updating only uploads new files, so the worker keeps its secrets, its address and your videos.
-    // A new setup replaces any old worker, because secrets can only be set when a Space is created.
-    const existing = updating ? { ok: false } : await hf(`/api/spaces/${space}`, token);
+    // Secrets (like the Hugging Face key) can only be set when a Space is created, so both a new setup
+    // and an update rebuild the Space. An update keeps the worker's connection key, so every device and
+    // the PC helper stay connected; videos live in the dataset and are kept either way.
+    const existing = await hf(`/api/spaces/${space}`, token);
     if (existing.ok) {
       const del = await hf('/api/repos/delete', token, {
         method: 'DELETE',
@@ -220,8 +225,8 @@ async function setupWorker() {
       if (!del.ok) throw new Error(await hfError(del));
       await sleep(2000);
     }
-    const key = randomKey();
-    const created = updating ? { ok: true } : await hf('/api/repos/create', token, {
+    const key = updating ? state.worker.key : randomKey();
+    const created = await hf('/api/repos/create', token, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -255,14 +260,11 @@ async function setupWorker() {
 
     step('build', 'active');
     $('#token').value = '';
-    if (updating) {
-      await waitForVersion(space);
-    } else {
-      const url = await waitForBuild(space);
-      state.worker = { space, url, key };
-      save(KEYS.worker, state.worker);
-      await waitForHealth();
-    }
+    const url = await waitForBuild(space);
+    state.worker = { space, url, key };
+    save(KEYS.worker, state.worker);
+    await waitForHealth();
+    refreshHealth();
     step('build', 'done');
     step('ready', 'done');
     state.setupMode = 'setup';
@@ -285,34 +287,10 @@ async function setupWorker() {
   }
 }
 
-// After an update: waits until the worker answers with the new version.
-async function waitForVersion(space) {
-  const started = Date.now();
-  while (Date.now() - started < 15 * 60 * 1000) {
-    await sleep(8000);
-    const mins = Math.floor((Date.now() - started) / 60000);
-    $('#steps [data-step="build"]').textContent = `Restarting with the new version (${mins} min so far, 2–5 min)`;
-    try {
-      const rt = await (await fetch(`${HF}/api/spaces/${space}/runtime`)).json();
-      if (/ERROR/.test(rt.stage || '')) {
-        throw new Error(`The new version failed to build (${rt.stage}). Open huggingface.co/spaces/${space} to see why.`);
-      }
-      const health = await (await fetch(`${state.worker.url}/health`, { cache: 'no-store' })).json();
-      if (health.version === WORKER_VERSION) {
-        state.health = health;
-        return;
-      }
-    } catch (e) {
-      if (/failed to build/.test(e.message)) throw e;
-      // still restarting
-    }
-  }
-  throw new Error('The update is taking too long. Check your worker page on Hugging Face, then try again.');
-}
-
 // Polls the Space until Docker has built it. Returns its web address.
 async function waitForBuild(space) {
   const started = Date.now();
+  let errors = 0;
   while (Date.now() - started < 15 * 60 * 1000) {
     await sleep(6000);
     let rt;
@@ -326,7 +304,9 @@ async function waitForBuild(space) {
     const stage = rt.stage || '';
     const mins = Math.floor((Date.now() - started) / 60000);
     $('#steps [data-step="build"]').textContent = `Building it (${mins} min so far, 2–5 min, only once)`;
-    if (/ERROR/.test(stage)) {
+    // Right after a rebuild the old stage can linger, so only a repeated error after a short wait counts.
+    errors = /ERROR/.test(stage) && Date.now() - started > 45000 ? errors + 1 : 0;
+    if (errors >= 2) {
       throw new Error(`The worker failed to build (${stage}). Open huggingface.co/spaces/${space} to see why, then tap Set up again.`);
     }
     if (stage === 'RUNNING') {
@@ -403,7 +383,9 @@ async function submit(what) {
     // A surprise scene has no sound of its own, so it gets a meme song instead.
     form.append('music', what.kind === 'surprise' && state.music === 'mine' ? 'funny' : state.music);
     form.append('track', state.track);
-    form.append('song_part', state.part);
+    const canPick = ['track', 'upload'].includes(state.music);
+    form.append('song_part', state.part === 'custom' && !canPick ? 'auto' : state.part);
+    form.append('song_start', state.songStart.toFixed(1));
     form.append('seconds', String(state.seconds));
     form.append('speed', state.speed);
     form.append('idea', $('#idea').value.trim());
@@ -744,6 +726,63 @@ function renderPlayerTip(job) {
 
 const preview = new Audio();
 let previewing = '';
+let previewStop = null;
+let songFileUrl = null;
+
+// The song "Pick myself" works on: a chosen meme song or the uploaded file.
+function currentSongUrl() {
+  if (state.music === 'track') return songUrl(state.track);
+  if (state.music === 'upload' && state.songFile) {
+    if (!songFileUrl) songFileUrl = URL.createObjectURL(state.songFile);
+    return songFileUrl;
+  }
+  return null;
+}
+
+function songChanged() {
+  state.songStart = 0;
+  state.songDuration = 0;
+  if (songFileUrl) URL.revokeObjectURL(songFileUrl);
+  songFileUrl = null;
+  loadSongDuration();
+}
+
+function loadSongDuration() {
+  const url = currentSongUrl();
+  if (!url) return;
+  const probe = new Audio();
+  probe.preload = 'metadata';
+  probe.addEventListener('loadedmetadata', () => {
+    if (currentSongUrl() !== url) return;
+    state.songDuration = probe.duration || 0;
+    renderOptions();
+  }, { once: true });
+  probe.src = url;
+}
+
+const clock = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+
+// Plays the chosen part for as long as the video will be.
+function hearPart() {
+  const url = currentSongUrl();
+  if (!url) return;
+  clearTimeout(previewStop);
+  previewing = '';
+  const speed = { slow: 0.8, normal: 1, fast: 1.25 }[state.speed] || 1;
+  const seconds = (state.clips * state.seconds) / speed;
+  const start = () => {
+    preview.currentTime = state.songStart;
+    preview.play().catch(() => toast("Couldn't play that part"));
+    previewStop = setTimeout(() => preview.pause(), seconds * 1000);
+  };
+  if (preview.src !== url) {
+    preview.src = url;
+    preview.addEventListener('loadedmetadata', start, { once: true });
+  } else {
+    start();
+  }
+  renderOptions();
+}
 
 function togglePreview(name) {
   if (previewing === name) {
@@ -782,6 +821,7 @@ function renderOptions() {
   chips($('#musicRow'), MUSIC, state.music, (key) => {
     state.music = key;
     save(KEYS.music, key);
+    songChanged();
     renderOptions();
   });
 
@@ -805,6 +845,7 @@ function renderOptions() {
     pick.addEventListener('click', () => {
       state.track = name;
       save(KEYS.track, name);
+      songChanged();
       renderOptions();
     });
     row.append(play, pick);
@@ -816,9 +857,19 @@ function renderOptions() {
   $('#partLine').hidden = state.music === 'none';
   $('#musicHelp').hidden = state.music === 'none';
   $('#musicNote').hidden = !['mine', 'upload'].includes(state.music);
-  setSeg('partSeg', state.part);
-  setSeg('clipsSeg', state.clips);
-  setSeg('lenSeg', state.seconds);
+  const canPick = ['track', 'upload'].includes(state.music);
+  $('#partSeg [data-v="custom"]').hidden = !canPick;
+  const picking = canPick && state.part === 'custom';
+  $('#partPick').hidden = !picking;
+  if (picking) {
+    const range = $('#songStart');
+    range.max = String(Math.max(1, Math.floor(state.songDuration || 180)));
+    range.value = String(state.songStart);
+    $('#songStartLabel').textContent = clock(state.songStart);
+    $('#songLength').textContent = state.songDuration ? `of ${clock(state.songDuration)}` : '';
+  }
+  setSeg('partSeg', state.part === 'custom' && !canPick ? 'auto' : state.part);
+  setSeg('videoSeg', state.clips * 5);
   setSeg('speedSeg', state.speed);
   $('#captionsOpt').checked = state.captions;
   $('#brandOpt').checked = state.brand;
@@ -903,9 +954,13 @@ function renderPc() {
   pcState.textContent = pcOn ? `on · ${h.pc_name || 'PC'}` : 'off or not connected';
   pcState.classList.toggle('on', pcOn);
   $('#pcChip').hidden = !pcOn;
+  const keyBroken = Boolean(state.worker && h && h.token_ok === false);
   const outdated = Boolean(state.worker && h && h.version !== WORKER_VERSION);
-  $('#updateNote').hidden = !outdated;
-  $('#updateBanner').hidden = !outdated;
+  $('#updateNote').hidden = !(outdated || keyBroken);
+  $('#updateBanner').hidden = !(outdated || keyBroken);
+  $('#updateText').textContent = keyBroken
+    ? "Your worker's Hugging Face key stopped working, so videos can't be made. Paste a new Write key to fix it."
+    : 'A new version of antics is ready, with more options.';
 }
 
 async function getPairCode() {
@@ -930,11 +985,11 @@ function renderSettings() {
   $('#optionsPane').hidden = !ready;
   $('#setupTitle').textContent = updating ? 'Update your worker' : 'One-time setup';
   $('#setupIntro').textContent = updating
-    ? 'A new version of antics is ready. Paste your Hugging Face Write key (the one you used before works) and your worker updates itself. Your videos are kept.'
+    ? 'Paste a Hugging Face Write key. Your worker is rebuilt with the newest version and this key (2–5 min). Your videos and connections are kept.'
     : 'Your videos are made on your own free Hugging Face worker, so it keeps going when your phone is locked.';
   $('#setupBtn').textContent = updating ? 'Update my worker' : 'Set up my worker';
-  $('#steps [data-step="create"]').textContent = updating ? 'Uploading the new version' : 'Creating your worker';
-  $('#steps [data-step="build"]').textContent = updating ? 'Restarting with the new version (2–5 min)' : 'Building it (2–5 min, only once)';
+  $('#steps [data-step="create"]').textContent = updating ? 'Rebuilding your worker' : 'Creating your worker';
+  $('#steps [data-step="build"]').textContent = 'Building it (2–5 min)';
   if (ready) {
     const link = $('#workerLink');
     link.href = `${HF}/spaces/${state.worker.space}`;
@@ -952,8 +1007,9 @@ function init() {
   state.style = pickSaved(KEYS.style, STYLES.map((x) => x.key), 'random');
   state.music = pickSaved(KEYS.music, MUSIC.map((x) => x.key), 'funny');
   state.track = pickSaved(KEYS.track, SONGS, SONGS[0]);
-  state.part = pickSaved(KEYS.part, ['auto', 'start', 'drop'], 'auto');
-  state.seconds = pickSaved(KEYS.seconds, [3, 5], 5);
+  state.part = pickSaved(KEYS.part, ['auto', 'start', 'drop', 'custom'], 'auto');
+  state.clips = pickSaved(KEYS.clips, [1, 2, 3], 3);
+  state.seconds = 5; // each clip; Video length picks how many
   state.speed = pickSaved(KEYS.speed, ['slow', 'normal', 'fast'], 'normal');
   state.brand = load(KEYS.brand, true) !== false;
   $('#idea').value = load(KEYS.idea, '');
@@ -964,9 +1020,17 @@ function init() {
     apply(b.dataset.v);
     renderOptions();
   }));
-  onSeg('partSeg', (v) => { state.part = v; save(KEYS.part, v); });
-  onSeg('clipsSeg', (v) => { state.clips = Number(v); save(KEYS.clips, state.clips); });
-  onSeg('lenSeg', (v) => { state.seconds = Number(v); save(KEYS.seconds, state.seconds); });
+  onSeg('partSeg', (v) => {
+    state.part = v;
+    save(KEYS.part, v);
+    if (v === 'custom' && !state.songDuration) loadSongDuration();
+  });
+  onSeg('videoSeg', (v) => { state.clips = Number(v) / 5; save(KEYS.clips, state.clips); });
+  $('#songStart').addEventListener('input', (e) => {
+    state.songStart = Number(e.target.value);
+    $('#songStartLabel').textContent = clock(state.songStart);
+  });
+  $('#hearPart').addEventListener('click', hearPart);
   onSeg('speedSeg', (v) => { state.speed = v; save(KEYS.speed, v); });
   $('#captionsOpt').addEventListener('change', (e) => {
     state.captions = e.target.checked;
@@ -980,6 +1044,7 @@ function init() {
   $('#animalOpt').addEventListener('input', (e) => save(KEYS.animal, e.target.value));
   $('#songFile').addEventListener('change', (e) => {
     state.songFile = e.target.files[0] || null;
+    songChanged();
     renderOptions();
   });
   preview.addEventListener('ended', () => {

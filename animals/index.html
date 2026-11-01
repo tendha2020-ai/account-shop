@@ -30,7 +30,7 @@
 
   <div class="banner-wrap">
     <p id="updateBanner" class="note banner" hidden>
-      A new version of antics is ready, with more options.
+      <span id="updateText">A new version of antics is ready, with more options.</span>
       <button type="button" id="updateBtnMain" class="plain">Update my worker</button>
     </p>
   </div>
@@ -86,6 +86,14 @@
             <button type="button" data-v="auto">Auto</button>
             <button type="button" data-v="start">Start</button>
             <button type="button" data-v="drop">The drop</button>
+            <button type="button" data-v="custom">Pick myself</button>
+          </div>
+        </div>
+        <div id="partPick" class="part-pick" hidden>
+          <input type="range" id="songStart" min="0" max="180" step="0.5" value="0" aria-label="Where the song starts">
+          <div class="part-pick-row">
+            <span>Starts at <b id="songStartLabel">0:00</b> <span id="songLength" class="fine"></span></span>
+            <button type="button" id="hearPart" class="plain">▶ Hear this part</button>
           </div>
         </div>
         <p class="fine" id="musicHelp">antics finds the right moment in the song and cuts the clips on the beat.</p>
@@ -95,18 +103,11 @@
       <section class="block">
         <h2 class="block-title">More options</h2>
         <div class="opt-line">
-          <span>Clips</span>
-          <div class="seg" id="clipsSeg">
-            <button type="button" data-v="1">1</button>
-            <button type="button" data-v="2">2</button>
-            <button type="button" data-v="3">3</button>
-          </div>
-        </div>
-        <div class="opt-line">
-          <span>Clip length</span>
-          <div class="seg" id="lenSeg">
-            <button type="button" data-v="3">3 sec</button>
+          <span>Video length</span>
+          <div class="seg" id="videoSeg">
             <button type="button" data-v="5">5 sec</button>
+            <button type="button" data-v="10">10 sec</button>
+            <button type="button" data-v="15">15 sec</button>
           </div>
         </div>
         <div class="opt-line">

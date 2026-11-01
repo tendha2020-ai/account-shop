@@ -68,6 +68,14 @@ def pick_start(info, length, part='start'):
     return float(next(b for b, e in zip(starts, energy) if e >= enough))
 
 
+def nearest_beat(info, t, within=0.3):
+    """The beat closest to t (seconds), if one is within `within` seconds; otherwise t itself."""
+    if not info or not len(info['beats']):
+        return t
+    beat = float(info['beats'][np.argmin(np.abs(np.asarray(info['beats']) - t))])
+    return beat if abs(beat - t) <= within else t
+
+
 def snap_cuts(info, start, durations, max_trim=0.6):
     """Shortens clips (by at most max_trim seconds) so each cut lands on a beat of the song."""
     if not info:

@@ -948,3 +948,36 @@ dialog::backdrop {
     display: none;
   }
 }
+
+/* Song part: Pick myself */
+.part-pick {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 2px dashed var(--ink);
+  border-radius: 12px;
+  background: var(--paper);
+}
+
+.part-pick input[type="range"] {
+  width: 100%;
+  accent-color: var(--grape);
+}
+
+.part-pick-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+  font-weight: 700;
+}
+
+.part-pick-row .plain {
+  padding: 7px 12px;
+  font-size: 0.9rem;
+}
+
+.seg button[hidden] {
+  display: none !important;
+}
