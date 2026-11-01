@@ -942,3 +942,9 @@ dialog::backdrop {
     max-width: 1180px;
   }
 }
+
+@media (max-width: 480px) {
+  .alt-dot {
+    display: none;
+  }
+}
