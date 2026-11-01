@@ -1,0 +1,89 @@
+name: LagBuster
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "lagbuster/**"
+      - ".github/workflows/lagbuster.yml"
+  pull_request:
+    paths:
+      - "lagbuster/**"
+      - ".github/workflows/lagbuster.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lagbuster-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: lagbuster
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install -r requirements.txt pytest
+      - name: Unit and UI tests (Windows)
+        if: runner.os == 'Windows'
+        run: python -m pytest -q
+      - name: Unit and UI tests (Linux, virtual screen)
+        if: runner.os == 'Linux'
+        run: |
+          command -v xvfb-run || (sudo apt-get update && sudo apt-get install -y xvfb)
+          xvfb-run -a python -m pytest -q
+      - name: Self-test on real Windows (performance counters, DXGI, power plans, registry...)
+        if: runner.os == 'Windows'
+        run: python -m lagbuster --selftest --report selftest.json
+      - name: Open the real window, scan, close
+        if: runner.os == 'Windows'
+        run: python -m lagbuster --close-after 10 --scan
+
+  build-windows-exe:
+    name: Build LagBuster.exe
+    needs: test
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: lagbuster
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install -r requirements.txt pyinstaller
+      - name: Build
+        run: >-
+          pyinstaller --noconfirm --clean --onefile --windowed
+          --name LagBuster
+          --icon lagbuster/assets/icon.ico
+          --add-data "lagbuster/assets;lagbuster/assets"
+          --hidden-import pynvml
+          LagBuster.pyw
+      - name: Self-test the built exe
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath dist\LagBuster.exe -ArgumentList '--selftest','--report','exe-selftest.json' -Wait -PassThru
+          Get-Content exe-selftest.json
+          if ($p.ExitCode -ne 0) { throw "LagBuster.exe self-test failed with exit code $($p.ExitCode)" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LagBuster-windows
+          path: |
+            lagbuster/dist/LagBuster.exe
+            lagbuster/README.md
+          if-no-files-found: error
