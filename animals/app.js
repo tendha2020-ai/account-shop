@@ -6,12 +6,14 @@ const HF = 'https://huggingface.co';
 const SPACE_NAME = 'antics-worker';
 const DATASET_NAME = 'antics-videos';
 const WORKER_FILES = ['Dockerfile', 'README.md', 'requirements.txt', 'worker.py', 'ideas.py', 'beats.py'];
-const WORKER_VERSION = '4'; // bump with VERSION in worker/worker.py
+const WORKER_VERSION = '5'; // bump with VERSION in worker/worker.py
 const KEYS = {
   worker: 'antics.worker', clips: 'antics.clips', captions: 'antics.captions', style: 'antics.style', music: 'antics.music',
   track: 'antics.track', part: 'antics.part', seconds: 'antics.seconds', speed: 'antics.speed', animal: 'antics.animal',
-  idea: 'antics.idea',
+  idea: 'antics.idea', brand: 'antics.brand',
 };
+// The creator's name and picture, shown in the header and stamped on every video.
+const BRAND = { name: 'TENDHA2', avatar: 'brand/tendha2.png' };
 // Keys match TEMPLATES in worker/ideas.py.
 const STYLES = [
   { key: 'random', label: 'Random' },
@@ -59,6 +61,7 @@ const state = {
   seconds: 5,
   speed: 'normal',
   setupMode: 'setup', // or 'update': upload the new worker files to the existing Space
+  brand: true,
 };
 
 function load(key, fallback) {
@@ -406,6 +409,7 @@ async function submit(what) {
     form.append('idea', $('#idea').value.trim());
     form.append('animal', $('#animalOpt').value.trim());
     if (state.music === 'upload') form.append('song', state.songFile);
+    if (state.brand) form.append('badge', await brandBadge(), 'badge.png');
     if (what.kind === 'link') form.append('url', what.url);
     if (what.kind === 'surprise') form.append('surprise', 'true');
     if (what.kind === 'file') {
@@ -435,6 +439,57 @@ async function submit(what) {
 
 async function sendJob(form) {
   return api('/jobs', { method: 'POST', body: form });
+}
+
+// ---------- The @TENDHA2 badge stamped on videos ----------
+
+let badgeBlob = null;
+
+// A dark pill with the creator's picture and @name, drawn at the size it appears on a 720px-wide video.
+async function brandBadge() {
+  if (badgeBlob) return badgeBlob;
+  const img = new Image();
+  img.src = BRAND.avatar;
+  await img.decode();
+  const font = '800 28px "Bricolage Grotesque", system-ui, sans-serif';
+  try {
+    await document.fonts.load(font);
+  } catch {
+    // the system font is fine too
+  }
+  const text = `@${BRAND.name}`;
+  const h = 64;
+  const measure = document.createElement('canvas').getContext('2d');
+  measure.font = font;
+  const w = Math.ceil(h + 8 + measure.measureText(text).width + 22);
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  const r = h / 2;
+  ctx.fillStyle = 'rgba(22, 19, 16, 0.82)';
+  ctx.beginPath();
+  ctx.arc(r, r, r, Math.PI / 2, Math.PI * 1.5);
+  ctx.arc(w - r, r, r, Math.PI * 1.5, Math.PI / 2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(r, r, r - 5, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.drawImage(img, 5, 5, h - 10, h - 10);
+  ctx.restore();
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = '#c9f04a';
+  ctx.beginPath();
+  ctx.arc(r, r, r - 5, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.font = font;
+  ctx.fillStyle = '#fff';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, h + 8, r + 1);
+  badgeBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+  return badgeBlob;
 }
 
 // ---------- Pictures from an uploaded video (picked on the phone, so only a few small JPEGs are sent) ----------
@@ -766,6 +821,7 @@ function renderOptions() {
   setSeg('lenSeg', state.seconds);
   setSeg('speedSeg', state.speed);
   $('#captionsOpt').checked = state.captions;
+  $('#brandOpt').checked = state.brand;
 }
 
 function openPlayer(job) {
@@ -899,6 +955,7 @@ function init() {
   state.part = pickSaved(KEYS.part, ['auto', 'start', 'drop'], 'auto');
   state.seconds = pickSaved(KEYS.seconds, [3, 5], 5);
   state.speed = pickSaved(KEYS.speed, ['slow', 'normal', 'fast'], 'normal');
+  state.brand = load(KEYS.brand, true) !== false;
   $('#idea').value = load(KEYS.idea, '');
   $('#animalOpt').value = load(KEYS.animal, '');
   renderOptions();
@@ -916,6 +973,10 @@ function init() {
     save(KEYS.captions, state.captions);
   });
   $('#idea').addEventListener('input', (e) => save(KEYS.idea, e.target.value));
+  $('#brandOpt').addEventListener('change', (e) => {
+    state.brand = e.target.checked;
+    save(KEYS.brand, state.brand);
+  });
   $('#animalOpt').addEventListener('input', (e) => save(KEYS.animal, e.target.value));
   $('#songFile').addEventListener('change', (e) => {
     state.songFile = e.target.files[0] || null;

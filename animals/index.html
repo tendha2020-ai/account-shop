@@ -4,7 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#fff3dc">
-  <title>antics</title>
+  <title>TENDHA2 · antics</title>
+  <link rel="icon" type="image/png" href="brand/favicon-64.png">
+  <link rel="apple-touch-icon" href="brand/icon-180.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&display=swap">
@@ -14,8 +16,11 @@
 <body>
   <header class="bar">
     <div class="brand">
-      <span class="logo">antics</span>
-      <span class="sub">animals doing human stuff</span>
+      <img class="avatar" src="brand/tendha2.png" alt="" width="60" height="60">
+      <div class="brand-text">
+        <span class="logo">TENDHA<b>2</b><span class="app-tag">antics</span></span>
+        <span class="sub">animals doing human stuff</span>
+      </div>
     </div>
     <button type="button" id="openSettings" class="icon-btn" aria-label="Settings">
       <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Zm8.4-2.1.1-1.4-.1-1.4 2-1.6-2-3.4-2.4 1a8 8 0 0 0-2.4-1.4L15.2 2h-4l-.4 2.6a8 8 0 0 0-2.4 1.4l-2.4-1-2 3.4 2 1.6-.1 1.4.1 1.4-2 1.6 2 3.4 2.4-1a8 8 0 0 0 2.4 1.4l.4 2.6h4l.4-2.6a8 8 0 0 0 2.4-1.4l2.4 1 2-3.4-2-1.6Z"/></svg>
@@ -115,6 +120,10 @@
         <label class="opt-line">
           <span>Text on video</span>
           <input type="checkbox" id="captionsOpt" checked>
+        </label>
+        <label class="opt-line">
+          <span>My name on video <span class="tag-opt">@TENDHA2</span></span>
+          <input type="checkbox" id="brandOpt" checked>
         </label>
         <label class="opt-line">
           <span>Animal <span class="tag-opt">optional</span></span>

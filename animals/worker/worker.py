@@ -32,7 +32,7 @@ from PIL import Image, ImageDraw, ImageFont
 import beats
 import ideas
 
-VERSION = '4'
+VERSION = '5'
 HF_TOKEN = os.environ.get('HF_TOKEN') or None
 ANTICS_KEY = os.environ.get('ANTICS_KEY', '')
 DATASET = os.environ.get('ANTICS_DATASET', '')
@@ -528,10 +528,11 @@ def caption_png(text, path):
     img.save(path)
 
 
-def join_clips(clips, captions, out, lengths, speed=1.0, audio=None, audio_start=0.0):
+def join_clips(clips, captions, out, lengths, speed=1.0, audio=None, audio_start=0.0, badge=None):
     """Each clip fills a 720x1280 frame (cropped if close to vertical, else on a blurred copy), plays at
     `speed` and is cut to lengths[i] seconds. audio is laid under the whole video from audio_start
-    (looped, faded out), else silence."""
+    (looped, faded out), else silence. badge (the creator's name tag) sits on the left, clear of
+    TikTok's buttons and caption."""
     cmd = ['ffmpeg', '-v', 'error', '-y']
     parts = []
     n = len(clips)
@@ -543,6 +544,8 @@ def join_clips(clips, captions, out, lengths, speed=1.0, audio=None, audio_start
         cmd += ['-stream_loop', '-1', '-ss', f'{audio_start:.3f}', '-i', str(audio)]
     else:
         cmd += ['-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo']
+    if badge:
+        cmd += ['-i', str(badge)]
     total = sum(lengths)
     for i, clip in enumerate(clips):
         w, h, _ = probe(clip)
@@ -557,7 +560,11 @@ def join_clips(clips, captions, out, lengths, speed=1.0, audio=None, audio_start
                          f'[bg{i}][fg{i}]overlay=(W-w)/2:(H-h)/2,setsar=1[b{i}]')
         parts.append(f'[b{i}][{n + i}:v]overlay=0:0,setpts=PTS/{speed},trim=duration={lengths[i]:.3f},'
                      f'setpts=PTS-STARTPTS,fps={FPS},format=yuv420p[v{i}]')
-    parts.append(''.join(f'[v{i}]' for i in range(n)) + f'concat=n={n}:v=1:a=0[out]')
+    parts.append(''.join(f'[v{i}]' for i in range(n)) + f'concat=n={n}:v=1:a=0[joined]')
+    if badge:
+        parts.append(f'[joined][{2 * n + 1}:v]overlay=24:{int(OUT_H * 0.62)}[out]')
+    else:
+        parts.append('[joined]null[out]')
     parts.append(f'[{2 * n}:a]aresample=44100,afade=t=in:d=0.1,afade=t=out:st={max(0.0, total - 0.8):.2f}:d=0.8[aout]')
     cmd += ['-filter_complex', ';'.join(parts), '-map', '[out]', '-map', '[aout]', '-t', f'{total:.2f}',
             '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', '-pix_fmt', 'yuv420p',
@@ -666,7 +673,8 @@ def process(job):
             lengths = beats.snap_cuts(info, start, lengths)  # cuts land on the beat
         except Exception as e:  # the beat finder must never cost a video
             log.warning('%s: beat finder skipped (%s)', job['id'], e)
-    join_clips(clips, captions, folder / 'final.mp4', lengths, speed, audio, start)
+    badge = local_file(job, 'badge.png') if job.get('has_badge') else None
+    join_clips(clips, captions, folder / 'final.mp4', lengths, speed, audio, start, badge)
     if credit and credit not in job['caption']:
         update(job, caption=f"{job['caption']}\n{credit}")
     update(job, music_used=used, music_start=round(start, 2))
@@ -796,6 +804,7 @@ def create_job(
     images: list[UploadFile] = File(None),
     source: UploadFile = File(None),
     song: UploadFile = File(None),
+    badge: UploadFile = File(None),
 ):
     check(x_antics_key)
     wanted = max(1, min(MAX_CLIPS, clips))
@@ -811,6 +820,14 @@ def create_job(
         'speed': speed if speed in SPEEDS else 'normal',
         'idea': re.sub(r'\s+', ' ', idea).strip()[:160],
     }
+    if badge:  # the creator's name tag, drawn by the page
+        try:
+            tag = Image.open(badge.file).convert('RGBA')
+            tag.thumbnail((OUT_W - 48, 200))
+            tag.save(job_dir(job['id']) / 'badge.png')
+            job['has_badge'] = True
+        except Exception:
+            log.warning('%s: the name tag could not be read', job['id'])
     if song and job['music'] == 'upload':
         folder = job_dir(job['id'])
         original = folder / 'song_original'
@@ -848,7 +865,7 @@ def create_job(
     with jobs_lock:
         jobs[job['id']] = job
     save(job, job.get('inputs', []) + (['sound.m4a'] if job.get('has_sound') else [])
-         + (['song.m4a'] if job.get('has_song') else []))
+         + (['song.m4a'] if job.get('has_song') else []) + (['badge.png'] if job.get('has_badge') else []))
     work_queue.put(job['id'])
     return public(job)
 

@@ -7,6 +7,7 @@
   --tomato: #ff5a36;
   --lime: #c9f04a;
   --sky: #9fd8ff;
+  --grape: #8159e6; /* the purple of the TENDHA2 picture */
   --line: 2.5px solid var(--ink);
   --pop: 4px 4px 0 var(--ink);
   --round: 14px;
@@ -53,24 +54,50 @@ button {
 }
 
 .brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.avatar {
+  flex: 0 0 auto;
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  border: var(--line);
+  box-shadow: 3px 3px 0 var(--ink);
+  background: var(--lime);
+}
+
+.brand-text {
   display: grid;
+  min-width: 0;
 }
 
 .logo {
-  font-size: 2.6rem;
+  font-size: 2.2rem;
   font-weight: 800;
-  letter-spacing: -0.04em;
+  letter-spacing: -0.035em;
   line-height: 1;
+  white-space: nowrap;
 }
 
-.logo::after {
-  content: "";
+.logo b {
+  color: var(--grape);
+}
+
+.app-tag {
   display: inline-block;
-  width: 0.32em;
-  height: 0.32em;
-  margin-left: 0.06em;
-  border-radius: 50%;
-  background: var(--tomato);
+  margin-left: 8px;
+  vertical-align: middle;
+  font-size: 0.8rem;
+  letter-spacing: 0;
+  background: var(--grape);
+  color: #fff;
+  border: 2px solid var(--ink);
+  border-radius: 99px;
+  padding: 1px 9px 2px;
 }
 
 .sub {
