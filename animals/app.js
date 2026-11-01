@@ -391,7 +391,14 @@ async function submit(what) {
     form.append('idea', $('#idea').value.trim());
     form.append('animal', $('#animalOpt').value.trim());
     if (state.music === 'upload') form.append('song', state.songFile);
-    if (state.brand) form.append('badge', await brandBadge(), 'badge.png');
+    let tagMissing = false;
+    if (state.brand) {
+      try {
+        form.append('badge', await brandBadge(), 'badge.png');
+      } catch {
+        tagMissing = true; // never let the name tag stop a video
+      }
+    }
     if (what.kind === 'link') form.append('url', what.url);
     if (what.kind === 'surprise') form.append('surprise', 'true');
     if (what.kind === 'file') {
@@ -408,7 +415,9 @@ async function submit(what) {
     renderJobs();
     $('#link').value = '';
     setFile(null);
-    toast('Got it. You can close the app, it keeps working.');
+    toast(tagMissing
+      ? 'Got it (without your name tag this time). You can close the app, it keeps working.'
+      : 'Got it. You can close the app, it keeps working.');
     schedulePoll(2000);
   } catch (e) {
     note(msg, e.waking ? 'Your worker is waking up (takes up to a minute). Tap Make it again in a moment.' : e.message, 'bad');
@@ -431,6 +440,9 @@ let badgeBlob = null;
 async function brandBadge() {
   if (badgeBlob) return badgeBlob;
   const img = new Image();
+  // The picture can come from another site (the preview link redirects it to GitHub's file server);
+  // loading it in CORS mode keeps the canvas exportable.
+  img.crossOrigin = 'anonymous';
   img.src = BRAND.avatar;
   await img.decode();
   const font = '800 28px "Bricolage Grotesque", system-ui, sans-serif';
