@@ -5,10 +5,12 @@
 const HF = 'https://huggingface.co';
 const SPACE_NAME = 'antics-worker';
 const DATASET_NAME = 'antics-videos';
-const WORKER_FILES = ['Dockerfile', 'README.md', 'requirements.txt', 'worker.py', 'ideas.py'];
-const WORKER_VERSION = '3'; // bump with VERSION in worker/worker.py
+const WORKER_FILES = ['Dockerfile', 'README.md', 'requirements.txt', 'worker.py', 'ideas.py', 'beats.py'];
+const WORKER_VERSION = '4'; // bump with VERSION in worker/worker.py
 const KEYS = {
   worker: 'antics.worker', clips: 'antics.clips', captions: 'antics.captions', style: 'antics.style', music: 'antics.music',
+  track: 'antics.track', part: 'antics.part', seconds: 'antics.seconds', speed: 'antics.speed', animal: 'antics.animal',
+  idea: 'antics.idea',
 };
 // Keys match TEMPLATES in worker/ideas.py.
 const STYLES = [
@@ -21,10 +23,20 @@ const STYLES = [
   { key: 'star', label: 'Star moment' },
 ];
 const MUSIC = [
-  { key: 'funny', label: 'Funny meme music' },
+  { key: 'funny', label: 'Meme song for the style' },
+  { key: 'track', label: 'Pick a song' },
+  { key: 'upload', label: 'Upload my song' },
   { key: 'mine', label: "My video's sound" },
   { key: 'none', label: "None (I'll add a TikTok sound)" },
 ];
+// Free meme classics by Kevin MacLeod (CC BY 4.0). Names match MUSIC in worker/ideas.py.
+const SONGS = [
+  'Monkeys Spinning Monkeys', 'Sneaky Snitch', 'Fluffing a Duck', 'Scheming Weasel faster', 'Pixel Peeker Polka - faster',
+  'Investigations', 'Local Forecast - Elevator', 'Run Amok', 'Carefree', 'Wallpaper', 'Hitman', 'Spazzmatica Polka',
+  'Hall of the Mountain King', 'Quirky Dog', 'Kool Kats', 'Life of Riley',
+];
+const songUrl = (name) => `https://incompetech.com/music/royalty-free/mp3-royaltyfree/${encodeURIComponent(name)}.mp3`;
+const songLabel = (name) => name.replace(/ - faster$| faster$/, ' (fast)');
 
 const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -41,6 +53,12 @@ const state = {
   health: null, // the worker's /health: version and whether the user's PC is connected
   style: 'random',
   music: 'funny',
+  track: SONGS[0],
+  songFile: null,
+  part: 'auto',
+  seconds: 5,
+  speed: 'normal',
+  setupMode: 'setup', // or 'update': upload the new worker files to the existing Space
 };
 
 function load(key, fallback) {
@@ -159,6 +177,7 @@ function randomKey() {
 }
 
 async function setupWorker() {
+  const updating = state.setupMode === 'update' && Boolean(state.worker);
   const token = $('#token').value.trim();
   const msg = $('#setupNote');
   if (!/^hf_[A-Za-z0-9]{20,}$/.test(token)) {
@@ -179,13 +198,16 @@ async function setupWorker() {
       throw new Error('This key can only read. Make a new one and pick Write (step 2).');
     }
     const user = who.name;
-    const space = `${user}/${SPACE_NAME}`;
+    const space = updating ? state.worker.space : `${user}/${SPACE_NAME}`;
+    if (updating && space.split('/')[0].toLowerCase() !== user.toLowerCase()) {
+      throw new Error(`This key belongs to ${user}, but your worker is ${space}. Use a key from that account.`);
+    }
     step('key', 'done');
 
     step('create', 'active');
-    // Secrets can only be set when a Space is created, so an old worker is replaced.
-    // Finished videos live in the dataset and are kept.
-    const existing = await hf(`/api/spaces/${space}`, token);
+    // Updating only uploads new files, so the worker keeps its secrets, its address and your videos.
+    // A new setup replaces any old worker, because secrets can only be set when a Space is created.
+    const existing = updating ? { ok: false } : await hf(`/api/spaces/${space}`, token);
     if (existing.ok) {
       const del = await hf('/api/repos/delete', token, {
         method: 'DELETE',
@@ -196,7 +218,7 @@ async function setupWorker() {
       await sleep(2000);
     }
     const key = randomKey();
-    const created = await hf('/api/repos/create', token, {
+    const created = updating ? { ok: true } : await hf('/api/repos/create', token, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -213,7 +235,8 @@ async function setupWorker() {
     });
     if (!created.ok) throw new Error(await hfError(created));
 
-    const lines = [{ key: 'header', value: { summary: 'Set up the Animal Antics worker', description: '' } }];
+    const summary = updating ? 'Update the Animal Antics worker' : 'Set up the Animal Antics worker';
+    const lines = [{ key: 'header', value: { summary, description: '' } }];
     for (const name of WORKER_FILES) {
       const res = await fetch(`worker/${name}`, { cache: 'no-store' });
       if (!res.ok) throw new Error(`Could not read worker/${name} (${res.status})`);
@@ -229,17 +252,22 @@ async function setupWorker() {
 
     step('build', 'active');
     $('#token').value = '';
-    const url = await waitForBuild(space);
-    state.worker = { space, url, key };
-    save(KEYS.worker, state.worker);
-    await waitForHealth();
+    if (updating) {
+      await waitForVersion(space);
+    } else {
+      const url = await waitForBuild(space);
+      state.worker = { space, url, key };
+      save(KEYS.worker, state.worker);
+      await waitForHealth();
+    }
     step('build', 'done');
     step('ready', 'done');
-    renderSettings();
+    state.setupMode = 'setup';
     renderWorkerDot(true);
-    note(msg, 'All set. You can make videos now.', 'good');
-    toast('Worker ready');
+    note(msg, updating ? 'Updated. All the new options work now.' : 'All set. You can make videos now.', 'good');
+    toast(updating ? 'Worker updated' : 'Worker ready');
     refreshJobs();
+    if (updating) setTimeout(() => closeDialog($('#settings')), 1500);
     if (state.pending) {
       const pending = state.pending;
       state.pending = null;
@@ -252,6 +280,31 @@ async function setupWorker() {
   } finally {
     $('#setupBtn').disabled = false;
   }
+}
+
+// After an update: waits until the worker answers with the new version.
+async function waitForVersion(space) {
+  const started = Date.now();
+  while (Date.now() - started < 15 * 60 * 1000) {
+    await sleep(8000);
+    const mins = Math.floor((Date.now() - started) / 60000);
+    $('#steps [data-step="build"]').textContent = `Restarting with the new version (${mins} min so far, 2–5 min)`;
+    try {
+      const rt = await (await fetch(`${HF}/api/spaces/${space}/runtime`)).json();
+      if (/ERROR/.test(rt.stage || '')) {
+        throw new Error(`The new version failed to build (${rt.stage}). Open huggingface.co/spaces/${space} to see why.`);
+      }
+      const health = await (await fetch(`${state.worker.url}/health`, { cache: 'no-store' })).json();
+      if (health.version === WORKER_VERSION) {
+        state.health = health;
+        return;
+      }
+    } catch (e) {
+      if (/failed to build/.test(e.message)) throw e;
+      // still restarting
+    }
+  }
+  throw new Error('The update is taking too long. Check your worker page on Hugging Face, then try again.');
 }
 
 // Polls the Space until Docker has built it. Returns its web address.
@@ -326,6 +379,10 @@ async function onMake(e) {
 
 async function submit(what) {
   const msg = $('#note');
+  if (state.music === 'upload' && !state.songFile) {
+    note(msg, 'Choose your song file first (Music, Upload my song), or pick another music option.', 'bad');
+    return;
+  }
   if (!state.worker) {
     state.pending = what;
     openSettings();
@@ -340,8 +397,15 @@ async function submit(what) {
     form.append('clips', String(state.clips));
     form.append('captions', String(state.captions));
     form.append('template', state.style);
-    // A surprise scene has no sound of its own, so it gets funny music instead.
+    // A surprise scene has no sound of its own, so it gets a meme song instead.
     form.append('music', what.kind === 'surprise' && state.music === 'mine' ? 'funny' : state.music);
+    form.append('track', state.track);
+    form.append('song_part', state.part);
+    form.append('seconds', String(state.seconds));
+    form.append('speed', state.speed);
+    form.append('idea', $('#idea').value.trim());
+    form.append('animal', $('#animalOpt').value.trim());
+    if (state.music === 'upload') form.append('song', state.songFile);
     if (what.kind === 'link') form.append('url', what.url);
     if (what.kind === 'surprise') form.append('surprise', 'true');
     if (what.kind === 'file') {
@@ -610,7 +674,8 @@ function renderPlayerTip(job) {
     if (bold) el.textContent = text;
     tip.appendChild(el);
   };
-  if (job.music_used === 'funny') add('Funny music is already in the video (its credit is in the caption). ');
+  if (job.music_used === 'funny') add(`"${songLabel(job.track || '')}" is already in the video (its credit is in the caption). `);
+  else if (job.music_used === 'upload') add('Your song is already in the video. ');
   else if (job.music_used === 'mine') add("Your video's sound is already in it. ");
   else {
     add('Sound idea: ');
@@ -622,8 +687,28 @@ function renderPlayerTip(job) {
   add('.');
 }
 
-function renderPicks() {
-  const fill = (box, items, current, onPick) => {
+const preview = new Audio();
+let previewing = '';
+
+function togglePreview(name) {
+  if (previewing === name) {
+    preview.pause();
+    previewing = '';
+  } else {
+    preview.src = songUrl(name);
+    preview.play().catch(() => toast("Couldn't play that preview"));
+    previewing = name;
+  }
+  renderOptions();
+}
+
+function setSeg(id, value) {
+  document.querySelectorAll(`#${id} button`).forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === String(value))));
+}
+
+// Draws every option on the main screen from state.
+function renderOptions() {
+  const chips = (box, items, current, onPick) => {
     box.innerHTML = '';
     for (const item of items) {
       const b = document.createElement('button');
@@ -634,17 +719,53 @@ function renderPicks() {
       box.appendChild(b);
     }
   };
-  fill($('#styleRow'), STYLES, state.style, (key) => {
+  chips($('#styleRow'), STYLES, state.style, (key) => {
     state.style = key;
     save(KEYS.style, key);
-    renderPicks();
+    renderOptions();
   });
-  fill($('#musicRow'), MUSIC, state.music, (key) => {
+  chips($('#musicRow'), MUSIC, state.music, (key) => {
     state.music = key;
     save(KEYS.music, key);
-    renderPicks();
+    renderOptions();
   });
-  $('#musicNote').hidden = state.music !== 'mine';
+
+  const list = $('#songList');
+  list.hidden = state.music !== 'track';
+  list.innerHTML = '';
+  for (const name of SONGS) {
+    const row = document.createElement('div');
+    row.className = 'song';
+    row.setAttribute('aria-current', String(name === state.track));
+    const play = document.createElement('button');
+    play.type = 'button';
+    play.className = 'play-song';
+    play.setAttribute('aria-label', `${previewing === name ? 'Stop' : 'Play'} ${songLabel(name)}`);
+    play.textContent = previewing === name ? '■' : '▶';
+    play.addEventListener('click', () => togglePreview(name));
+    const pick = document.createElement('button');
+    pick.type = 'button';
+    pick.className = 'pick-song';
+    pick.textContent = songLabel(name);
+    pick.addEventListener('click', () => {
+      state.track = name;
+      save(KEYS.track, name);
+      renderOptions();
+    });
+    row.append(play, pick);
+    list.appendChild(row);
+  }
+
+  $('#songUpload').hidden = state.music !== 'upload';
+  $('#songName').textContent = state.songFile ? state.songFile.name : 'No song chosen yet';
+  $('#partLine').hidden = state.music === 'none';
+  $('#musicHelp').hidden = state.music === 'none';
+  $('#musicNote').hidden = !['mine', 'upload'].includes(state.music);
+  setSeg('partSeg', state.part);
+  setSeg('clipsSeg', state.clips);
+  setSeg('lenSeg', state.seconds);
+  setSeg('speedSeg', state.speed);
+  $('#captionsOpt').checked = state.captions;
 }
 
 function openPlayer(job) {
@@ -698,6 +819,11 @@ async function saveVideo() {
 
 // ---------- Settings ----------
 
+function openUpdate() {
+  state.setupMode = 'update';
+  openSettings();
+}
+
 function openSettings() {
   renderSettings();
   note($('#setupNote'), state.pending ? 'One quick setup first, then your video starts by itself.' : '');
@@ -721,7 +847,9 @@ function renderPc() {
   pcState.textContent = pcOn ? `on · ${h.pc_name || 'PC'}` : 'off or not connected';
   pcState.classList.toggle('on', pcOn);
   $('#pcChip').hidden = !pcOn;
-  $('#updateNote').hidden = !h || h.version === WORKER_VERSION;
+  const outdated = Boolean(state.worker && h && h.version !== WORKER_VERSION);
+  $('#updateNote').hidden = !outdated;
+  $('#updateBanner').hidden = !outdated;
 }
 
 async function getPairCode() {
@@ -740,17 +868,23 @@ async function getPairCode() {
 }
 
 function renderSettings() {
-  const ready = Boolean(state.worker);
+  const updating = state.setupMode === 'update' && Boolean(state.worker);
+  const ready = Boolean(state.worker) && !updating;
   $('#setupPane').hidden = ready;
   $('#optionsPane').hidden = !ready;
+  $('#setupTitle').textContent = updating ? 'Update your worker' : 'One-time setup';
+  $('#setupIntro').textContent = updating
+    ? 'A new version of antics is ready. Paste your Hugging Face Write key (the one you used before works) and your worker updates itself. Your videos are kept.'
+    : 'Your videos are made on your own free Hugging Face worker, so it keeps going when your phone is locked.';
+  $('#setupBtn').textContent = updating ? 'Update my worker' : 'Set up my worker';
+  $('#steps [data-step="create"]').textContent = updating ? 'Uploading the new version' : 'Creating your worker';
+  $('#steps [data-step="build"]').textContent = updating ? 'Restarting with the new version (2–5 min)' : 'Building it (2–5 min, only once)';
   if (ready) {
     const link = $('#workerLink');
     link.href = `${HF}/spaces/${state.worker.space}`;
     link.textContent = state.worker.space;
     $('#workerState').textContent = state.online ? '(running)' : '(asleep or starting)';
   }
-  document.querySelectorAll('#clipsSeg button').forEach((b) => b.setAttribute('aria-pressed', String(Number(b.dataset.clips) === state.clips)));
-  $('#captionsOpt').checked = state.captions;
   renderPc();
 }
 
@@ -758,9 +892,39 @@ function init() {
   state.worker = load(KEYS.worker, null);
   state.clips = load(KEYS.clips, 3);
   state.captions = load(KEYS.captions, true);
-  state.style = STYLES.some((x) => x.key === load(KEYS.style, '')) ? load(KEYS.style, '') : 'random';
-  state.music = MUSIC.some((x) => x.key === load(KEYS.music, '')) ? load(KEYS.music, '') : 'funny';
-  renderPicks();
+  const pickSaved = (key, allowed, fallback) => (allowed.includes(load(key, null)) ? load(key, null) : fallback);
+  state.style = pickSaved(KEYS.style, STYLES.map((x) => x.key), 'random');
+  state.music = pickSaved(KEYS.music, MUSIC.map((x) => x.key), 'funny');
+  state.track = pickSaved(KEYS.track, SONGS, SONGS[0]);
+  state.part = pickSaved(KEYS.part, ['auto', 'start', 'drop'], 'auto');
+  state.seconds = pickSaved(KEYS.seconds, [3, 5], 5);
+  state.speed = pickSaved(KEYS.speed, ['slow', 'normal', 'fast'], 'normal');
+  $('#idea').value = load(KEYS.idea, '');
+  $('#animalOpt').value = load(KEYS.animal, '');
+  renderOptions();
+
+  const onSeg = (id, apply) => document.querySelectorAll(`#${id} button`).forEach((b) => b.addEventListener('click', () => {
+    apply(b.dataset.v);
+    renderOptions();
+  }));
+  onSeg('partSeg', (v) => { state.part = v; save(KEYS.part, v); });
+  onSeg('clipsSeg', (v) => { state.clips = Number(v); save(KEYS.clips, state.clips); });
+  onSeg('lenSeg', (v) => { state.seconds = Number(v); save(KEYS.seconds, state.seconds); });
+  onSeg('speedSeg', (v) => { state.speed = v; save(KEYS.speed, v); });
+  $('#captionsOpt').addEventListener('change', (e) => {
+    state.captions = e.target.checked;
+    save(KEYS.captions, state.captions);
+  });
+  $('#idea').addEventListener('input', (e) => save(KEYS.idea, e.target.value));
+  $('#animalOpt').addEventListener('input', (e) => save(KEYS.animal, e.target.value));
+  $('#songFile').addEventListener('change', (e) => {
+    state.songFile = e.target.files[0] || null;
+    renderOptions();
+  });
+  preview.addEventListener('ended', () => {
+    previewing = '';
+    renderOptions();
+  });
 
   $('#makeForm').addEventListener('submit', onMake);
   $('#pasteBtn').addEventListener('click', async () => {
@@ -779,6 +943,12 @@ function init() {
   $('#closeSettings').addEventListener('click', () => closeDialog($('#settings')));
   $('#setupBtn').addEventListener('click', setupWorker);
   $('#pairBtn').addEventListener('click', getPairCode);
+  $('#updateBtn').addEventListener('click', openUpdate);
+  $('#updateBtnMain').addEventListener('click', openUpdate);
+  $('#settings').addEventListener('close', () => {
+    state.setupMode = 'setup';
+    $('#steps').hidden = true;
+  });
   $('#redoSetup').addEventListener('click', () => {
     $('#setupPane').hidden = false;
     $('#optionsPane').hidden = true;
@@ -791,15 +961,6 @@ function init() {
     renderJobs();
     renderWorkerDot(false);
     renderSettings();
-  });
-  document.querySelectorAll('#clipsSeg button').forEach((b) => b.addEventListener('click', () => {
-    state.clips = Number(b.dataset.clips);
-    save(KEYS.clips, state.clips);
-    renderSettings();
-  }));
-  $('#captionsOpt').addEventListener('change', (e) => {
-    state.captions = e.target.checked;
-    save(KEYS.captions, state.captions);
   });
 
   $('#saveBtn').addEventListener('click', saveVideo);

@@ -15,6 +15,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -28,9 +29,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from PIL import Image, ImageDraw, ImageFont
 
+import beats
 import ideas
 
-VERSION = '3'
+VERSION = '4'
 HF_TOKEN = os.environ.get('HF_TOKEN') or None
 ANTICS_KEY = os.environ.get('ANTICS_KEY', '')
 DATASET = os.environ.get('ANTICS_DATASET', '')
@@ -39,6 +41,7 @@ FONT = os.environ.get('ANTICS_FONT', '/usr/share/fonts/truetype/dejavu/DejaVuSan
 
 OUT_W, OUT_H, FPS = 720, 1280, 30
 MAX_CLIPS = 3
+SPEEDS = {'slow': 0.8, 'normal': 1.0, 'fast': 1.25}
 
 # Free Wan image-to-video Spaces, tried in order. They all spend the same daily free GPU time.
 ENGINES = [
@@ -109,7 +112,7 @@ def job_dir(job_id):
 
 def public(job):
     keys = ['id', 'created', 'status', 'stage', 'progress', 'error', 'label', 'kind', 'caption', 'sound',
-            'made', 'wanted', 'retry_at', 'seconds_long', 'template', 'music', 'track', 'music_used']
+            'made', 'wanted', 'retry_at', 'seconds_long', 'template', 'music', 'track', 'music_used', 'speed', 'idea']
     view = {k: job.get(k) for k in keys}
     view['has_video'] = job.get('status') == 'done'
     view['has_thumb'] = bool(job.get('thumb'))
@@ -234,6 +237,48 @@ def crop_bars(img):
     return img
 
 
+X_STATUS = re.compile(r'(?:twitter\.com|x\.com)/[^/?#]+/status/(\d+)')
+VIDEO_FILE = re.compile(r'\.(mp4|mov|m4v|webm|mkv)(\?|$)', re.I)
+
+
+def fetch_file(url, path):
+    with requests.get(url, headers=BROWSER, timeout=120, stream=True) as res:
+        res.raise_for_status()
+        with open(path, 'wb') as f:
+            for chunk in res.iter_content(1 << 20):
+                f.write(chunk)
+    return path
+
+
+def fallback_video(job, folder):
+    """When yt-dlp is blocked: the real video file via a public route, if the site has one.
+    Returns (path, label, text) or None."""
+    url = job['url']
+    try:
+        x = X_STATUS.search(url)
+        if x:  # X / Twitter: the public fxtwitter mirror lists the video files
+            tweet = get_json(f'https://api.fxtwitter.com/status/{x[1]}').get('tweet') or {}
+            videos = (tweet.get('media') or {}).get('videos') or []
+            if videos:
+                who = (tweet.get('author') or {}).get('screen_name', '')
+                return (fetch_file(videos[0]['url'], folder / 'source.mp4'), f'X · @{who}'.strip(' ·@'),
+                        tweet.get('text', ''))
+        if 'instagram.com' in url:  # Instagram: the public embed page often carries the video file
+            code = re.search(r'instagram\.com/(?:[^/]+/)?(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)', url)
+            if code:
+                page = requests.get(f'https://www.instagram.com/p/{code[1]}/embed/captioned/',
+                                    headers=BROWSER, timeout=30).text
+                found = re.search(r'"video_url"\s*:\s*"([^"]+)"', page)
+                if found:
+                    video = json.loads(f'"{found[1]}"')  # undo JSON escapes like \u0026
+                    return fetch_file(video, folder / 'source.mp4'), 'Instagram', ''
+        if VIDEO_FILE.search(url):  # a direct link to a video file
+            return fetch_file(url, folder / 'source.mp4'), 'Video file', url.rsplit('/', 1)[-1]
+    except (requests.RequestException, ValueError, KeyError, OSError) as e:
+        log.warning('%s: fallback download failed: %s', job['id'], e)
+    return None
+
+
 def link_pictures(job, folder, count):
     """When a site blocks the download, use the pictures it shows publicly: preview frames or the cover."""
     url = job['url']
@@ -255,6 +300,18 @@ def link_pictures(job, folder, count):
                 page = requests.get(url, headers=BROWSER, timeout=20).text
             except requests.RequestException:
                 page = ''
+            if 'instagram.com' in url and 'og:image' not in page:
+                code = re.search(r'instagram\.com/(?:[^/]+/)?(?:p|reel|reels|tv)/([A-Za-z0-9_-]+)', url)
+                if code:  # the embed page shows the cover picture without a login
+                    try:
+                        embed = requests.get(f'https://www.instagram.com/p/{code[1]}/embed/captioned/',
+                                             headers=BROWSER, timeout=20).text
+                    except requests.RequestException:
+                        embed = ''
+                    found = (re.search(r'class="EmbeddedMediaImage"[^>]*src="([^"]+)"', embed)
+                             or re.search(r'"display_url"\s*:\s*"([^"]+)"', embed))
+                    if found:
+                        urls.append(json.loads(f'"{found[1]}"').replace('&amp;', '&'))
             for prop in ('og:image', 'twitter:image'):
                 found = re.search(rf'<meta[^>]+(?:property|name)=["\']{prop}["\'][^>]+content=["\']([^"\']+)', page)
                 if found:
@@ -471,9 +528,10 @@ def caption_png(text, path):
     img.save(path)
 
 
-def join_clips(clips, captions, out, audio=None):
-    """Each clip fills a 720x1280 frame (cropped if close to vertical, else on a blurred copy).
-    audio is a music or sound file laid under the whole video (looped, faded out), else silence."""
+def join_clips(clips, captions, out, lengths, speed=1.0, audio=None, audio_start=0.0):
+    """Each clip fills a 720x1280 frame (cropped if close to vertical, else on a blurred copy), plays at
+    `speed` and is cut to lengths[i] seconds. audio is laid under the whole video from audio_start
+    (looped, faded out), else silence."""
     cmd = ['ffmpeg', '-v', 'error', '-y']
     parts = []
     n = len(clips)
@@ -482,13 +540,12 @@ def join_clips(clips, captions, out, audio=None):
     for cap in captions:
         cmd += ['-i', str(cap)]
     if audio:
-        cmd += ['-stream_loop', '-1', '-i', str(audio)]
+        cmd += ['-stream_loop', '-1', '-ss', f'{audio_start:.3f}', '-i', str(audio)]
     else:
         cmd += ['-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo']
-    total = 0.0
+    total = sum(lengths)
     for i, clip in enumerate(clips):
-        w, h, seconds = probe(clip)
-        total += seconds
+        w, h, _ = probe(clip)
         ratio = (w / h) / (OUT_W / OUT_H)
         if 0.85 < ratio < 1.18:
             parts.append(f'[{i}:v]scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=increase,crop={OUT_W}:{OUT_H},setsar=1[b{i}]')
@@ -498,7 +555,8 @@ def join_clips(clips, captions, out, audio=None):
                          f'scale={OUT_W}:{OUT_H},eq=brightness=-0.08[bg{i}];'
                          f'[f{i}]scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=decrease[fg{i}];'
                          f'[bg{i}][fg{i}]overlay=(W-w)/2:(H-h)/2,setsar=1[b{i}]')
-        parts.append(f'[b{i}][{n + i}:v]overlay=0:0,fps={FPS},format=yuv420p[v{i}]')
+        parts.append(f'[b{i}][{n + i}:v]overlay=0:0,setpts=PTS/{speed},trim=duration={lengths[i]:.3f},'
+                     f'setpts=PTS-STARTPTS,fps={FPS},format=yuv420p[v{i}]')
     parts.append(''.join(f'[v{i}]' for i in range(n)) + f'concat=n={n}:v=1:a=0[out]')
     parts.append(f'[{2 * n}:a]aresample=44100,afade=t=in:d=0.1,afade=t=out:st={max(0.0, total - 0.8):.2f}:d=0.8[aout]')
     cmd += ['-filter_complex', ';'.join(parts), '-map', '[out]', '-map', '[aout]', '-t', f'{total:.2f}',
@@ -517,14 +575,22 @@ def process(job):
         if job['kind'] == 'link':
             update(job, stage='Downloading the video…', progress=0.05)
             try:
-                source, label, text = download_link(job, folder)
+                try:
+                    source, label, text = download_link(job, folder)
+                except Exception as e:
+                    # Some sites block servers; a few have another public route to the video file.
+                    found = fallback_video(job, folder)
+                    if not found:
+                        raise
+                    log.info('%s: yt-dlp failed (%s), got the video another way', job['id'], e)
+                    source, label, text = found
                 update(job, stage='Finding the best moments…', progress=0.12)
                 inputs = pick_frames(source, wanted, folder)
                 if job.get('music') == 'mine' and extract_sound(source, folder / 'sound.m4a'):
                     update(job, has_sound=True)
                 source.unlink(missing_ok=True)
             except Exception as e:
-                # Some sites (YouTube especially) block servers. Their public pictures still work.
+                # Still blocked (YouTube especially): the pictures the site shows publicly still work.
                 log.warning('%s: download failed (%s), trying the public pictures', job['id'], e)
                 inputs, label, text = link_pictures(job, folder, wanted)
                 if not inputs:
@@ -532,7 +598,7 @@ def process(job):
             update(job, label=job.get('label') or label, animal=job.get('animal') or ideas.guess_animal(text))
         else:  # surprise
             update(job, stage='Painting a random scene…', progress=0.08)
-            scene = ideas.random_scene()
+            scene = ideas.described_scene(job['idea']) if job.get('idea') else ideas.random_scene()
             surprise_picture(scene['prompt'], folder / 'input_0.jpg')
             update(job, animal=scene['animal'], label=f"Surprise: {scene['subject']}"[:80], scene=scene)
             inputs = ['input_0.jpg']
@@ -546,8 +612,11 @@ def process(job):
             picked = ideas.ideas_for_scene(job['scene']['scene'], animal, wanted, template)
         else:
             picked = ideas.ideas_for_picture(animal, wanted, template)
+        if job.get('idea'):
+            style = job['scene']['scene']['style'] if job.get('scene') else None
+            picked = ideas.custom_ideas(job['idea'], animal, wanted, template, style)
         caption = f"{picked[0]['caption']} {ideas.HASHTAGS}"
-        update(job, ideas=picked, caption=caption, track=ideas.pick_music(template),
+        update(job, ideas=picked, caption=caption, track=job.get('track') or ideas.pick_music(template),
                sound=random.choice(ideas.SOUND_IDEAS))
 
     clips = []
@@ -575,19 +644,32 @@ def process(job):
         path = folder / f'caption_{i}.png'
         caption_png(job['ideas'][i]['caption'] if job['captions'] else '', path)
         captions.append(path)
-    audio, credit = None, ''
-    if job.get('music') == 'mine' and job.get('has_sound'):
-        audio = local_file(job, 'sound.m4a')
-    elif job.get('music', 'funny') != 'none':  # funny music, or "mine" when the video had no sound
+    speed = SPEEDS.get(job.get('speed'), 1.0)
+    lengths = [probe(c)[2] / speed for c in clips]
+    music, audio, credit, used, natural = job.get('music', 'funny'), None, '', 'none', 'start'
+    if music == 'mine' and job.get('has_sound'):
+        audio, used = local_file(job, 'sound.m4a'), 'mine'
+    elif music == 'upload' and job.get('has_song'):
+        audio, used, natural = local_file(job, 'song.m4a'), 'upload', 'drop'
+    elif music != 'none':  # a meme track (chosen or matched to the style), or a missing sound/song
         try:
-            audio = music_file(job['track'])
+            audio, used = music_file(job['track']), 'funny'
             credit = ideas.MUSIC_CREDIT.format(track=job['track'])
         except requests.RequestException as e:
             log.warning('%s: no music this time (%s)', job['id'], e)
-    join_clips(clips, captions, folder / 'final.mp4', audio)
+    start = 0.0
+    if audio:
+        part = job.get('song_part') if job.get('song_part') in ('start', 'drop') else natural
+        try:
+            info = beats.analyse(audio)
+            start = beats.pick_start(info, sum(lengths), part)
+            lengths = beats.snap_cuts(info, start, lengths)  # cuts land on the beat
+        except Exception as e:  # the beat finder must never cost a video
+            log.warning('%s: beat finder skipped (%s)', job['id'], e)
+    join_clips(clips, captions, folder / 'final.mp4', lengths, speed, audio, start)
     if credit and credit not in job['caption']:
         update(job, caption=f"{job['caption']}\n{credit}")
-    update(job, music_used='mine' if job.get('music') == 'mine' and job.get('has_sound') else ('funny' if credit else 'none'))
+    update(job, music_used=used, music_start=round(start, 2))
     run(['ffmpeg', '-v', 'error', '-y', '-ss', '1', '-i', str(folder / 'final.mp4'), '-frames:v', '1',
          '-vf', 'scale=360:-2', str(folder / 'thumb.jpg')])
     _, _, seconds_long = probe(folder / 'final.mp4')
@@ -623,7 +705,8 @@ def friendly(e):
     msg = str(e)
     if 'Unsupported URL' in msg or 'is not a valid URL' in msg:
         return "This link isn't supported. Try a TikTok, YouTube, Instagram, X or Facebook video link."
-    if re.search(r'sign in to confirm|not a bot|login required|private video|cookies', msg, re.I):
+    if re.search(r'sign in to confirm|not a bot|login required|private video|cookies|empty media response|'
+                 r'rate-limit|not available|forbidden|\b403\b', msg, re.I):
         return 'That site blocked the download (it wants a login). Save the video to your phone and upload it instead.'
     if 'max_filesize' in msg or 'larger than max-filesize' in msg:
         return 'That video is too big. Try a shorter clip.'
@@ -648,9 +731,19 @@ def scheduler_loop():
 
 # ---------- API ----------
 
+def update_downloader():
+    """Sites change often, so get the newest yt-dlp each time the worker starts."""
+    try:
+        subprocess.run([sys.executable, '-m', 'pip', 'install', '--user', '-q', '-U', 'yt-dlp'],
+                       check=True, capture_output=True, timeout=300)
+    except (subprocess.SubprocessError, OSError) as e:
+        log.warning('could not update yt-dlp: %s', e)
+
+
 @asynccontextmanager
 async def lifespan(_app):
     DATA.mkdir(parents=True, exist_ok=True)
+    threading.Thread(target=update_downloader, daemon=True).start()
     load_jobs()
     threading.Thread(target=worker_loop, daemon=True).start()
     threading.Thread(target=scheduler_loop, daemon=True).start()
@@ -696,8 +789,13 @@ def create_job(
     seconds: float = Form(5),
     template: str = Form('random'),
     music: str = Form('funny'),
+    track: str = Form(''),
+    song_part: str = Form('auto'),
+    speed: str = Form('normal'),
+    idea: str = Form(''),
     images: list[UploadFile] = File(None),
     source: UploadFile = File(None),
+    song: UploadFile = File(None),
 ):
     check(x_antics_key)
     wanted = max(1, min(MAX_CLIPS, clips))
@@ -707,8 +805,20 @@ def create_job(
         'wanted': wanted, 'made': 0, 'captions': captions, 'seconds': max(2, min(5, seconds)),
         'animal': re.sub(r'[^a-zA-Z ]', '', animal).strip().lower()[:30],
         'template': template if template in ideas.TEMPLATES else 'random',
-        'music': music if music in ('funny', 'mine', 'none') else 'funny',
+        'music': music if music in ('funny', 'track', 'upload', 'mine', 'none') else 'funny',
+        'track': track if music == 'track' and track in ideas.MUSIC else '',
+        'song_part': song_part if song_part in ('auto', 'start', 'drop') else 'auto',
+        'speed': speed if speed in SPEEDS else 'normal',
+        'idea': re.sub(r'\s+', ' ', idea).strip()[:160],
     }
+    if song and job['music'] == 'upload':
+        folder = job_dir(job['id'])
+        original = folder / 'song_original'
+        with open(original, 'wb') as f:
+            shutil.copyfileobj(song.file, f)
+        if extract_sound(original, folder / 'song.m4a'):
+            job['has_song'] = True
+        original.unlink(missing_ok=True)
     url = url.strip()
     if images:
         folder = job_dir(job['id'])
@@ -737,7 +847,8 @@ def create_job(
         raise HTTPException(400, 'Paste a video link, upload a video, or tap Surprise me')
     with jobs_lock:
         jobs[job['id']] = job
-    save(job, job.get('inputs', []) + (['sound.m4a'] if job.get('has_sound') else []))
+    save(job, job.get('inputs', []) + (['sound.m4a'] if job.get('has_sound') else [])
+         + (['song.m4a'] if job.get('has_song') else []))
     work_queue.put(job['id'])
     return public(job)
 

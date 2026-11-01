@@ -309,9 +309,19 @@ MUSIC = {
     'Monkeys Spinning Monkeys': 'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Monkeys%20Spinning%20Monkeys.mp3',
     'Sneaky Snitch': 'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Sneaky%20Snitch.mp3',
     'Fluffing a Duck': 'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Fluffing%20a%20Duck.mp3',
+    'Scheming Weasel faster': 'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Scheming%20Weasel%20faster.mp3',
+    'Pixel Peeker Polka - faster': 'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Pixel%20Peeker%20Polka%20-%20faster.mp3',
     'Investigations': 'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Investigations.mp3',
-    'Run Amok': 'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Run%20Amok.mp3',
     'Local Forecast - Elevator': 'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Local%20Forecast%20-%20Elevator.mp3',
+    'Run Amok': 'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Run%20Amok.mp3',
+    'Carefree': 'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Carefree.mp3',
+    'Wallpaper': 'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Wallpaper.mp3',
+    'Hitman': 'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Hitman.mp3',
+    'Spazzmatica Polka': 'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Spazzmatica%20Polka.mp3',
+    'Hall of the Mountain King': 'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Hall%20of%20the%20Mountain%20King.mp3',
+    'Quirky Dog': 'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Quirky%20Dog.mp3',
+    'Kool Kats': 'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Kool%20Kats.mp3',
+    'Life of Riley': 'https://incompetech.com/music/royalty-free/mp3-royaltyfree/Life%20of%20Riley.mp3',
 }
 MUSIC_CREDIT = 'Music: "{track}" by Kevin MacLeod (incompetech.com), CC BY 4.0'
 
@@ -324,21 +334,21 @@ FAIL_TWISTS = [
 # Styles the user can pick in the app: the moves each one uses and the tracks that suit it.
 TEMPLATES = {
     'random': {'label': 'Random', 'moves': [], 'music': list(MUSIC)},
-    'dance': {'label': 'Dance', 'music': ['Monkeys Spinning Monkeys', 'Fluffing a Duck'],
+    'dance': {'label': 'Dance', 'music': ['Monkeys Spinning Monkeys', 'Fluffing a Duck', 'Pixel Peeker Polka - faster', 'Kool Kats'],
               'moves': ['Hip-hop dancer', 'Moonwalk', 'Floss dance', 'Twerk', 'Ballet spin', 'Macarena', 'Shy dance',
                         'Chicken dance', 'Cha cha slide', 'Dab']},
-    'walk': {'label': 'Walk like a human', 'music': ['Sneaky Snitch', 'Investigations'],
+    'walk': {'label': 'Walk like a human', 'music': ['Sneaky Snitch', 'Investigations', 'Hitman', 'Quirky Dog'],
              'moves': ['Walks like a boss', 'Runway model', 'Sneaky burglar', 'Morning jog', 'Shrug and leave',
                        'Gasps and runs', 'Taxi!', 'Soldier march']},
-    'fight': {'label': 'Fight', 'music': ['Run Amok', 'Monkeys Spinning Monkeys'],
+    'fight': {'label': 'Fight', 'music': ['Run Amok', 'Scheming Weasel faster', 'Hall of the Mountain King'],
               'moves': ['Boxer', 'Karate master', 'Gym workout', 'Jumping jacks', 'Tantrum', 'Backflip']},
-    'fail': {'label': 'Fail', 'music': ['Run Amok', 'Fluffing a Duck'], 'twists': FAIL_TWISTS,
+    'fail': {'label': 'Fail', 'music': ['Run Amok', 'Fluffing a Duck', 'Spazzmatica Polka'], 'twists': FAIL_TWISTS,
              'moves': ['Slip and fall', 'Walks like a boss', 'Moonwalk', 'Ballet spin', 'Backflip', 'Runway model',
                        'Morning jog']},
-    'sassy': {'label': 'Sassy', 'music': ['Local Forecast - Elevator', 'Sneaky Snitch'],
+    'sassy': {'label': 'Sassy', 'music': ['Local Forecast - Elevator', 'Sneaky Snitch', 'Wallpaper'],
               'moves': ['Judging you', 'Slow clap', 'Impatient', 'Laughing at you', 'Thinker', 'Phone call',
                         'Coffee break', 'Reads the news', 'Gentleman bow']},
-    'star': {'label': 'Star moment', 'music': ['Monkeys Spinning Monkeys', 'Fluffing a Duck'],
+    'star': {'label': 'Star moment', 'music': ['Monkeys Spinning Monkeys', 'Carefree', 'Life of Riley'],
              'moves': ['Goal celebration', 'Air guitar', 'Sings into a mic', 'Orchestra conductor', 'Fist pump',
                        'High five', 'Yoga', 'Tai chi']},
 }
@@ -438,6 +448,25 @@ def ideas_for_scene(scene, animal, count, template='random'):
     return picked
 
 
+def custom_ideas(text, animal, count, template='random', style=None):
+    """The user's own description for every clip, each with its own caption and (after the first) ending."""
+    return [{'title': 'Your idea', 'action': text.strip().rstrip('.'), 'custom': True,
+             'caption': _fill(random.choice(GENERIC_CAPTIONS), animal),
+             'twist': pick_twist(template) if i else '', 'style': style} for i in range(count)]
+
+
+def described_scene(text):
+    """A Surprise picture painted from the user's own description."""
+    animal = guess_animal(text)
+    if animal == 'animal':
+        animal = random.choice(SURPRISE_ANIMALS)
+        text = f'a {animal}: {text}'
+    prompt = (f"Photorealistic candid amateur smartphone photo, vertical, natural lighting. {text}. "
+              'Realistic fur, real animal anatomy and face, believable everyday footage, no text, no watermark.')
+    scene = {'subject': text, 'style': 'phone'}
+    return {'scene': scene, 'animal': animal, 'style': STYLES['phone']['title'], 'subject': text, 'prompt': prompt}
+
+
 def random_scene():
     """A random animal in a random place, plus the prompt for its starting picture."""
     scene = random.choice(SCENES)
@@ -454,5 +483,15 @@ def video_prompt(idea, animal):
     """The text sent to the video model."""
     look = STYLES[idea['style']]['video'] if idea.get('style') else 'Realistic video, same camera angle and same place as the picture'
     twist = ' ' + idea['twist'] if idea.get('twist') else ''
-    return (f"{look}. The {animal} {idea['action']}.{twist} Natural, physically believable movement, "
+    action = idea['action']
+    if idea.get('custom'):
+        # The user's own words: keep them as a sentence, adding the animal only if they left it out.
+        names = ANIMAL_WORDS.get(animal, []) + [animal]
+        has_subject = re.match(r'(the|a|an|my|this|that|it|he|she|they|two|three)\b', action, re.I) or \
+            any(re.search(rf'\b{re.escape(n)}\b', action, re.I) for n in names)
+        sentence = action if has_subject else f'The {animal} {action}'
+        sentence = sentence[0].upper() + sentence[1:]
+    else:
+        sentence = f'The {animal} {action}'
+    return (f"{look}. {sentence}.{twist} Natural, physically believable movement, "
             f'the {animal} keeps exactly the same look, fur and face.')

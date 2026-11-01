@@ -709,37 +709,65 @@ dialog::backdrop {
   padding: 4px 16px;
 }
 
-/* Style and music choices */
-.picks {
-  display: grid;
-  gap: 10px;
-  margin-bottom: 16px;
+/* Option blocks: everything visible, nothing hidden off-screen */
+.block {
+  background: var(--card);
+  border: var(--line);
+  border-radius: var(--round);
+  box-shadow: var(--pop);
+  padding: 14px;
+  margin-bottom: 18px;
 }
 
-.pick {
-  display: grid;
-  gap: 6px;
+.block-title {
+  font-size: 1.05rem;
+  margin: 0 0 10px;
+  letter-spacing: -0.01em;
 }
 
-.pick-label {
-  font-weight: 800;
-  font-size: 0.9rem;
+.block .field,
+.block .file-chip {
+  box-shadow: none;
 }
 
-.pick-row {
+.block .alt {
+  margin: 12px 0 0;
+  flex-wrap: wrap;
+}
+
+.block .fine {
+  margin: 8px 0 0;
+}
+
+.tag-opt {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--soft);
+  border: 1.5px solid var(--soft);
+  border-radius: 99px;
+  padding: 1px 8px;
+  vertical-align: middle;
+}
+
+.idea {
+  width: 100%;
+  border: var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 16px;
+  resize: vertical;
+  background: var(--paper);
+}
+
+.chips-wrap {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
-  overflow-x: auto;
-  padding: 2px 4px 6px 2px;
-  scrollbar-width: none;
 }
 
-.pick-row::-webkit-scrollbar {
-  display: none;
-}
-
-.pick-row button {
-  flex: 0 0 auto;
+.chips-wrap button,
+.song button.pick-song {
   border: 2px solid var(--ink);
   border-radius: 99px;
   background: var(--card);
@@ -749,11 +777,141 @@ dialog::backdrop {
   cursor: pointer;
 }
 
-.pick-row button[aria-pressed="true"] {
+.chips-wrap button[aria-pressed="true"],
+.song[aria-current="true"] button.pick-song {
   background: var(--lime);
   box-shadow: 2px 2px 0 var(--ink);
 }
 
-.picks .fine {
+.song-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.song {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.song button.pick-song {
+  flex: 1;
+  text-align: left;
+  border-radius: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.song .play-song {
+  flex: 0 0 36px;
+  height: 36px;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background: var(--sky);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+.song-upload {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.song-upload label {
+  position: relative;
+}
+
+.song-upload input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.song-upload .fine {
   margin: 0;
+}
+
+.opt-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 10px 0;
+  border-bottom: 2px dashed rgba(22, 19, 16, 0.15);
+  font-weight: 700;
+}
+
+.opt-line:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.opt-line input[type="checkbox"] {
+  width: 24px;
+  height: 24px;
+  accent-color: var(--tomato);
+}
+
+.small-input {
+  width: 150px;
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 16px;
+}
+
+/* Two columns on a computer: options on the left, your videos on the right */
+@media (min-width: 960px) {
+  .bar,
+  main.layout {
+    max-width: 1180px;
+  }
+
+  main.layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+    gap: 36px;
+    align-items: start;
+  }
+
+  main.layout .list {
+    margin-top: 14px;
+    position: sticky;
+    top: 16px;
+  }
+}
+
+/* "New version ready" banner */
+.banner-wrap {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 0 18px;
+}
+
+.banner {
+  background: var(--sky);
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+@media (min-width: 960px) {
+  .banner-wrap {
+    max-width: 1180px;
+  }
 }

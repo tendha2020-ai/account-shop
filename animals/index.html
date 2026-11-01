@@ -23,35 +23,105 @@
     </button>
   </header>
 
-  <main>
+  <div class="banner-wrap">
+    <p id="updateBanner" class="note banner" hidden>
+      A new version of antics is ready, with more options.
+      <button type="button" id="updateBtnMain" class="plain">Update my worker</button>
+    </p>
+  </div>
+
+  <main class="layout">
     <form id="makeForm" class="maker" autocomplete="off">
-      <div class="field" id="linkField">
-        <input type="url" id="link" inputmode="url" placeholder="Paste a TikTok or YouTube link" aria-label="Video link">
-        <button type="button" id="pasteBtn" class="mini">Paste</button>
-      </div>
-      <div class="file-chip" id="fileChip" hidden>
-        <span id="fileName"></span>
-        <button type="button" id="clearFile" class="mini" aria-label="Remove file">✕</button>
-      </div>
-      <div class="alt">
-        <label class="link-btn">
-          <input type="file" id="file" accept="video/*,image/*">
-          upload a video
-        </label>
-        <span aria-hidden="true">·</span>
-        <button type="button" id="surpriseBtn" class="link-btn">surprise me</button>
-      </div>
-      <div class="picks">
-        <div class="pick">
-          <span class="pick-label">Style</span>
-          <div class="pick-row" id="styleRow"></div>
+      <section class="block">
+        <h2 class="block-title">Your video</h2>
+        <div class="field" id="linkField">
+          <input type="url" id="link" inputmode="url" placeholder="Paste any link: TikTok, Instagram, YouTube…" aria-label="Video link">
+          <button type="button" id="pasteBtn" class="mini">Paste</button>
         </div>
-        <div class="pick">
-          <span class="pick-label">Music</span>
-          <div class="pick-row" id="musicRow"></div>
+        <div class="file-chip" id="fileChip" hidden>
+          <span id="fileName"></span>
+          <button type="button" id="clearFile" class="mini" aria-label="Remove file">✕</button>
         </div>
+        <div class="alt">
+          <label class="link-btn">
+            <input type="file" id="file" accept="video/*,image/*">
+            upload a video
+          </label>
+          <span aria-hidden="true">·</span>
+          <button type="button" id="surpriseBtn" class="link-btn">surprise me (no video)</button>
+        </div>
+      </section>
+
+      <section class="block">
+        <h2 class="block-title">Describe your video <span class="tag-opt">optional</span></h2>
+        <textarea id="idea" class="idea" rows="3" maxlength="160"
+                  placeholder="e.g. The cat plays the drums like a rock star, then falls off the chair"></textarea>
+        <p class="fine">Type what you want to see and every clip follows it. Leave it empty and antics picks funny ideas from the style.</p>
+      </section>
+
+      <section class="block">
+        <h2 class="block-title">Style</h2>
+        <div class="chips-wrap" id="styleRow"></div>
+      </section>
+
+      <section class="block">
+        <h2 class="block-title">Music</h2>
+        <div class="chips-wrap" id="musicRow"></div>
+        <div id="songList" class="song-list" hidden></div>
+        <div id="songUpload" class="song-upload" hidden>
+          <label class="plain">
+            <input type="file" id="songFile" accept="audio/*,.mp3,.m4a,.wav,.aac,.ogg">
+            Choose a song file
+          </label>
+          <span id="songName" class="fine">No song chosen yet</span>
+        </div>
+        <div class="opt-line" id="partLine">
+          <span>Song part</span>
+          <div class="seg" id="partSeg">
+            <button type="button" data-v="auto">Auto</button>
+            <button type="button" data-v="start">Start</button>
+            <button type="button" data-v="drop">The drop</button>
+          </div>
+        </div>
+        <p class="fine" id="musicHelp">antics finds the right moment in the song and cuts the clips on the beat.</p>
         <p id="musicNote" class="fine" hidden>TikTok may mute songs it doesn't have the rights to. Its own sounds are the safest.</p>
-      </div>
+      </section>
+
+      <section class="block">
+        <h2 class="block-title">More options</h2>
+        <div class="opt-line">
+          <span>Clips</span>
+          <div class="seg" id="clipsSeg">
+            <button type="button" data-v="1">1</button>
+            <button type="button" data-v="2">2</button>
+            <button type="button" data-v="3">3</button>
+          </div>
+        </div>
+        <div class="opt-line">
+          <span>Clip length</span>
+          <div class="seg" id="lenSeg">
+            <button type="button" data-v="3">3 sec</button>
+            <button type="button" data-v="5">5 sec</button>
+          </div>
+        </div>
+        <div class="opt-line">
+          <span>Speed</span>
+          <div class="seg" id="speedSeg">
+            <button type="button" data-v="slow">Slow-mo</button>
+            <button type="button" data-v="normal">Normal</button>
+            <button type="button" data-v="fast">Fast</button>
+          </div>
+        </div>
+        <label class="opt-line">
+          <span>Text on video</span>
+          <input type="checkbox" id="captionsOpt" checked>
+        </label>
+        <label class="opt-line">
+          <span>Animal <span class="tag-opt">optional</span></span>
+          <input type="text" id="animalOpt" class="small-input" maxlength="30" placeholder="auto, e.g. cat">
+        </label>
+      </section>
+
       <button type="submit" id="makeBtn" class="go">Make it</button>
       <p id="note" class="note" hidden></p>
     </form>
@@ -60,7 +130,7 @@
       <h2>Your videos <span id="pcChip" class="pc-chip" hidden>made on your PC</span></h2>
       <p id="wakeNote" class="wake" hidden>Waking up your worker…</p>
       <div id="jobs"></div>
-      <p id="emptyNote" class="empty">Nothing yet. Paste a link and hit <b>Make it</b>. You can close the app, it keeps working.</p>
+      <p id="emptyNote" class="empty">Nothing yet. Paste a link or upload a video and hit <b>Make it</b>. You can close the app, it keeps working.</p>
     </section>
   </main>
 
@@ -84,8 +154,8 @@
   <dialog id="settings" class="sheet">
     <div class="sheet-body">
       <div id="setupPane">
-        <h2>One-time setup</h2>
-        <p>Your videos are made on your own free Hugging Face worker, so it keeps going when your phone is locked.</p>
+        <h2 id="setupTitle">One-time setup</h2>
+        <p id="setupIntro">Your videos are made on your own free Hugging Face worker, so it keeps going when your phone is locked.</p>
         <ol class="how">
           <li>Open <a href="https://huggingface.co/settings/tokens/new?tokenType=write" target="_blank" rel="noopener">this page</a> (sign in if asked).</li>
           <li>Pick <b>Write</b>, type any name, tap <b>Create token</b>, copy it.</li>
@@ -106,20 +176,8 @@
       <div id="optionsPane" hidden>
         <h2>Settings</h2>
         <p class="worker-line">Worker: <a id="workerLink" target="_blank" rel="noopener"></a> <span id="workerState"></span></p>
-        <div class="opt">
-          <span>Clips per video</span>
-          <div class="seg" id="clipsSeg">
-            <button type="button" data-clips="1">1</button>
-            <button type="button" data-clips="2">2</button>
-            <button type="button" data-clips="3">3</button>
-          </div>
-        </div>
-        <label class="opt">
-          <span>Text on video</span>
-          <input type="checkbox" id="captionsOpt" checked>
-        </label>
         <p class="fine">Free Hugging Face time makes about 3–5 clips a day. When it runs out, unfinished videos wait and finish by themselves.</p>
-        <p id="updateNote" class="note bad" hidden>Your worker is out of date. Tap <b>Set up again</b> below (you'll need your Hugging Face key).</p>
+        <p id="updateNote" class="note bad" hidden>A new version is ready. <button type="button" id="updateBtn" class="plain">Update my worker</button></p>
 
         <div class="pc-box">
           <div class="opt">
