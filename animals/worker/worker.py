@@ -37,7 +37,7 @@ from PIL import Image, ImageDraw, ImageFont
 import beats
 import ideas
 
-VERSION = '8'
+VERSION = '9'
 HF_TOKEN = os.environ.get('HF_TOKEN') or None
 ANTICS_KEY = os.environ.get('ANTICS_KEY', '')
 DATASET = os.environ.get('ANTICS_DATASET', '')
