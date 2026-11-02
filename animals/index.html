@@ -19,7 +19,7 @@
       <img class="avatar" src="brand/tendha2.png" alt="" width="60" height="60">
       <div class="brand-text">
         <span class="logo">TENDHA<b>2</b><span class="app-tag">antics</span></span>
-        <span class="sub">animals doing human stuff</span>
+        <span class="sub" id="subLine">animals doing human stuff</span>
       </div>
     </div>
     <button type="button" id="openSettings" class="icon-btn" aria-label="Settings">
@@ -122,7 +122,7 @@
           <span>Text on video</span>
           <input type="checkbox" id="captionsOpt" checked>
         </label>
-        <label class="opt-line">
+        <label class="opt-line" id="brandLine">
           <span>My name on video <span class="tag-opt">@TENDHA2</span></span>
           <input type="checkbox" id="brandOpt" checked>
         </label>
@@ -132,12 +132,33 @@
         </label>
       </section>
 
+      <section class="block">
+        <h2 class="block-title">Export</h2>
+        <div class="opt-line">
+          <span>How many videos</span>
+          <div class="seg" id="countSeg">
+            <button type="button" data-v="1">1</button>
+            <button type="button" data-v="2">2</button>
+            <button type="button" data-v="3">3</button>
+            <button type="button" data-v="5">5</button>
+          </div>
+        </div>
+        <label class="opt-line">
+          <span>Quick preview first <span class="tag-opt">faster</span></span>
+          <input type="checkbox" id="previewOpt" checked>
+        </label>
+        <p class="fine" id="exportHelp"></p>
+      </section>
+
       <button type="submit" id="makeBtn" class="go">Make it</button>
       <p id="note" class="note" hidden></p>
     </form>
 
     <section class="list" aria-label="Your videos">
-      <h2>Your videos <span id="pcChip" class="pc-chip" hidden>made on your PC</span></h2>
+      <div class="list-head">
+        <h2>Your videos <span id="pcChip" class="pc-chip" hidden>made on your PC</span></h2>
+        <button type="button" id="finishAll" class="plain" hidden>Finish all previews</button>
+      </div>
       <p id="wakeNote" class="wake" hidden>Waking up your worker…</p>
       <div id="jobs"></div>
       <p id="emptyNote" class="empty">Nothing yet. Paste a link or upload a video and hit <b>Make it</b>. You can close the app, it keeps working.</p>
@@ -151,11 +172,97 @@
       <div class="player-info">
         <p id="playerCaption" class="caption-text"></p>
         <div class="row">
+          <button type="button" id="finishBtn" class="go small" hidden>Finish full video</button>
           <button type="button" id="saveBtn" class="go small">Save video</button>
+          <button type="button" id="editBtn" class="plain" hidden>Edit</button>
           <button type="button" id="copyBtn" class="plain">Copy caption</button>
         </div>
         <p class="tip" id="playerTip"></p>
         <button type="button" id="closePlayer" class="plain close">Close</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Edit a video: change it, see the new version, repeat until it's right -->
+  <dialog id="editor" class="sheet editor">
+    <div class="sheet-body">
+      <h2>Edit video</h2>
+      <p class="fine" id="editIntro">Text, music, speed and length changes are ready in seconds. A new description, style or ↻ animates again (1–2 min a clip).</p>
+
+      <h3 class="edit-label">Text on each clip</h3>
+      <div id="editTexts" class="edit-texts"></div>
+      <p class="fine" id="editRedoHelp">↻ gives that clip a new idea and a new animation.</p>
+
+      <h3 class="edit-label">What happens <span class="tag-opt">optional</span></h3>
+      <textarea id="editIdea" class="idea" rows="2" maxlength="160"
+                placeholder="e.g. The dog dances on the table, then slips"></textarea>
+
+      <h3 class="edit-label">Style</h3>
+      <div class="chips-wrap" id="editStyle"></div>
+
+      <label class="opt-line" id="editAnimalLine">
+        <span>Animal</span>
+        <input type="text" id="editAnimal" class="small-input" maxlength="30" placeholder="e.g. cat">
+      </label>
+
+      <h3 class="edit-label">Music</h3>
+      <div class="music-pick">
+        <select id="editMusic" aria-label="Music"></select>
+        <button type="button" id="editHear" class="mini" aria-label="Play this song">▶</button>
+      </div>
+      <div id="editSongUpload" class="song-upload" hidden>
+        <label class="plain">
+          <input type="file" id="editSongFile" accept="audio/*,.mp3,.m4a,.wav,.aac,.ogg">
+          Choose a song file
+        </label>
+        <span id="editSongName" class="fine">No song chosen yet</span>
+      </div>
+      <div class="opt-line" id="editPartLine">
+        <span>Song part</span>
+        <div class="seg" id="editPartSeg">
+          <button type="button" data-v="auto">Auto</button>
+          <button type="button" data-v="start">Start</button>
+          <button type="button" data-v="drop">The drop</button>
+          <button type="button" data-v="custom">Pick myself</button>
+        </div>
+      </div>
+      <div id="editPartPick" class="part-pick" hidden>
+        <input type="range" id="editSongStart" min="0" max="180" step="0.5" value="0" aria-label="Where the song starts">
+        <div class="part-pick-row">
+          <span>Starts at <b id="editSongStartLabel">0:00</b> <span id="editSongLength" class="fine"></span></span>
+          <button type="button" id="editHearPart" class="plain">▶ Hear this part</button>
+        </div>
+      </div>
+
+      <div class="opt-line">
+        <span>Video length</span>
+        <div class="seg" id="editLenSeg">
+          <button type="button" data-v="1">5 sec</button>
+          <button type="button" data-v="2">10 sec</button>
+          <button type="button" data-v="3">15 sec</button>
+        </div>
+      </div>
+      <div class="opt-line">
+        <span>Speed</span>
+        <div class="seg" id="editSpeedSeg">
+          <button type="button" data-v="slow">Slow-mo</button>
+          <button type="button" data-v="normal">Normal</button>
+          <button type="button" data-v="fast">Fast</button>
+        </div>
+      </div>
+      <label class="opt-line">
+        <span>Text on video</span>
+        <input type="checkbox" id="editCaptions">
+      </label>
+      <label class="opt-line" id="editBrandLine">
+        <span>My name on video</span>
+        <input type="checkbox" id="editBrand">
+      </label>
+
+      <p id="editNote" class="note" hidden></p>
+      <div class="row">
+        <button type="button" id="editSave" class="go small">Show new version</button>
+        <button type="button" id="editCancel" class="plain">Cancel</button>
       </div>
     </div>
   </dialog>
@@ -189,6 +296,25 @@
         <p class="fine">Free Hugging Face time makes about 3–5 clips a day. When it runs out, unfinished videos wait and finish by themselves.</p>
         <p id="updateNote" class="note bad" hidden>A new version is ready. <button type="button" id="updateBtn" class="plain">Update my worker</button></p>
 
+        <div class="friends-box">
+          <div class="opt">
+            <span>Friends</span>
+            <span id="friendsCount" class="fine"></span>
+          </div>
+          <p class="fine">Give a friend their own link with a few videos. They only see their own videos, and theirs use your free time.</p>
+          <div id="friendAdd" class="friend-add">
+            <input type="text" id="friendName" class="small-input" maxlength="30" placeholder="Friend's name" aria-label="Friend's name">
+            <div class="seg" id="friendUsesSeg" aria-label="How many videos">
+              <button type="button" data-v="5">5</button>
+              <button type="button" data-v="6">6</button>
+              <button type="button" data-v="10">10</button>
+            </div>
+            <button type="button" id="addFriend" class="plain">Create link</button>
+          </div>
+          <div id="friendList" class="friend-list"></div>
+          <p id="friendNote" class="note" hidden></p>
+        </div>
+
         <div class="pc-box">
           <div class="opt">
             <span>Use my PC</span>
@@ -209,6 +335,14 @@
         <div class="row">
           <button type="button" id="redoSetup" class="plain">Set up again</button>
           <button type="button" id="disconnect" class="plain danger">Disconnect</button>
+        </div>
+      </div>
+      <div id="guestPane" hidden>
+        <h2>Your invite</h2>
+        <p id="guestInfo"></p>
+        <p class="fine" id="guestFine"></p>
+        <div class="row">
+          <button type="button" id="leaveInvite" class="plain danger">Leave this invite</button>
         </div>
       </div>
       <button type="button" id="closeSettings" class="plain close">Close</button>

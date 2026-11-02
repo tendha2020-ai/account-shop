@@ -6,11 +6,11 @@ const HF = 'https://huggingface.co';
 const SPACE_NAME = 'antics-worker';
 const DATASET_NAME = 'antics-videos';
 const WORKER_FILES = ['Dockerfile', 'README.md', 'requirements.txt', 'worker.py', 'ideas.py', 'beats.py'];
-const WORKER_VERSION = '6'; // bump with VERSION in worker/worker.py
+const WORKER_VERSION = '7'; // bump with VERSION in worker/worker.py
 const KEYS = {
   worker: 'antics.worker', clips: 'antics.clips', captions: 'antics.captions', style: 'antics.style', music: 'antics.music',
   track: 'antics.track', part: 'antics.part', seconds: 'antics.seconds', speed: 'antics.speed', animal: 'antics.animal',
-  idea: 'antics.idea', brand: 'antics.brand',
+  idea: 'antics.idea', brand: 'antics.brand', count: 'antics.count', preview: 'antics.preview', ownerBackup: 'antics.owner',
 };
 // The creator's name and picture, shown in the header and stamped on every video.
 const BRAND = { name: 'TENDHA2', avatar: 'brand/tendha2.png' };
@@ -45,7 +45,7 @@ const songLabel = (name) => name.replace(/ - faster$| faster$/, ' (fast)');
 const $ = (sel, root = document) => root.querySelector(sel);
 
 const state = {
-  worker: null, // { space, url, key }
+  worker: null, // the owner's { space, url, key }, or a friend's { url, key, guest: true, name, host }
   clips: 3,
   captions: true,
   file: null,
@@ -66,6 +66,12 @@ const state = {
   brand: true,
   songStart: 0, // seconds into the song, when Song part is "Pick myself"
   songDuration: 0,
+  count: 1, // videos made per tap
+  preview: true, // a quick preview first: only the first clip is animated until Finish
+  me: null, // from the worker: { role: 'owner' }, or a friend's { name, host, uses_left, used, redos }
+  guests: null, // the owner's friends
+  friendUses: 5,
+  watchAfter: null, // { id, rev }: open this video when its new version is ready
 };
 
 function load(key, fallback) {
@@ -138,12 +144,88 @@ async function api(path, opts = {}) {
     throw Object.assign(new Error('Your worker is waking up'), { waking: true });
   }
   const body = await res.json();
-  if (!res.ok) throw new Error(body.detail || `Worker error ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error(body.detail || `Worker error ${res.status}`), { status: res.status });
   return body;
 }
 
 function mediaUrl(job, what) {
-  return `${state.worker.url}/jobs/${job.id}/${what}?key=${encodeURIComponent(state.worker.key)}&v=${job.status}`;
+  // Each new version of a video (after an edit) gets its own address, so an old one never shows from cache.
+  const v = what === 'video' ? job.rev ?? job.status : `${job.rev ?? 0}-${job.has_thumb ? 1 : 0}`;
+  return `${state.worker.url}/jobs/${job.id}/${what}?key=${encodeURIComponent(state.worker.key)}&v=${v}`;
+}
+
+// ---------- Friends: invite links ----------
+
+const isGuest = () => Boolean(state.worker && state.worker.guest);
+const hostName = () => (state.me && state.me.host) || (state.worker && state.worker.host) || BRAND.name;
+
+function toB64url(text) {
+  return base64(text).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function fromB64url(text) {
+  const b64 = text.replace(/-/g, '+').replace(/_/g, '/');
+  const bin = atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4));
+  return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+}
+
+// The link a friend opens: this page plus #join=<the worker's address, their own key and name>.
+function inviteLink(guest) {
+  const data = { w: state.worker.url, k: guest.key, n: guest.name, h: BRAND.name };
+  return `${location.origin}${location.pathname}#join=${toB64url(JSON.stringify(data))}`;
+}
+
+function readInvite() {
+  const m = location.hash.match(/^#join=([A-Za-z0-9_-]+)$/);
+  if (!m) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  let data = null;
+  try {
+    data = JSON.parse(fromB64url(m[1]));
+  } catch {
+    // broken link
+  }
+  if (!data || !/^https:\/\/[a-z0-9-]+\.hf\.space$/.test(data.w || '') || !/^[a-f0-9]{16,64}$/.test(data.k || '')) {
+    setTimeout(() => toast('That invite link is broken. Ask for a new one.'), 300);
+    return;
+  }
+  if (state.worker && !state.worker.guest) {
+    if (state.worker.key === data.k) return;
+    const ok = confirm(`This is ${data.n || 'a friend'}'s invite. Open it on this device? Your own worker stays saved: Settings, Leave this invite brings it back.`);
+    if (!ok) return;
+    save(KEYS.ownerBackup, state.worker);
+  }
+  state.worker = { url: data.w, key: data.k, guest: true, name: data.n || '', host: data.h || '' };
+  save(KEYS.worker, state.worker);
+}
+
+function leaveInvite() {
+  if (!confirm('Leave this invite? Your videos stay. Open the invite link again to come back.')) return;
+  const backup = load(KEYS.ownerBackup, null);
+  state.worker = backup;
+  save(KEYS.worker, backup);
+  save(KEYS.ownerBackup, null);
+  state.jobs = [];
+  state.me = null;
+  closeDialog($('#settings'));
+  renderJobs();
+  renderRole();
+  renderOptions();
+  renderWorkerDot(false);
+  if (state.worker) refreshJobs();
+}
+
+// The owner sees the full app; a friend sees how many videos they have left, and no setup.
+function renderRole() {
+  const guest = isGuest();
+  let sub = 'animals doing human stuff';
+  if (guest) {
+    const me = state.me;
+    const name = (me && me.name) || state.worker.name || 'friend';
+    sub = me ? `Hi ${name} · ${me.uses_left} video${me.uses_left === 1 ? '' : 's'} left` : `Hi ${name}`;
+  }
+  $('#subLine').textContent = sub;
+  $('#brandLine').hidden = guest;
 }
 
 // ---------- One-time setup: create the user's worker Space ----------
@@ -375,8 +457,11 @@ async function submit(what) {
   const btn = $('#makeBtn');
   btn.disabled = true;
   btn.textContent = what.kind === 'file' ? 'Picking the best moments…' : 'Sending…';
+  const count = makeCount();
   try {
     const form = new FormData();
+    form.append('count', String(count));
+    form.append('draft', String(state.preview));
     form.append('clips', String(state.clips));
     form.append('captions', String(state.captions));
     form.append('template', state.style);
@@ -392,7 +477,7 @@ async function submit(what) {
     form.append('animal', $('#animalOpt').value.trim());
     if (state.music === 'upload') form.append('song', state.songFile);
     let tagMissing = false;
-    if (state.brand) {
+    if (state.brand && !isGuest()) {
       try {
         form.append('badge', await brandBadge(), 'badge.png');
       } catch {
@@ -402,7 +487,7 @@ async function submit(what) {
     if (what.kind === 'link') form.append('url', what.url);
     if (what.kind === 'surprise') form.append('surprise', 'true');
     if (what.kind === 'file') {
-      const pictures = await picturesFromFile(what.file, state.clips);
+      const pictures = await picturesFromFile(what.file, state.clips, count);
       pictures.forEach((blob, i) => form.append('images', blob, `picture_${i}.jpg`));
       if (state.music === 'mine' && isVideoFile(what.file)) {
         if (what.file.size < 150 * 1024 * 1024) form.append('source', what.file);
@@ -410,22 +495,58 @@ async function submit(what) {
       }
       btn.textContent = 'Sending…';
     }
-    const job = await sendJob(form);
-    state.jobs = [job, ...state.jobs.filter((j) => j.id !== job.id)];
+    const res = await sendJob(form);
+    const made = res.jobs || [res]; // a worker older than v7 makes one video and answers with it
+    if (res.me) state.me = res.me;
+    const ids = new Set(made.map((j) => j.id));
+    state.jobs = [...made, ...state.jobs.filter((j) => !ids.has(j.id))];
     renderJobs();
+    renderRole();
     $('#link').value = '';
     setFile(null);
-    toast(tagMissing
-      ? 'Got it (without your name tag this time). You can close the app, it keeps working.'
-      : 'Got it. You can close the app, it keeps working.');
+    const kind = state.preview && made[0].draft ? 'preview' : 'video';
+    const got = made.length > 1 ? `${made.length} ${kind}s on the way` : `Your ${kind} is on the way`;
+    toast(`${got}${tagMissing ? ' (without your name tag this time)' : ''}. You can close the app, it keeps working.`);
     schedulePoll(2000);
   } catch (e) {
     note(msg, e.waking ? 'Your worker is waking up (takes up to a minute). Tap Make it again in a moment.' : e.message, 'bad');
     if (e.waking) wakeWorker();
   } finally {
-    btn.disabled = false;
-    btn.textContent = 'Make it';
+    renderMake();
   }
+}
+
+// How many videos one tap makes: the Export choice, but never more than a friend has left.
+function makeCount() {
+  const left = isGuest() && state.me ? state.me.uses_left : Infinity;
+  return Math.max(1, Math.min(state.count, left));
+}
+
+// The Export block (how many videos, quick preview) and the Make button.
+function renderMake() {
+  const left = isGuest() && state.me ? state.me.uses_left : Infinity;
+  document.querySelectorAll('#countSeg button').forEach((b) => {
+    b.disabled = Number(b.dataset.v) > Math.max(1, left);
+  });
+  const n = makeCount();
+  setSeg('countSeg', n);
+  $('#previewOpt').checked = state.preview;
+  const clips = n * (state.preview ? 1 : state.clips);
+  let help = state.preview
+    ? 'Only the first clip of each video is animated, so previews come fast. Edit them as often as you like, then tap Finish for the full video.'
+    : 'Each video is made in full straight away.';
+  if (n > 1) help += ` Each of the ${n} videos gets its own ideas${state.file || $('#link').value ? ' and its own moments' : ''}.`;
+  if (clips > 4) help += ` That's ${clips} AI clips: free time makes about 3–5 a day, so some finish later by themselves.`;
+  $('#exportHelp').textContent = help;
+  const btn = $('#makeBtn');
+  const out = isGuest() && state.me && state.me.uses_left <= 0;
+  btn.disabled = Boolean(out);
+  if (out) btn.textContent = 'No videos left';
+  else if (state.preview) btn.textContent = n > 1 ? `Make ${n} previews` : 'Make a preview';
+  else btn.textContent = n > 1 ? `Make ${n} videos` : 'Make it';
+  $('#surpriseBtn').disabled = Boolean(out);
+  if (out) note($('#note'), `You've used all your videos. Ask ${hostName()} for more.`);
+  else if ($('#note').textContent.startsWith("You've used all")) note($('#note'), '');
 }
 
 async function sendJob(form) {
@@ -544,7 +665,8 @@ function isVideoFile(file) {
   return file.type.startsWith('video/') || /\.(mov|mp4|m4v|webm|3gp)$/i.test(file.name);
 }
 
-async function picturesFromFile(file, count) {
+// count pictures (one per clip) for each of `variants` videos: [video 1's, video 2's, ...].
+async function picturesFromFile(file, count, variants = 1) {
   const isVideo = isVideoFile(file);
   const url = URL.createObjectURL(file);
   try {
@@ -569,7 +691,7 @@ async function picturesFromFile(file, count) {
       // autoplay refused: seeking still works on most browsers
     }
     const dur = Number.isFinite(video.duration) ? video.duration : 0;
-    const samples = dur > 1 ? 12 : 1;
+    const samples = dur > 1 ? Math.min(24, Math.max(12, count * variants + 4)) : 1;
     const frames = [];
     for (let i = 0; i < samples; i++) {
       if (samples > 1) {
@@ -579,15 +701,19 @@ async function picturesFromFile(file, count) {
       const canvas = drawScaled(video, video.videoWidth, video.videoHeight, 1024);
       frames.push({ t: video.currentTime, canvas, score: sharpness(canvas) });
     }
-    // The sharpest moment in each part of the video, one per clip.
+    // The sharpest moment in each part of the video, one per clip. Each extra video takes the
+    // next-sharpest moments, so they all start differently.
     const picks = [];
-    for (let part = 0; part < count; part++) {
-      const lo = (dur * part) / count;
-      const hi = (dur * (part + 1)) / count;
-      const inPart = frames.filter((f) => f.t >= lo && f.t <= hi);
-      const pool = inPart.length ? inPart : frames;
-      picks.push(pool.reduce((a, b) => (b.score > a.score ? b : a)));
+    for (let v = 0; v < variants; v++) {
+      for (let part = 0; part < count; part++) {
+        const lo = (dur * part) / count;
+        const hi = (dur * (part + 1)) / count;
+        const inPart = frames.filter((f) => f.t >= lo && f.t <= hi);
+        const pool = (inPart.length ? inPart : frames).slice().sort((a, b) => b.score - a.score);
+        picks.push(pool[v % pool.length]);
+      }
     }
+    if (variants > 1) return Promise.all(picks.map((f) => toJpeg(f.canvas)));
     return Promise.all([...new Set(picks)].map((f) => toJpeg(f.canvas)));
   } finally {
     URL.revokeObjectURL(url);
@@ -606,6 +732,10 @@ function describe(job) {
   }
   if (job.status === 'failed') return job.error || 'Something went wrong.';
   const len = job.seconds_long ? `${Math.round(job.seconds_long)} sec` : '';
+  if (job.draft) {
+    return ['Preview ready', len, job.wanted > 1 ? 'clip 1 moves, the rest are pictures until you finish' : '']
+      .filter(Boolean).join(' · ');
+  }
   return ['Ready', len, job.stage].filter(Boolean).join(' · ');
 }
 
@@ -614,26 +744,41 @@ function renderJobs() {
   box.innerHTML = '';
   for (const job of state.jobs) {
     const card = document.createElement('article');
-    card.className = `job ${job.status}`;
+    card.className = `job ${job.status}${job.has_video ? ' playable' : ''}`;
     card.innerHTML = `
       <button type="button" class="thumb" aria-label="Play"></button>
       <div class="job-body">
         <div class="job-title"></div>
+        <div class="job-tags" hidden></div>
         <div class="job-stage"></div>
         <div class="meter" hidden><span></span></div>
         <div class="job-actions"></div>
       </div>`;
     const thumb = $('.thumb', card);
-    if (job.has_thumb) {
+    if (job.has_thumb || job.status !== 'queued') {
       const img = document.createElement('img');
       img.alt = '';
       img.loading = 'lazy';
       img.src = mediaUrl(job, 'thumb');
+      img.addEventListener('error', () => img.remove());
       thumb.appendChild(img);
     }
-    $('.job-title', card).textContent = job.label || (job.kind === 'surprise' ? 'Surprise' : 'Video');
+    const title = (job.label || (job.kind === 'surprise' ? 'Surprise' : 'Video'))
+      + (job.batch > 1 ? ` · ${job.index + 1} of ${job.batch}` : '');
+    $('.job-title', card).textContent = title;
+    const tags = $('.job-tags', card);
+    const tag = (text, cls) => {
+      const el = document.createElement('span');
+      el.className = `chip ${cls}`;
+      el.textContent = text;
+      tags.appendChild(el);
+      tags.hidden = false;
+    };
+    if (job.draft) tag('Preview', '');
+    if (!isGuest() && job.owner && job.owner !== 'me') tag(`by ${job.owner_name || 'a friend'}`, 'by-friend');
     $('.job-stage', card).textContent = describe(job);
-    if (job.status === 'working' || job.status === 'queued') {
+    const busy = job.status === 'working' || job.status === 'queued';
+    if (busy) {
       $('.meter', card).hidden = false;
       $('.meter span', card).style.width = `${Math.max(4, Math.round((job.progress || 0) * 100))}%`;
     }
@@ -646,20 +791,37 @@ function renderJobs() {
       b.addEventListener('click', fn);
       actions.appendChild(b);
     };
-    if (job.status === 'done') {
+    if (job.has_video) {
       const play = document.createElement('span');
       play.className = 'play';
       play.innerHTML = '<span><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M7 4v16l13-8z"/></svg></span>';
       thumb.appendChild(play);
       thumb.addEventListener('click', () => openPlayer(job));
-      add('Watch & save', 'open', () => openPlayer(job));
-      add('Copy caption', '', () => copyText(job.caption || ''));
+    }
+    if (job.status === 'done') {
+      add(job.draft ? 'Watch' : 'Watch & save', 'open', () => openPlayer(job));
+      if (job.editable) add('Edit', '', () => openEditor(job));
+      if (job.draft) add('Finish', 'finish', () => finishJob(job));
+      else if (job.editable && job.made < job.wanted) add('Make the rest', 'finish', () => finishJob(job));
+      if (!job.draft) add('Copy caption', '', () => copyText(job.caption || ''));
+    } else if (job.has_video) {
+      add('Watch last version', 'open', () => openPlayer(job));
     }
     if (job.status === 'failed' || job.status === 'waiting') add('Try again', '', () => retryJob(job));
     if (job.status !== 'working') add('Delete', 'danger', () => deleteJob(job));
     box.appendChild(card);
   }
+  const drafts = state.jobs.filter(finishable);
+  $('#finishAll').hidden = drafts.length < 2;
+  $('#finishAll').textContent = `Finish all ${drafts.length} previews`;
 }
+
+function replaceJob(job) {
+  state.jobs = state.jobs.map((j) => (j.id === job.id ? { ...j, ...job } : j));
+  renderJobs();
+}
+
+const anyDialogOpen = () => [...document.querySelectorAll('dialog')].some((d) => d.open);
 
 let pollTimer;
 function schedulePoll(ms) {
@@ -670,22 +832,46 @@ function schedulePoll(ms) {
 async function refreshJobs() {
   if (!state.worker) return;
   try {
-    const { jobs } = await api('/jobs');
-    state.jobs = jobs;
+    const res = await api('/jobs');
+    state.jobs = res.jobs;
+    if (res.me) state.me = res.me;
     renderJobs();
+    renderRole();
+    renderMake();
     refreshHealth();
     renderWorkerDot(true);
     $('#wakeNote').hidden = true;
-    const busy = jobs.some((j) => j.status === 'queued' || j.status === 'working');
-    schedulePoll(document.hidden ? 60000 : busy ? 4000 : 30000);
+    showWhenReady(res.jobs);
+    const busy = res.jobs.some((j) => j.status === 'queued' || j.status === 'working');
+    schedulePoll(document.hidden ? 60000 : state.watchAfter ? 2000 : busy ? 4000 : 30000);
   } catch (e) {
     renderWorkerDot(false);
     $('#wakeNote').hidden = false;
+    if (isGuest() && e.status === 401) {
+      $('#wakeNote').textContent = `This invite doesn't work anymore. Ask ${hostName()} for a new link.`;
+      schedulePoll(120000);
+      return;
+    }
     $('#wakeNote').textContent = e.waking || e instanceof TypeError
       ? 'Waking up your worker… (up to a minute)'
       : `Worker problem: ${e.message}`;
     schedulePoll(6000);
   }
+}
+
+// After Edit or Finish: opens the new version as soon as it's ready.
+function showWhenReady(jobs) {
+  const want = state.watchAfter;
+  if (!want) return;
+  const job = jobs.find((j) => j.id === want.id);
+  if (!job || job.status === 'failed') {
+    state.watchAfter = null;
+    return;
+  }
+  if (job.status !== 'done' || (job.rev || 0) <= want.rev) return;
+  state.watchAfter = null;
+  if (!document.hidden && !anyDialogOpen()) openPlayer(job);
+  else toast('Your new version is ready');
 }
 
 function wakeWorker() {
@@ -700,6 +886,40 @@ async function retryJob(job) {
   } catch (e) {
     toast(e.message);
   }
+}
+
+// A preview (or a video that came out short) becomes the full video: only missing clips are animated.
+async function finishJob(job) {
+  try {
+    replaceJob(await api(`/jobs/${job.id}/finish`, { method: 'POST' }));
+    state.watchAfter = { id: job.id, rev: job.rev || 0 };
+    const missing = Math.max(0, (job.wanted || 1) - (job.made || 0));
+    toast(missing
+      ? `Animating ${missing} more clip${missing === 1 ? '' : 's'} (1–2 min each). You can close the app.`
+      : 'Making the full video…');
+    schedulePoll(1500);
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+// Previews ready to finish: your own (the owner's list also shows friends' videos).
+const finishable = (j) => j.draft && j.status === 'done' && (isGuest() || !j.owner || j.owner === 'me');
+
+async function finishAll() {
+  const drafts = state.jobs.filter(finishable);
+  let started = 0;
+  for (const job of drafts) {
+    try {
+      replaceJob(await api(`/jobs/${job.id}/finish`, { method: 'POST' }));
+      started++;
+    } catch (e) {
+      toast(e.message);
+      break;
+    }
+  }
+  if (started) toast(`Finishing ${started} videos. They keep going when you close the app.`);
+  schedulePoll(1500);
 }
 
 async function deleteJob(job) {
@@ -723,6 +943,11 @@ function renderPlayerTip(job) {
     if (bold) el.textContent = text;
     tip.appendChild(el);
   };
+  if (job.draft) {
+    add('Quick preview: ');
+    add(job.wanted > 1 ? 'clip 1 moves, the others are still pictures' : 'this is how it will look', true);
+    add('. Tap Edit to change anything, or Finish for the full video. ');
+  }
   if (job.music_used === 'funny') add(`"${songLabel(job.track || '')}" is already in the video (its credit is in the caption). `);
   else if (job.music_used === 'upload') add('Your song is already in the video. ');
   else if (job.music_used === 'mine') add("Your video's sound is already in it. ");
@@ -812,19 +1037,20 @@ function setSeg(id, value) {
   document.querySelectorAll(`#${id} button`).forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === String(value))));
 }
 
+function chips(box, items, current, onPick) {
+  box.innerHTML = '';
+  for (const item of items) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = item.label;
+    b.setAttribute('aria-pressed', String(item.key === current));
+    b.addEventListener('click', () => onPick(item.key));
+    box.appendChild(b);
+  }
+}
+
 // Draws every option on the main screen from state.
 function renderOptions() {
-  const chips = (box, items, current, onPick) => {
-    box.innerHTML = '';
-    for (const item of items) {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.textContent = item.label;
-      b.setAttribute('aria-pressed', String(item.key === current));
-      b.addEventListener('click', () => onPick(item.key));
-      box.appendChild(b);
-    }
-  };
   chips($('#styleRow'), STYLES, state.style, (key) => {
     state.style = key;
     save(KEYS.style, key);
@@ -885,6 +1111,8 @@ function renderOptions() {
   setSeg('speedSeg', state.speed);
   $('#captionsOpt').checked = state.captions;
   $('#brandOpt').checked = state.brand;
+  setSeg('friendUsesSeg', state.friendUses);
+  renderMake();
 }
 
 function openPlayer(job) {
@@ -893,6 +1121,10 @@ function openPlayer(job) {
   const video = $('#playerVideo');
   video.src = mediaUrl(job, 'video');
   $('#playerCaption').textContent = job.caption || '';
+  const ready = job.status === 'done';
+  $('#finishBtn').hidden = !(ready && job.draft);
+  $('#editBtn').hidden = !(ready && job.editable);
+  $('#saveBtn').className = ready && job.draft ? 'plain' : 'go small';
   renderPlayerTip(job);
   openDialog($('#player'));
   video.play().catch(() => {});
@@ -936,6 +1168,275 @@ async function saveVideo() {
   setTimeout(() => URL.revokeObjectURL(a.href), 60000);
 }
 
+// ---------- Edit a video: change it, see the new version, repeat ----------
+
+const edit = {
+  job: null, style: 'random', len: 1, speed: 'normal', part: 'auto', songStart: 0, songDuration: 0,
+  songFile: null, songFileUrl: null, redo: new Set(),
+};
+
+const cleanAnimal = (text) => text.replace(/[^a-zA-Z ]/g, '').trim().toLowerCase().slice(0, 30);
+
+function musicValue(job) {
+  if (job.music === 'track' && SONGS.includes(job.track)) return `track:${job.track}`;
+  if (job.music === 'upload') return job.has_song ? 'upload' : 'funny';
+  if (job.music === 'mine') return job.has_sound ? 'mine' : 'funny';
+  return ['funny', 'none'].includes(job.music) ? job.music : 'funny';
+}
+
+function openEditor(job) {
+  if ($('#player').open) closeDialog($('#player'));
+  edit.job = job;
+  edit.style = job.template || 'random';
+  edit.len = job.wanted || 1;
+  edit.speed = job.speed || 'normal';
+  edit.part = job.song_part || 'auto';
+  edit.songStart = job.song_start || 0;
+  edit.songDuration = 0;
+  edit.songFile = null;
+  if (edit.songFileUrl) URL.revokeObjectURL(edit.songFileUrl);
+  edit.songFileUrl = null;
+  edit.redo = new Set();
+  $('#editIdea').value = job.idea || '';
+  $('#editAnimal').value = job.animal && job.animal !== 'animal' ? job.animal : '';
+  $('#editAnimalLine').hidden = job.kind === 'surprise';
+  $('#editCaptions').checked = job.captions !== false;
+  $('#editBrandLine').hidden = !job.has_badge;
+  $('#editBrand').checked = Boolean(job.brand);
+  $('#editSongFile').value = '';
+
+  const sel = $('#editMusic');
+  sel.innerHTML = '';
+  const opt = (value, label, parent = sel) => {
+    const o = document.createElement('option');
+    o.value = value;
+    o.textContent = label;
+    parent.appendChild(o);
+  };
+  opt('funny', 'Meme song for the style');
+  const group = document.createElement('optgroup');
+  group.label = 'Meme songs';
+  sel.appendChild(group);
+  for (const name of SONGS) opt(`track:${name}`, songLabel(name), group);
+  if (job.has_song) opt('upload', 'My uploaded song');
+  opt('upload-new', job.has_song ? 'Upload a different song…' : 'Upload my song…');
+  if (job.has_sound) opt('mine', "My video's sound");
+  opt('none', "None (I'll add a TikTok sound)");
+  sel.value = musicValue(job);
+
+  const box = $('#editTexts');
+  box.innerHTML = '';
+  (job.texts || []).forEach((text, i) => {
+    const row = document.createElement('div');
+    row.className = 'edit-text';
+    row.dataset.i = String(i);
+    const num = document.createElement('span');
+    num.className = 'num';
+    num.textContent = String(i + 1);
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.maxLength = 120;
+    input.value = text;
+    input.placeholder = 'No text on this clip';
+    input.setAttribute('aria-label', `Text on clip ${i + 1}`);
+    const redo = document.createElement('button');
+    redo.type = 'button';
+    redo.className = 'redo';
+    redo.textContent = '↻';
+    redo.title = 'New idea and new animation for this clip';
+    redo.setAttribute('aria-label', `New idea for clip ${i + 1}`);
+    redo.addEventListener('click', () => {
+      if (edit.redo.has(i)) edit.redo.delete(i);
+      else edit.redo.add(i);
+      renderEditor();
+    });
+    row.append(num, input, redo);
+    if (job.draft && i > 0) {
+      const still = document.createElement('span');
+      still.className = 'still';
+      still.textContent = 'A still picture in the preview. It moves when you finish.';
+      row.appendChild(still);
+    }
+    box.appendChild(row);
+  });
+  note($('#editNote'), '');
+  renderEditor();
+  openDialog($('#editor'));
+  loadEditSongDuration();
+}
+
+// Clips that already move (a preview only animates the first one).
+const animatedClips = (job) => (job.draft ? Math.min(1, job.made || 0) : job.made || 0);
+
+function redosLeft(job) {
+  if (!isGuest() || !state.me || state.me.redos == null) return Infinity;
+  return Math.max(0, state.me.redos - (job.redos || 0));
+}
+
+// True when saving will animate something again (slower, and it uses free time).
+function willAnimate() {
+  const job = edit.job;
+  if ($('#editIdea').value.trim().replace(/\s+/g, ' ') !== (job.idea || '')) return true;
+  if (edit.style !== (job.template || 'random')) return true;
+  const animal = cleanAnimal($('#editAnimal').value);
+  if (job.kind !== 'surprise' && animal && animal !== job.animal) return true;
+  if ([...edit.redo].some((i) => i < animatedClips(job) && i < edit.len)) return true;
+  return !job.draft && edit.len > (job.made || 0);
+}
+
+// Whether saving throws away a clip that already moves (what a friend's redo limit counts).
+function losesAnimation() {
+  const job = edit.job;
+  if ($('#editIdea').value.trim().replace(/\s+/g, ' ') !== (job.idea || '')) return animatedClips(job) > 0;
+  if (edit.style !== (job.template || 'random')) return animatedClips(job) > 0;
+  const animal = cleanAnimal($('#editAnimal').value);
+  if (job.kind !== 'surprise' && animal && animal !== job.animal) return animatedClips(job) > 0;
+  return [...edit.redo].some((i) => i < animatedClips(job) && i < edit.len);
+}
+
+function editSongUrl() {
+  const sel = $('#editMusic').value;
+  if (sel.startsWith('track:')) return songUrl(sel.slice(6));
+  if (sel === 'upload-new' && edit.songFile) {
+    if (!edit.songFileUrl) edit.songFileUrl = URL.createObjectURL(edit.songFile);
+    return edit.songFileUrl;
+  }
+  return null;
+}
+
+function loadEditSongDuration() {
+  const url = editSongUrl();
+  edit.songDuration = 0;
+  if (!url) return;
+  const probe = new Audio();
+  probe.preload = 'metadata';
+  probe.addEventListener('loadedmetadata', () => {
+    if (editSongUrl() !== url) return;
+    edit.songDuration = probe.duration || 0;
+    renderEditor();
+  }, { once: true });
+  probe.src = url;
+}
+
+// Plays the chosen song (from `from` seconds, for `seconds` if given); the same button stops it.
+function playSong(url, from = 0, seconds = 0) {
+  clearTimeout(previewStop);
+  previewing = '';
+  if (!url) return;
+  const start = () => {
+    preview.currentTime = from;
+    preview.play().catch(() => toast("Couldn't play that song"));
+    if (seconds) previewStop = setTimeout(() => preview.pause(), seconds * 1000);
+  };
+  if (preview.src !== url) {
+    preview.src = url;
+    preview.addEventListener('loadedmetadata', start, { once: true });
+  } else {
+    start();
+  }
+}
+
+function renderEditor() {
+  const job = edit.job;
+  if (!job) return;
+  const left = redosLeft(job);
+  document.querySelectorAll('#editTexts .edit-text').forEach((row) => {
+    const i = Number(row.dataset.i);
+    row.hidden = i >= edit.len;
+    const b = row.querySelector('.redo');
+    b.setAttribute('aria-pressed', String(edit.redo.has(i)));
+    b.disabled = left <= 0 && i < animatedClips(job) && !edit.redo.has(i);
+  });
+  const extra = edit.len - (job.texts || []).length;
+  $('#editRedoHelp').textContent = '↻ gives that clip a new idea and a new animation.'
+    + (extra > 0 ? ` ${extra} more clip${extra === 1 ? '' : 's'} will get new ideas.` : '')
+    + (left < Infinity ? ` New animations left for this video: ${left}.` : '');
+  chips($('#editStyle'), STYLES, edit.style, (key) => {
+    edit.style = key;
+    renderEditor();
+  });
+  const music = $('#editMusic').value;
+  $('#editSongUpload').hidden = music !== 'upload-new';
+  $('#editSongName').textContent = edit.songFile ? edit.songFile.name : 'No song chosen yet';
+  $('#editHear').hidden = !editSongUrl();
+  $('#editPartLine').hidden = music === 'none';
+  const canPick = music.startsWith('track:') || music === 'upload-new' || music === 'upload';
+  $('#editPartSeg [data-v="custom"]').hidden = !canPick;
+  const part = edit.part === 'custom' && !canPick ? 'auto' : edit.part;
+  setSeg('editPartSeg', part);
+  $('#editPartPick').hidden = part !== 'custom';
+  if (part === 'custom') {
+    const range = $('#editSongStart');
+    range.max = String(Math.max(1, Math.floor(edit.songDuration || 180)));
+    range.value = String(edit.songStart);
+    $('#editSongStartLabel').textContent = clock(edit.songStart);
+    $('#editSongLength').textContent = edit.songDuration ? `of ${clock(edit.songDuration)}` : '';
+    $('#editHearPart').hidden = !editSongUrl();
+  }
+  setSeg('editLenSeg', edit.len);
+  setSeg('editSpeedSeg', edit.speed);
+  const animate = willAnimate();
+  const blocked = left <= 0 && losesAnimation();
+  $('#editSave').disabled = blocked;
+  $('#editSave').textContent = animate ? 'Animate new version' : 'Show new version';
+  if (blocked) {
+    note($('#editNote'), 'This video has no new animations left. Change its text, music or speed, or make a new video.', 'bad');
+  } else if ($('#editNote').classList.contains('bad') && $('#editNote').textContent.startsWith('This video has no')) {
+    note($('#editNote'), '');
+  }
+}
+
+async function saveEdit() {
+  const job = edit.job;
+  const form = new FormData();
+  form.append('texts', JSON.stringify([...document.querySelectorAll('#editTexts input')].map((i) => i.value.trim())));
+  form.append('idea', $('#editIdea').value.trim());
+  form.append('template', edit.style);
+  if (job.kind !== 'surprise') form.append('animal', $('#editAnimal').value.trim());
+  form.append('clips', String(edit.len));
+  const sel = $('#editMusic').value;
+  if (sel === 'upload-new') {
+    if (!edit.songFile) {
+      note($('#editNote'), 'Choose your song file first, or pick another song.', 'bad');
+      return;
+    }
+    form.append('music', 'upload');
+    form.append('song', edit.songFile);
+  } else if (sel.startsWith('track:')) {
+    form.append('music', 'track');
+    form.append('track', sel.slice(6));
+  } else {
+    form.append('music', sel);
+  }
+  const canPick = sel.startsWith('track:') || sel === 'upload-new' || sel === 'upload';
+  form.append('song_part', edit.part === 'custom' && !canPick ? 'auto' : edit.part);
+  form.append('song_start', edit.songStart.toFixed(1));
+  form.append('speed', edit.speed);
+  form.append('captions', String($('#editCaptions').checked));
+  if (job.has_badge) form.append('brand', String($('#editBrand').checked));
+  const redo = [...edit.redo].filter((i) => i < edit.len);
+  if (redo.length) form.append('redo', redo.join(','));
+  const animate = willAnimate();
+  const btn = $('#editSave');
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  try {
+    const res = await api(`/jobs/${job.id}/edit`, { method: 'POST', body: form });
+    replaceJob(res);
+    state.watchAfter = { id: job.id, rev: job.rev || 0 };
+    closeDialog($('#editor'));
+    toast(res.animating ?? animate
+      ? 'Animating your new version (1–2 min a clip). It opens when it is ready.'
+      : 'Making your new version. It opens in a few seconds.');
+    schedulePoll(1500);
+  } catch (e) {
+    note($('#editNote'), e.waking ? 'Your worker is waking up. Try again in a moment.' : e.message, 'bad');
+  } finally {
+    btn.disabled = false;
+    renderEditor();
+  }
+}
+
 // ---------- Settings ----------
 
 function openUpdate() {
@@ -947,6 +1448,127 @@ function openSettings() {
   renderSettings();
   note($('#setupNote'), state.pending ? 'One quick setup first, then your video starts by itself.' : '');
   openDialog($('#settings'));
+  if (state.worker && !isGuest()) loadFriends();
+}
+
+let friendsChanged = 0; // a list fetched before the latest change is out of date
+
+async function loadFriends() {
+  const asked = friendsChanged;
+  try {
+    const { guests } = await api('/guests');
+    if (asked !== friendsChanged) return;
+    state.guests = guests;
+    note($('#friendNote'), '');
+  } catch (e) {
+    state.guests = state.guests || [];
+    if (e.waking) note($('#friendNote'), 'Your worker is waking up. Your friends show up in a moment.');
+  }
+  renderFriends();
+}
+
+function renderFriends() {
+  const list = $('#friendList');
+  list.innerHTML = '';
+  const outdated = Boolean(state.health && state.health.version !== WORKER_VERSION);
+  $('#friendAdd').hidden = outdated;
+  if (outdated) {
+    note($('#friendNote'), 'Update your worker first (the button above) to invite friends.');
+    return;
+  }
+  const guests = state.guests || [];
+  $('#friendsCount').textContent = guests.length ? `${guests.length} invited` : '';
+  for (const g of guests) {
+    const row = document.createElement('div');
+    row.className = 'friend-row';
+    const who = document.createElement('span');
+    const name = document.createElement('b');
+    name.textContent = g.name;
+    who.append(name, document.createTextNode(` · ${g.uses_left} of ${g.uses_left + g.used} left`));
+    const acts = document.createElement('div');
+    acts.className = 'acts';
+    const btn = (label, cls, fn) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = `plain ${cls}`;
+      b.textContent = label;
+      b.addEventListener('click', fn);
+      return b;
+    };
+    acts.append(
+      btn(navigator.share ? 'Send link' : 'Copy link', '', () => sendInvite(g)),
+      btn('+5 videos', '', () => addUses(g, 5)),
+      btn('Remove', 'danger', () => removeFriend(g)),
+    );
+    row.append(who, acts);
+    list.appendChild(row);
+  }
+}
+
+async function sendInvite(g) {
+  const url = inviteLink(g);
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: `${BRAND.name} antics`, text: `Make funny animal videos with my antics app. ${g.uses_left} videos are yours:`, url });
+      return;
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+    }
+  }
+  copyText(url);
+}
+
+async function addFriend() {
+  const name = $('#friendName').value.trim();
+  if (!name) {
+    note($('#friendNote'), "Type your friend's name first.", 'bad');
+    $('#friendName').focus();
+    return;
+  }
+  const btn = $('#addFriend');
+  btn.disabled = true;
+  try {
+    const form = new FormData();
+    form.append('name', name);
+    form.append('uses', String(state.friendUses));
+    form.append('host', BRAND.name);
+    const g = await api('/guests', { method: 'POST', body: form });
+    friendsChanged++;
+    state.guests = [...(state.guests || []), g];
+    $('#friendName').value = '';
+    renderFriends();
+    note($('#friendNote'), `${g.name}'s link is ready with ${g.uses_left} videos. Tap ${navigator.share ? 'Send link' : 'Copy link'} next to their name.`, 'good');
+  } catch (e) {
+    note($('#friendNote'), e.waking ? 'Your worker is waking up. Try again in a minute.' : e.message, 'bad');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function addUses(g, n) {
+  try {
+    const form = new FormData();
+    form.append('add', String(n));
+    const updated = await api(`/guests/${g.id}`, { method: 'POST', body: form });
+    friendsChanged++;
+    state.guests = (state.guests || []).map((x) => (x.id === g.id ? updated : x));
+    renderFriends();
+    toast(`${g.name} now has ${updated.uses_left} videos left`);
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
+async function removeFriend(g) {
+  if (!confirm(`Remove ${g.name}? Their link stops working. Videos they made stay in your list.`)) return;
+  try {
+    await api(`/guests/${g.id}`, { method: 'DELETE' });
+    friendsChanged++;
+    state.guests = (state.guests || []).filter((x) => x.id !== g.id);
+    renderFriends();
+  } catch (e) {
+    toast(e.message);
+  }
 }
 
 async function refreshHealth() {
@@ -961,6 +1583,11 @@ async function refreshHealth() {
 
 function renderPc() {
   const h = state.health;
+  if (isGuest()) {
+    $('#pcChip').hidden = true;
+    $('#updateBanner').hidden = true;
+    return;
+  }
   const pcOn = Boolean(h && h.pc);
   const pcState = $('#pcState');
   pcState.textContent = pcOn ? `on · ${h.pc_name || 'PC'}` : 'off or not connected';
@@ -991,6 +1618,19 @@ async function getPairCode() {
 }
 
 function renderSettings() {
+  const guest = isGuest();
+  $('#guestPane').hidden = !guest;
+  if (guest) {
+    $('#setupPane').hidden = true;
+    $('#optionsPane').hidden = true;
+    const me = state.me;
+    const host = hostName();
+    $('#guestInfo').textContent = me
+      ? `${host} gave you ${me.uses_left + me.used} videos. ${me.uses_left} left.`
+      : `You're using ${host}'s antics.`;
+    $('#guestFine').textContent = `Your videos are made on ${host}'s free worker, and only you and ${host} can see them. Ask ${host} if you need more.`;
+    return;
+  }
   const updating = state.setupMode === 'update' && Boolean(state.worker);
   const ready = Boolean(state.worker) && !updating;
   $('#setupPane').hidden = ready;
@@ -1024,6 +1664,9 @@ function init() {
   state.seconds = 5; // each clip; Video length picks how many
   state.speed = pickSaved(KEYS.speed, ['slow', 'normal', 'fast'], 'normal');
   state.brand = load(KEYS.brand, true) !== false;
+  state.count = pickSaved(KEYS.count, [1, 2, 3, 5], 1);
+  state.preview = load(KEYS.preview, true) !== false;
+  readInvite();
   $('#idea').value = load(KEYS.idea, '');
   $('#animalOpt').value = load(KEYS.animal, '');
   renderOptions();
@@ -1044,6 +1687,60 @@ function init() {
   });
   $('#hearPart').addEventListener('click', hearPart);
   onSeg('speedSeg', (v) => { state.speed = v; save(KEYS.speed, v); });
+  onSeg('countSeg', (v) => { state.count = Number(v); save(KEYS.count, state.count); });
+  onSeg('friendUsesSeg', (v) => { state.friendUses = Number(v); });
+  $('#previewOpt').addEventListener('change', (e) => {
+    state.preview = e.target.checked;
+    save(KEYS.preview, state.preview);
+    renderOptions();
+  });
+  $('#link').addEventListener('change', renderOptions);
+
+  // The edit window
+  const onEditSeg = (id, apply) => document.querySelectorAll(`#${id} button`).forEach((b) => b.addEventListener('click', () => {
+    apply(b.dataset.v);
+    renderEditor();
+  }));
+  onEditSeg('editPartSeg', (v) => { edit.part = v; });
+  onEditSeg('editLenSeg', (v) => { edit.len = Number(v); });
+  onEditSeg('editSpeedSeg', (v) => { edit.speed = v; });
+  $('#editMusic').addEventListener('change', () => {
+    preview.pause();
+    edit.songStart = 0;
+    loadEditSongDuration();
+    renderEditor();
+  });
+  $('#editSongFile').addEventListener('change', (e) => {
+    edit.songFile = e.target.files[0] || null;
+    if (edit.songFileUrl) URL.revokeObjectURL(edit.songFileUrl);
+    edit.songFileUrl = null;
+    edit.songStart = 0;
+    loadEditSongDuration();
+    renderEditor();
+  });
+  $('#editSongStart').addEventListener('input', (e) => {
+    edit.songStart = Number(e.target.value);
+    $('#editSongStartLabel').textContent = clock(edit.songStart);
+  });
+  $('#editHear').addEventListener('click', () => {
+    if (!preview.paused) preview.pause();
+    else playSong(editSongUrl(), 0);
+  });
+  $('#editHearPart').addEventListener('click', () => {
+    const speed = { slow: 0.8, normal: 1, fast: 1.25 }[edit.speed] || 1;
+    playSong(editSongUrl(), edit.songStart, (edit.len * state.seconds) / speed);
+  });
+  $('#editIdea').addEventListener('input', renderEditor);
+  $('#editAnimal').addEventListener('input', renderEditor);
+  $('#editSave').addEventListener('click', saveEdit);
+  $('#editCancel').addEventListener('click', () => closeDialog($('#editor')));
+  $('#editor').addEventListener('close', () => {
+    preview.pause();
+    edit.job = null;
+  });
+  $('#finishAll').addEventListener('click', finishAll);
+  $('#addFriend').addEventListener('click', addFriend);
+  $('#leaveInvite').addEventListener('click', leaveInvite);
   $('#captionsOpt').addEventListener('change', (e) => {
     state.captions = e.target.checked;
     save(KEYS.captions, state.captions);
@@ -1102,6 +1799,14 @@ function init() {
   });
 
   $('#saveBtn').addEventListener('click', saveVideo);
+  $('#finishBtn').addEventListener('click', () => {
+    const job = state.playing;
+    closeDialog($('#player'));
+    if (job) finishJob(job);
+  });
+  $('#editBtn').addEventListener('click', () => {
+    if (state.playing) openEditor(state.playing);
+  });
   $('#copyBtn').addEventListener('click', () => copyText(state.playing ? state.playing.caption || '' : ''));
   $('#closePlayer').addEventListener('click', () => closeDialog($('#player')));
   $('#player').addEventListener('close', () => {
@@ -1114,6 +1819,7 @@ function init() {
   });
 
   renderWorkerDot(false);
+  renderRole();
   if (state.worker) refreshJobs();
 }
 
