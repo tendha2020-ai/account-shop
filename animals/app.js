@@ -1481,7 +1481,11 @@ function speakInBrowser(btn, box) {
   rec.continuous = false; // one go: it stops by itself when you pause
   const before = box.value;
   let fallback = false;
-  rec.onresult = (e) => typed(box, joinText(before, Array.from(e.results, (r) => r[0].transcript).join(' '), box.maxLength));
+  let said = '';
+  rec.onresult = (e) => {
+    said = Array.from(e.results, (r) => r[0].transcript).join(' ');
+    typed(box, joinText(before, said, box.maxLength));
+  };
   rec.onerror = (e) => {
     if (e.error === 'no-speech') toast("Didn't hear anything. Tap 🎤 Speak and talk.");
     else if (e.error === 'not-allowed') toast('Allow the microphone for this page, then tap 🎤 Speak again.');
@@ -1493,6 +1497,7 @@ function speakInBrowser(btn, box) {
   rec.onend = () => {
     listening = null;
     setMic(btn, 'idle');
+    if (said.trim()) heard(box, before, said);
     if (fallback) {
       toast('Say it again: recording now.');
       recordForWorker(btn, box);
@@ -1548,7 +1553,7 @@ async function recordForWorker(btn, box) {
       const form = new FormData();
       form.append('audio', blob, `speech.${ext}`);
       const { text } = await api('/listen', { method: 'POST', body: form });
-      if (text) typed(box, joinText(box.value, text, box.maxLength));
+      if (text) heard(box, box.value, text);
       else toast("Didn't catch that. Tap 🎤 Speak and try again.");
     } catch (e) {
       toast(e.waking ? 'Your worker is waking up. Try again in a minute.'
@@ -1596,6 +1601,205 @@ function stopWhenQuiet(stream, stop) {
   } catch {
     return () => {}; // no auto-stop: tap Stop
   }
+}
+
+// ---------- Understanding what you said ----------
+// Orders in what you say set the options ("to Sneaky Snitch", "15 seconds", "two videos", "slow motion",
+// "no text"); the rest, tidied up, becomes the description. Plain rules: free and instant.
+
+const NUMBERS = { one: 1, two: 2, three: 3, four: 4, five: 5, ten: 10, fifteen: 15, twenty: 20 };
+const toNumber = (w) => (/^\d+$/.test(w) ? Number(w) : NUMBERS[w.toLowerCase()]);
+const LEAD = String.raw`(?:(?:,|\band\b|\bwith\b|\bto\b|\bon\b|\bin\b|\bfor\b|\busing\b|\buse\b|\bplay(?:ing)?\b|\badd\b|\bput\b|\bmake(?:\s+it)?\b|\bset\b|\bat\b|\bthe\b)\s*)*`;
+const CUE = /\b(?:to|with|using|use|play(?:ing)?|add|put|song|music|track|tune|sound)\b/i;
+// [song, how it may be heard, needs a cue like "to" or "song" (the name is also an everyday phrase)]
+const SONG_WORDS = [
+  ['Monkeys Spinning Monkeys', String.raw`monkeys?\s+spinning\s+monkeys?|spinning\s+monkeys?`, false],
+  ['Sneaky Snitch', String.raw`sneaky\s+(?:snitch(?:es)?|snatch|switch)`, false],
+  ['Fluffing a Duck', String.raw`fluff(?:ing|in)?\s+(?:a|the)\s+duck`, false],
+  ['Scheming Weasel faster', String.raw`scheming\s+weasel`, false],
+  ['Pixel Peeker Polka - faster', String.raw`pixel\s+peek(?:er|a)(?:\s+polka)?`, false],
+  ['Investigations', String.raw`investigations?`, true],
+  ['Local Forecast - Elevator', String.raw`local\s+forecast|elevator\s+(?:music|song)`, false],
+  ['Run Amok', String.raw`run(?:ning)?\s+amok`, false],
+  ['Carefree', String.raw`care\s?free`, true],
+  ['Wallpaper', String.raw`wall\s?paper`, true],
+  ['Hitman', String.raw`hit\s?man`, true],
+  ['Spazzmatica Polka', String.raw`spaz+\s?matica(?:\s+polka)?`, false],
+  ['Hall of the Mountain King', String.raw`(?:hall\s+of\s+the\s+)?mountain\s+king`, false],
+  ['Quirky Dog', String.raw`quirky\s+dog`, true],
+  ['Kool Kats', String.raw`(?:kool|cool)\s+(?:kats|cats)`, true],
+  ['Life of Riley', String.raw`life\s+of\s+(?:riley|reilly|rily)`, false],
+];
+// The style a description sounds like, most specific first (used only while Style is still Random).
+const STYLE_WORDS = [
+  ['twerk', /\btwerk/i],
+  ['honest', /\bmoment of honesty\b|\bhonest(?:y|ly)?\b|\bguilty\b|\bcaught (?:him|her|it|red[- ]handed)\b|\bside[- ]?eye/i],
+  ['walk', /\bwalk(?:s|ing|ed)?\s+(?:like\s+a\s+(?:human|person|man|woman|boss|model)|upright|on\s+(?:its|his|her|two)\s+(?:hind\s+)?legs)\b|\bcatwalk\b|\brunway\b/i],
+  ['fight', /\b(?:fight\w*|boxing|boxer|karate|kung[- ]?fu|punch\w*|kicks?|kicking|wrestl\w*|ninja)\b/i],
+  ['sassy', /\b(?:sassy|sass|attitude|diva|drama queen|unbothered|hair flip)\b/i],
+  ['star', /\b(?:rock ?star|superstar|famous|celebrity|red carpet|on stage|concert|sing(?:s|ing|er)?|rap(?:s|ping|per)?|guitar|drums?|microphone)\b/i],
+  ['dance', /\b(?:danc\w*|moonwalk\w*|groov\w*|hip[- ]?hop|salsa|ballet)\b/i],
+  ['fail', /\b(?:fail\w*|falls?|falling|fell|slips?|slipping|slipped|trips?|tripping|tripped|faceplant\w*)\b/i],
+];
+const STYLE_NAMES = String.raw`twerk(?:ing)?|danc(?:e|ing)|walk(?:ing)?|fight(?:ing)?|fail|sassy|star|honest(?:y)?|moment\s+of\s+honesty|random`;
+
+function styleFromName(name) {
+  const n = name.toLowerCase();
+  if (n.startsWith('twerk')) return 'twerk';
+  if (n.startsWith('danc')) return 'dance';
+  if (n.startsWith('walk')) return 'walk';
+  if (n.startsWith('fight')) return 'fight';
+  if (n.startsWith('honest') || n.startsWith('moment')) return 'honest';
+  return ['fail', 'sassy', 'star', 'random'].includes(n) ? n : null;
+}
+
+// Reads orders out of what was said. Returns { text: the tidied description, orders, labels }.
+function understand(said, currentStyle) {
+  let text = ` ${said} `;
+  const orders = {};
+  const take = (pattern, fn) => {
+    const re = new RegExp(`${LEAD}\\b(?:${pattern})\\b`, 'gi');
+    text = text.replace(re, (whole, ...groups) => (fn(whole, ...groups) === false ? whole : ' '));
+  };
+  for (const [song, heardAs, needsCue] of SONG_WORDS) {
+    if (orders.track) break;
+    take(String.raw`(?:(?:the\s+)?(?:song|music|track|tune)\s+(?:called\s+)?)?(?:the\s+)?(?:${heardAs})(?:\s+(?:song|music|track|tune))?`, (whole) => {
+      if (needsCue && !CUE.test(whole)) return false;
+      orders.music = 'track';
+      orders.track = song;
+      return true;
+    });
+  }
+  take(String.raw`(?:no|without(?:\s+any)?)\s+(?:music|song|sound)`, () => { orders.music = 'none'; });
+  take(String.raw`(?:keep|use|with)\s+(?:the\s+|my\s+|its\s+)?(?:own|original)\s+sound|original\s+sound`, () => { orders.music = 'mine'; });
+  take(String.raw`(?:make|give\s+me|create|do)?\s*(\d|one|two|three|four|five)\s+(?:different\s+)?(?:videos?|versions?|variations?|takes)`, (whole, n) => {
+    const v = toNumber(n);
+    orders.count = v >= 5 ? 5 : v === 4 ? 3 : v;
+  });
+  take(String.raw`(\d{1,2}|five|ten|fifteen|twenty)[\s-]*(?:sec(?:ond)?s?|s)(?:\s+long)?`, (whole, n) => {
+    const v = toNumber(n);
+    orders.clips = v <= 7 ? 1 : v <= 12 ? 2 : 3;
+  });
+  take(String.raw`(?:in\s+)?slow[\s-]?mo(?:tion)?`, () => { orders.speed = 'slow'; });
+  take(String.raw`sped\s+up|speed\s+(?:it\s+)?up|(?:in\s+)?fast[\s-]?(?:motion|forward)|double\s+speed`, () => { orders.speed = 'fast'; });
+  take(String.raw`(?:normal|regular)\s+speed`, () => { orders.speed = 'normal'; });
+  take(String.raw`(?:no|without(?:\s+any)?)\s+(?:text|captions?|words|subtitles|writing)`, () => { orders.captions = false; });
+  take(String.raw`with\s+(?:text|captions?|subtitles)`, () => { orders.captions = true; });
+  take(String.raw`(?:full|final|finished)\s+(?:video|version)s?|(?:no|skip(?:\s+the)?|without(?:\s+a)?)\s+preview`, () => { orders.preview = false; });
+  take(String.raw`(?:a\s+)?(?:quick\s+)?previews?(?:\s+first)?`, () => { orders.preview = true; });
+  take(String.raw`(?:in\s+)?(?:the\s+)?(${STYLE_NAMES})\s+style|style\s+(?:is\s+|to\s+)?(${STYLE_NAMES})`, (whole, a, b) => {
+    const style = styleFromName(a || b || '');
+    if (!style) return false;
+    orders.style = style;
+    return true;
+  });
+
+  // Tidy what's left: chit-chat and filler words go, the description stays.
+  text = text
+    .replace(/\b(?:um+|uh+|erm+|hmm+)\b[,.]?/gi, ' ')
+    .replace(/\b(?:you know|i mean|basically|literally)\b,?/gi, ' ')
+    .replace(/\b(is|was|and|so|just)\s+like,?\s+/gi, '$1 ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^(?:(?:ok(?:ay)?|so|hey|hi|alright|all right|right|well|yeah|yes|now|please)\b[,.!]?\s*)+/i, '')
+    .replace(/^(?:i\s+(?:want|need|would\s+like|wanna\s+see)|i'?d\s+like)\s+((?:the|my|a|an|this|our|his|her)\s+[\w-]+(?:\s+[\w-]+)?)\s+to\s+/i, '$1 ')
+    .replace(/^(?:(?:i\s+(?:want|need)(?:\s+you)?\s+to|i'?d\s+like(?:\s+you)?\s+to|(?:can|could|would|will)\s+you(?:\s+please)?|please|let'?s|we'?ll|we\s+will|i'?ll|i\s+will)\s+)?(?:make|create|do|generate|show|give)\s+(?:me\s+)?(?:(?:a|an|some|one)\s+)?(?:(?:funny|cute|cool|new|short)\s+)*(?:(?:videos?|clips?|tiktoks?|memes?)\b\s*)?/i, '')
+    .replace(/^(?:(?:of|where|with|about|showing|that\s+shows|in\s+which|and|then|also)\s+)+/i, '');
+  for (let i = 0; i < 3; i++) {
+    text = text
+      .replace(/\s+([,.!?;:])/g, '$1')
+      .replace(/([,;:])\s*([,.;:])/g, '$2')
+      .replace(/([.!?])[\s.!?,;:]*[.!?,;:]/g, '$1')
+      .replace(/^[\s,.;:!?-]+|[\s,.;:!?-]+$/g, '')
+      .replace(/(?:^|\s)(?:and|with|to|then|also|for|in|on|at|use|using|make|it)$/i, '')
+      .replace(/^(?:and|with|then|also)\s+/i, '')
+      .trim();
+  }
+  if (text) text = text[0].toUpperCase() + text.slice(1);
+
+  if (!orders.style && (currentStyle || 'random') === 'random') {
+    const found = STYLE_WORDS.find(([, re]) => re.test(text));
+    if (found) orders.style = found[0];
+  }
+  return { text, orders };
+}
+
+function orderLabels(o, target) {
+  const labels = [];
+  if (o.style) labels.push(STYLES.find((x) => x.key === o.style).label);
+  if (o.music === 'track') labels.push(songLabel(o.track));
+  if (o.music === 'none') labels.push('No music');
+  if (o.music === 'mine') labels.push("Your video's sound");
+  if (o.clips) labels.push(`${o.clips * 5} sec`);
+  if (target === 'main' && o.count) labels.push(o.count === 1 ? '1 video' : `${o.count} videos`);
+  if (o.speed) labels.push({ slow: 'Slow-mo', fast: 'Fast', normal: 'Normal speed' }[o.speed]);
+  if (o.captions === false) labels.push('No text');
+  if (o.captions === true) labels.push('Text on');
+  if (target === 'main' && o.preview === false) labels.push('Full video');
+  if (target === 'main' && o.preview === true) labels.push('Quick preview');
+  return labels;
+}
+
+// Sets the options; returns a function that puts them back.
+function applyOrders(o, target) {
+  if (target === 'edit') {
+    const sel = $('#editMusic');
+    const before = { style: edit.style, len: edit.len, speed: edit.speed, music: sel.value, captions: $('#editCaptions').checked };
+    if (o.style) edit.style = o.style;
+    if (o.clips) edit.len = o.clips;
+    if (o.speed) edit.speed = o.speed;
+    if (o.captions !== undefined) $('#editCaptions').checked = o.captions;
+    const want = o.music === 'track' ? `track:${o.track}` : o.music;
+    if (want && [...sel.options].some((x) => x.value === want)) sel.value = want;
+    loadEditSongDuration();
+    renderEditor();
+    return () => {
+      Object.assign(edit, { style: before.style, len: before.len, speed: before.speed });
+      sel.value = before.music;
+      $('#editCaptions').checked = before.captions;
+      renderEditor();
+    };
+  }
+  const keys = ['style', 'music', 'track', 'clips', 'count', 'speed', 'captions', 'preview'];
+  const before = Object.fromEntries(keys.map((k) => [k, state[k]]));
+  const set = (k, v) => {
+    state[k] = v;
+    save(KEYS[k], v);
+  };
+  if (o.style) set('style', o.style);
+  if (o.music) set('music', o.music);
+  if (o.track) set('track', o.track);
+  if (o.clips) set('clips', o.clips);
+  if (o.count) set('count', o.count);
+  if (o.speed) set('speed', o.speed);
+  if (o.captions !== undefined) set('captions', o.captions);
+  if (o.preview !== undefined) set('preview', o.preview);
+  if (o.music || o.track) songChanged();
+  renderOptions();
+  return () => {
+    keys.forEach((k) => set(k, before[k]));
+    songChanged();
+    renderOptions();
+  };
+}
+
+// After speaking: apply the orders, tidy the words, and say what was understood (with Undo).
+function heard(box, before, said) {
+  const target = box.id === 'editIdea' ? 'edit' : 'main';
+  const { text, orders } = understand(said, target === 'edit' ? edit.style : state.style);
+  const labels = orderLabels(orders, target);
+  const undoOptions = applyOrders(orders, target);
+  const piece = before.trim() && text ? text[0].toLowerCase() + text.slice(1) : text; // adding to what's there
+  typed(box, piece ? joinText(before, piece, box.maxLength) : before);
+  const line = document.getElementById(`${box.id}Heard`);
+  if (!line) return;
+  line.hidden = !labels.length;
+  $('.heard-text', line).textContent = `Got it: ${labels.join(' · ')}`;
+  $('.heard-undo', line).onclick = () => {
+    undoOptions();
+    typed(box, joinText(before, said, box.maxLength));
+    line.hidden = true;
+  };
 }
 
 // ---------- Settings ----------

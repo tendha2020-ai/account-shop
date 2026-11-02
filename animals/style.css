@@ -1230,3 +1230,24 @@ dialog::backdrop {
     box-shadow: 0 0 0 6px rgba(255, 90, 54, 0.28);
   }
 }
+
+/* "Got it: Twerk · Sneaky Snitch · 15 sec" after speaking */
+.heard {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 10px;
+  margin: 8px 0 0;
+  padding: 7px 10px;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: #eaffc2;
+  font-weight: 700;
+  font-size: 0.92rem;
+}
+
+.heard .link-btn {
+  padding: 0 2px;
+  font-size: 0.9rem;
+}

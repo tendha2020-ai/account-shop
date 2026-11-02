@@ -1,6 +1,7 @@
 # ideas.py: the idea library for the Animal Antics worker.
 # Everything here is mixed at random, so every video gets different ideas.
 
+import math
 import random
 import re
 
@@ -483,11 +484,111 @@ def ideas_for_scene(scene, animal, count, template='random'):
     return picked
 
 
+# ---------- The user's own description ----------
+# Rules, not an AI model, so it's free and instant: a description that tells a little story
+# ("plays the drums, then falls off the chair") gives each clip its own part of it, and each part
+# is matched with the closest move in ACTIONS for a fitting caption (and, when the user's words are
+# short, that move's detailed body movements, which the video model follows better).
+
+_COMMON = {'the', 'and', 'then', 'with', 'his', 'her', 'its', 'like', 'into', 'for', 'this', 'that', 'they', 'some',
+           'very', 'while', 'from', 'off', 'out', 'over', 'onto', 'once', 'stand', 'hind', 'leg', 'human', 'front',
+           'paw', 'camera', 'look', 'slow', 'slowly', 'start', 'end', 'make', 'get', 'doe', 'it', 'him', 'she', 'he'}
+
+
+def _stem(word):
+    for suffix in ('ing', 'ed', 'es', 's'):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+            word = word[:-len(suffix)]
+            break
+    if len(word) > 3 and word[-1] == word[-2] and word[-1] not in 'aeiou':  # stopping -> stopp -> stop
+        word = word[:-1]
+    return word.rstrip('e') if len(word) > 3 else word
+
+
+def _stems(text):
+    return {_stem(w) for w in re.findall(r'[a-z]+', text.lower()) if len(w) > 2} - _COMMON
+
+
+_ACTION_STEMS = [_stems(a['title'] + ' ' + a['action']) for a in ACTIONS]
+_RARITY = {}
+for _found in _ACTION_STEMS:
+    for _w in _found:
+        _RARITY[_w] = _RARITY.get(_w, 0) + 1
+_RARITY = {w: math.log(len(ACTIONS) / n) for w, n in _RARITY.items()}
+
+
+def match_action(text):
+    """The move in ACTIONS closest to the text, and how close (0 = nothing in common). Words that few
+    moves use (drums, karate, twerk) count more than common ones. Ties are picked at random, so
+    "dances" gives a different dance each time."""
+    words = _stems(text)
+    scored = [(sum(_RARITY[w] for w in words & found), action) for action, found in zip(ACTIONS, _ACTION_STEMS)]
+    top = max(score for score, _ in scored)
+    if top <= 0:
+        return None, 0.0
+    return random.choice([action for score, action in scored if score >= top - 1e-9]), top
+
+
+CAPTION_MATCH = 1.5  # shares a word that at most ~11 of the 52 moves use
+DETAIL_MATCH = 2.3  # shares a word that at most ~5 moves use: safe to add that move's body movements
+
+_THEN = re.compile(r'\s*,?\s*\b(?:and then|but then|then|after that|afterwards|and finally|finally|suddenly|'
+                   r'until)\b\s*,?\s*|\s*[.;!?]+\s*', re.I)
+
+
+def split_beats(text):
+    """The parts of a little story, in order: "dances, then falls off the chair" -> 2 parts. A one-word
+    part ("then bows") stays with the part before it."""
+    beats = []
+    for beat in _THEN.split(text or ''):
+        beat = beat.strip(' ,')
+        if not beat:
+            continue
+        if beats and len(re.findall(r'[A-Za-z]+', beat)) < 2:
+            beats[-1] += f', then {beat}'
+        else:
+            beats.append(beat)
+    return beats
+
+
 def custom_ideas(text, animal, count, template='random', style=None):
-    """The user's own description for every clip, each with its own caption and (after the first) ending."""
-    return [{'title': 'Your idea', 'action': text.strip().rstrip('.'), 'custom': True,
-             'caption': _fill(random.choice(GENERIC_CAPTIONS), animal),
-             'twist': pick_twist(template) if i else '', 'style': style} for i in range(count)]
+    """The user's own description. A story is shared out over the clips (the last clip takes whatever is
+    left, and a clip to spare ends on a reaction); a single action is used for every clip, with a
+    different move or ending each time."""
+    text = text.strip().rstrip('.')
+    beats = split_beats(text) or [text]
+    story = len(beats) > 1
+    if len(beats) > count:
+        beats = beats[:count - 1] + [', then '.join(beats[count - 1:])]
+    used, out = set(), []
+
+    def fresh(options):
+        options = [c for c in options if c not in used]
+        return random.choice(options) if options else None
+
+    for i in range(count):
+        if story and i >= len(beats):  # the story is told: end on a reaction, the classic punchline
+            move = random.choice(template_moves('honest'))
+            out.append({'title': move['title'], 'action': move['action'], 'caption': fresh(move['captions'])
+                        or move['captions'][0], 'twist': '', 'style': style})
+            used.add(out[-1]['caption'])
+            continue
+        part = beats[i] if i < len(beats) else text
+        move, closeness = match_action(part)
+        action = part
+        # Short words get the matched move's detailed body movements, which the video model follows better
+        # (not for later parts of a story: a move's own setup could contradict what came before).
+        if closeness >= DETAIL_MATCH and len(part.split()) <= 6 and (not story or i == 0):
+            action = f"{part}: it {move['action']}"
+        caption = fresh(move['captions']) if closeness >= CAPTION_MATCH else None
+        if not caption and template not in ('random', '', None):
+            caption = fresh([c for m in template_moves(template) for c in m['captions']])
+        caption = caption or fresh([_fill(c, animal) for c in GENERIC_CAPTIONS]) or _fill(GENERIC_CAPTIONS[0], animal)
+        used.add(caption)
+        twist = pick_twist(template) if i and not story else ''
+        out.append({'title': 'Your idea', 'action': action, 'custom': True, 'caption': caption, 'twist': twist,
+                    'style': style})
+    return out
 
 
 def described_scene(text):

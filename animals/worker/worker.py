@@ -699,7 +699,7 @@ def get_link(job, folder):
             for name in inputs:
                 shutil.copy(folder / name, job_dir(o['id']) / name)
             picks.append(list(inputs))
-    guessed = ideas.guess_animal(text)
+    guessed = said_animal(job) or ideas.guess_animal(text)  # the user's own words first, then the video's title
     update(job, label=job.get('label') or label, animal=job.get('animal') or guessed, inputs=inputs,
            has_sound=bool(sound))
     batch = [(job, inputs + (['sound.m4a'] if sound else []))]
@@ -729,6 +729,8 @@ def process(job):
                    inputs=['input_0.jpg'])
             save(job, ['input_0.jpg'])
 
+    if job.get('animal') in (None, '', 'animal') and said_animal(job):  # e.g. an upload: no title to go by
+        update(job, animal=said_animal(job))
     animal = job.get('animal') or 'animal'
     have = job.get('ideas') or []
     if len(have) != wanted:
@@ -835,6 +837,12 @@ def process(job):
            music_used=used, music_start=round(start, 2), seconds_long=round(seconds_long, 1),
            rev=(job.get('rev') or 0) + 1)
     save(job, ['final.mp4', 'thumb.jpg'])
+
+
+def said_animal(job):
+    """The animal named in the user's description, if any."""
+    animal = ideas.guess_animal(job.get('idea') or '')
+    return '' if animal == 'animal' else animal
 
 
 def new_ideas(job, animal, count):
@@ -1387,6 +1395,8 @@ def listen(audio: UploadFile = File(...), x_antics_key: str = Header(None)):
     if len(samples) < 16000 * 0.3:
         return {'text': ''}
     with whisper_lock:  # one at a time: the CPU also makes the videos
+        # No vocabulary prompt: tried with the song and style names, it misheard more than it helped.
+        # The page matches song names loosely instead ("cool cats" -> Kool Kats).
         segments, info = whisper().transcribe(samples, beam_size=1, vad_filter=True,
                                               condition_on_previous_text=False)
         text = re.sub(r'\s+', ' ', ' '.join(s.text for s in segments)).strip()

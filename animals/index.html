@@ -64,7 +64,8 @@
                     placeholder="e.g. The cat plays the drums like a rock star, then falls off the chair"></textarea>
           <button type="button" class="mic" data-for="idea">🎤 Speak</button>
         </div>
-        <p class="fine">Type it, or tap <b>🎤 Speak</b> and say it. Every clip follows it. Leave it empty and antics picks funny ideas from the style.</p>
+        <p class="heard" id="ideaHeard" hidden><span class="heard-text"></span> <button type="button" class="link-btn heard-undo">Undo</button></p>
+        <p class="fine">Type it or tap <b>🎤 Speak</b>, orders included: "the dog twerks to Sneaky Snitch, 15 seconds, two videos". Tell a little story ("…then falls off the chair") and each clip plays its part. Empty = funny ideas from the style.</p>
       </section>
 
       <section class="block">
@@ -202,6 +203,7 @@
                   placeholder="e.g. The dog dances on the table, then slips"></textarea>
         <button type="button" class="mic" data-for="editIdea">🎤 Speak</button>
       </div>
+      <p class="heard" id="editIdeaHeard" hidden><span class="heard-text"></span> <button type="button" class="link-btn heard-undo">Undo</button></p>
 
       <h3 class="edit-label">Style</h3>
       <div class="chips-wrap" id="editStyle"></div>
