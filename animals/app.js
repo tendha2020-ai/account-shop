@@ -6,7 +6,7 @@ const HF = 'https://huggingface.co';
 const SPACE_NAME = 'antics-worker';
 const DATASET_NAME = 'antics-videos';
 const WORKER_FILES = ['Dockerfile', 'README.md', 'requirements.txt', 'worker.py', 'ideas.py', 'beats.py'];
-const WORKER_VERSION = '7'; // bump with VERSION in worker/worker.py
+const WORKER_VERSION = '8'; // bump with VERSION in worker/worker.py
 const KEYS = {
   worker: 'antics.worker', clips: 'antics.clips', captions: 'antics.captions', style: 'antics.style', music: 'antics.music',
   track: 'antics.track', part: 'antics.part', seconds: 'antics.seconds', speed: 'antics.speed', animal: 'antics.animal',
@@ -1437,6 +1437,167 @@ async function saveEdit() {
   }
 }
 
+// ---------- Speak instead of typing ----------
+// Browsers that turn speech into text themselves (Chrome, Edge, Safari) write as you talk.
+// Others record, and the worker writes it down (Whisper on its free CPU).
+
+const BrowserSpeech = window.SpeechRecognition || window.webkitSpeechRecognition;
+let browserSpeechOff = false; // the browser's speech service failed here: record for the worker instead
+let listening = null; // { stop }
+
+function joinText(before, said, max = 160) {
+  said = said.trim();
+  if (!said) return before;
+  if (!before.trim()) return (said[0].toUpperCase() + said.slice(1)).slice(0, max);
+  return (before + (/\s$/.test(before) ? '' : ' ') + said).slice(0, max);
+}
+
+function setMic(btn, mode) {
+  btn.classList.toggle('on', mode === 'on');
+  btn.disabled = mode === 'busy';
+  btn.textContent = mode === 'on' ? '■ Stop' : mode === 'busy' ? 'Writing it…' : '🎤 Speak';
+}
+
+function toggleMic(btn) {
+  if (listening) {
+    listening.stop();
+    return;
+  }
+  preview.pause();
+  const box = document.getElementById(btn.dataset.for);
+  if (BrowserSpeech && !browserSpeechOff) speakInBrowser(btn, box);
+  else recordForWorker(btn, box);
+}
+
+function typed(box, text) {
+  box.value = text;
+  box.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function speakInBrowser(btn, box) {
+  const rec = new BrowserSpeech();
+  rec.lang = navigator.language || 'en-US';
+  rec.interimResults = true;
+  rec.continuous = false; // one go: it stops by itself when you pause
+  const before = box.value;
+  let fallback = false;
+  rec.onresult = (e) => typed(box, joinText(before, Array.from(e.results, (r) => r[0].transcript).join(' '), box.maxLength));
+  rec.onerror = (e) => {
+    if (e.error === 'no-speech') toast("Didn't hear anything. Tap 🎤 Speak and talk.");
+    else if (e.error === 'not-allowed') toast('Allow the microphone for this page, then tap 🎤 Speak again.');
+    else if (e.error !== 'aborted') {
+      browserSpeechOff = true; // e.g. no speech service in this browser
+      fallback = true;
+    }
+  };
+  rec.onend = () => {
+    listening = null;
+    setMic(btn, 'idle');
+    if (fallback) {
+      toast('Say it again: recording now.');
+      recordForWorker(btn, box);
+    }
+  };
+  try {
+    rec.start();
+  } catch {
+    browserSpeechOff = true;
+    recordForWorker(btn, box);
+    return;
+  }
+  listening = { stop: () => rec.stop() };
+  setMic(btn, 'on');
+}
+
+async function recordForWorker(btn, box) {
+  if (!state.worker) {
+    toast('Set up your worker first (Settings), or type it.');
+    return;
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+    toast("This browser can't record. Tap the box and use the 🎤 on your keyboard.");
+    return;
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    toast('Allow the microphone for this page, then tap 🎤 Speak again.');
+    return;
+  }
+  const type = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm', 'audio/ogg;codecs=opus']
+    .find((t) => MediaRecorder.isTypeSupported(t));
+  const rec = new MediaRecorder(stream, type ? { mimeType: type } : {});
+  const chunks = [];
+  const stop = () => {
+    if (rec.state !== 'inactive') rec.stop();
+  };
+  const cap = setTimeout(stop, 30000);
+  const quiet = stopWhenQuiet(stream, stop);
+  rec.addEventListener('dataavailable', (e) => {
+    if (e.data.size) chunks.push(e.data);
+  });
+  rec.addEventListener('stop', async () => {
+    clearTimeout(cap);
+    quiet();
+    stream.getTracks().forEach((t) => t.stop());
+    setMic(btn, 'busy');
+    try {
+      const blob = new Blob(chunks, { type: rec.mimeType || type || 'audio/webm' });
+      const ext = /mp4/.test(blob.type) ? 'm4a' : /ogg/.test(blob.type) ? 'ogg' : 'webm';
+      const form = new FormData();
+      form.append('audio', blob, `speech.${ext}`);
+      const { text } = await api('/listen', { method: 'POST', body: form });
+      if (text) typed(box, joinText(box.value, text, box.maxLength));
+      else toast("Didn't catch that. Tap 🎤 Speak and try again.");
+    } catch (e) {
+      toast(e.waking ? 'Your worker is waking up. Try again in a minute.'
+        : e.status === 404 ? 'Update your worker (Settings) to speak in this browser.' : e.message);
+    } finally {
+      listening = null;
+      setMic(btn, 'idle');
+    }
+  });
+  rec.start();
+  listening = { stop };
+  setMic(btn, 'on');
+}
+
+// Stops a recording 2 s after you finish talking (soft speech still counts as talking). Returns a
+// function that cleans up.
+function stopWhenQuiet(stream, stop) {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    ctx.resume();
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    ctx.createMediaStreamSource(stream).connect(analyser);
+    const buf = new Float32Array(analyser.fftSize);
+    let spoke = false;
+    let quietSince = 0;
+    const timer = setInterval(() => {
+      analyser.getFloatTimeDomainData(buf);
+      let sum = 0;
+      for (const v of buf) sum += v * v;
+      const loud = Math.sqrt(sum / buf.length) > 0.01;
+      const now = performance.now();
+      if (loud) {
+        spoke = true;
+        quietSince = 0;
+      } else if (spoke) {
+        quietSince = quietSince || now;
+        if (now - quietSince > 2000) stop();
+      }
+    }, 100);
+    return () => {
+      clearInterval(timer);
+      ctx.close().catch(() => {});
+    };
+  } catch {
+    return () => {}; // no auto-stop: tap Stop
+  }
+}
+
 // ---------- Settings ----------
 
 function openUpdate() {
@@ -1736,8 +1897,10 @@ function init() {
   $('#editCancel').addEventListener('click', () => closeDialog($('#editor')));
   $('#editor').addEventListener('close', () => {
     preview.pause();
+    if (listening) listening.stop();
     edit.job = null;
   });
+  document.querySelectorAll('.mic').forEach((btn) => btn.addEventListener('click', () => toggleMic(btn)));
   $('#finishAll').addEventListener('click', finishAll);
   $('#addFriend').addEventListener('click', addFriend);
   $('#leaveInvite').addEventListener('click', leaveInvite);

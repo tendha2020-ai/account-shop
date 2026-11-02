@@ -11,6 +11,8 @@ WORKDIR /home/user/app
 
 COPY --chown=user requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
+# The speech model, so the first "Speak" doesn't wait for a download (if this fails, it downloads on first use).
+RUN python -c "from faster_whisper.utils import download_model; download_model('base')" || true
 COPY --chown=user . .
 
 EXPOSE 7860

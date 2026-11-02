@@ -59,9 +59,12 @@
 
       <section class="block">
         <h2 class="block-title">Describe your video <span class="tag-opt">optional</span></h2>
-        <textarea id="idea" class="idea" rows="3" maxlength="160"
-                  placeholder="e.g. The cat plays the drums like a rock star, then falls off the chair"></textarea>
-        <p class="fine">Type what you want to see and every clip follows it. Leave it empty and antics picks funny ideas from the style.</p>
+        <div class="idea-wrap">
+          <textarea id="idea" class="idea" rows="3" maxlength="160"
+                    placeholder="e.g. The cat plays the drums like a rock star, then falls off the chair"></textarea>
+          <button type="button" class="mic" data-for="idea">🎤 Speak</button>
+        </div>
+        <p class="fine">Type it, or tap <b>🎤 Speak</b> and say it. Every clip follows it. Leave it empty and antics picks funny ideas from the style.</p>
       </section>
 
       <section class="block">
@@ -194,8 +197,11 @@
       <p class="fine" id="editRedoHelp">↻ gives that clip a new idea and a new animation.</p>
 
       <h3 class="edit-label">What happens <span class="tag-opt">optional</span></h3>
-      <textarea id="editIdea" class="idea" rows="2" maxlength="160"
-                placeholder="e.g. The dog dances on the table, then slips"></textarea>
+      <div class="idea-wrap">
+        <textarea id="editIdea" class="idea" rows="2" maxlength="160"
+                  placeholder="e.g. The dog dances on the table, then slips"></textarea>
+        <button type="button" class="mic" data-for="editIdea">🎤 Speak</button>
+      </div>
 
       <h3 class="edit-label">Style</h3>
       <div class="chips-wrap" id="editStyle"></div>

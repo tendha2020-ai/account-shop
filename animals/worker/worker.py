@@ -9,6 +9,7 @@
 # A quick preview animates only the first clip (the rest show as still pictures). Every made clip
 # is kept, so edits to text, music or speed just re-cut the video in seconds, and Finish animates
 # only what is missing. Friends get their own invite key with a number of videos to make.
+# For browsers that can't turn speech into text themselves, the worker writes it down (Whisper).
 
 import json
 import logging
@@ -36,7 +37,7 @@ from PIL import Image, ImageDraw, ImageFont
 import beats
 import ideas
 
-VERSION = '7'
+VERSION = '8'
 HF_TOKEN = os.environ.get('HF_TOKEN') or None
 ANTICS_KEY = os.environ.get('ANTICS_KEY', '')
 DATASET = os.environ.get('ANTICS_DATASET', '')
@@ -1344,6 +1345,52 @@ def delete_job(job_id: str, x_antics_key: str = Header(None)):
         except Exception as e:
             log.warning('could not delete %s from the Hub: %s', job_id, e)
     return {'ok': True}
+
+
+# ---------- Speaking instead of typing ----------
+# Chrome, Edge and Safari turn speech into text themselves. Other browsers record and send it here:
+# Whisper (base) on this free CPU writes it down in about 2 s for 10 s of speech.
+
+whisper_model = None
+whisper_lock = threading.Lock()
+
+
+def whisper():
+    global whisper_model
+    if whisper_model is None:
+        try:
+            from faster_whisper import WhisperModel
+        except ImportError:
+            raise HTTPException(503, "This worker can't listen yet. Update it in Settings.")
+        whisper_model = WhisperModel('base', device='cpu', compute_type='int8', cpu_threads=2)
+    return whisper_model
+
+
+@app.post('/listen')
+def listen(audio: UploadFile = File(...), x_antics_key: str = Header(None)):
+    caller(x_antics_key)
+    folder = DATA / 'listen'
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / secrets.token_hex(6)
+    try:
+        with open(path, 'wb') as f:
+            shutil.copyfileobj(audio.file, f)
+        if path.stat().st_size > 20 * 1024 * 1024:
+            raise HTTPException(413, 'That recording is too long. Keep it under a minute.')
+        raw = subprocess.run(['ffmpeg', '-v', 'error', '-i', str(path), '-t', '60', '-ac', '1', '-ar', '16000',
+                              '-f', 'f32le', '-'], capture_output=True, check=True).stdout
+    except subprocess.CalledProcessError:
+        raise HTTPException(400, "That recording couldn't be read. Try again.")
+    finally:
+        path.unlink(missing_ok=True)
+    samples = np.frombuffer(raw, dtype=np.float32)
+    if len(samples) < 16000 * 0.3:
+        return {'text': ''}
+    with whisper_lock:  # one at a time: the CPU also makes the videos
+        segments, info = whisper().transcribe(samples, beam_size=1, vad_filter=True,
+                                              condition_on_previous_text=False)
+        text = re.sub(r'\s+', ' ', ' '.join(s.text for s in segments)).strip()
+    return {'text': text[:300], 'language': info.language}
 
 
 # ---------- Friends ----------
