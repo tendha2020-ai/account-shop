@@ -2070,3 +2070,445 @@ dialog {
   border: 0;
   background: none;
 }
+
+/* ===================== Posting plan (v12) ===================== */
+
+/* The strip above Your videos: "📅 Next post: today 18:30 · 3 waiting" (tap: the plan in Settings) */
+.plan-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 4px;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: #e7dcff;
+}
+
+.plan-strip.ready {
+  background: var(--lime);
+  box-shadow: 3px 3px 0 var(--ink);
+}
+
+.plan-strip-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: none;
+  padding: 6px 4px 6px 8px;
+  text-align: left;
+  font-size: 0.92rem;
+  font-weight: 800;
+  line-height: 1.25;
+  cursor: pointer;
+}
+
+.plan-strip-act {
+  flex: 0 0 auto;
+  border: 2px solid var(--ink);
+  border-radius: 99px;
+  background: var(--tomato);
+  padding: 7px 13px;
+  font-size: 0.9rem;
+  font-weight: 800;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* On the video cards: + Plan, or the 📅 In plan chip (opens the Post screen) */
+.job-actions .plan-add {
+  background: #e7dcff;
+}
+
+.job-actions .plan-in {
+  border-radius: 99px;
+  background: var(--lime);
+}
+
+/* Settings: the Posting plan box (looks like My songs and Friends) */
+.plan-box .plan-on {
+  border-bottom: 0;
+}
+
+.plan-box .plan-on small {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--soft);
+}
+
+.plan-notify {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 4px 0 6px;
+  font-weight: 700;
+}
+
+.plan-notify .plain {
+  padding: 7px 12px;
+  font-size: 0.9rem;
+}
+
+.plan-times .opt-line {
+  padding: 7px 0;
+}
+
+.plan-time {
+  width: 140px;
+}
+
+.plan-box #planTz {
+  margin: 6px 0 0;
+}
+
+.tag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-width: 0;
+  border: 2px solid var(--ink);
+  border-radius: 99px;
+  background: var(--paper);
+  padding: 0 2px 0 11px;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.tag-chip > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.tag-chip button {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  background: none;
+  font-size: 0.8rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.plan-tag-add {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.plan-tag-add .small-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+
+.plan-tag-add .plain {
+  padding: 7px 14px;
+}
+
+.plan-tag-add .plain:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.plan-queue {
+  display: grid;
+  gap: 8px;
+}
+
+.plan-queue:empty {
+  display: none;
+}
+
+/* [picture] Its name
+             Today 18:30        ▲ ▼ ✕ */
+.plan-item {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  grid-template-areas: "thumb name name" "thumb when acts";
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 2px;
+  padding: 6px 6px 6px 8px;
+  border: 2px dashed var(--ink);
+  border-radius: 12px;
+  background: var(--paper);
+}
+
+.plan-item.ready {
+  border-style: solid;
+  background: #eaffc2;
+}
+
+.plan-thumb {
+  grid-area: thumb;
+  align-self: center;
+  width: 38px;
+  aspect-ratio: 9 / 16;
+  border: 2px solid var(--ink);
+  border-radius: 7px;
+  overflow: hidden;
+  padding: 0;
+  background: repeating-linear-gradient(-45deg, #ffe2a8 0 6px, #ffd27a 6px 12px);
+  cursor: pointer;
+}
+
+.plan-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.plan-name {
+  grid-area: name;
+  min-width: 0;
+  border: 0;
+  background: none;
+  padding: 2px 0 0;
+  overflow: hidden;
+  font-weight: 800;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.plan-when {
+  grid-area: when;
+  min-width: 0;
+  color: var(--soft);
+  font-size: 0.84rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.plan-item.ready .plan-when {
+  color: var(--ink);
+}
+
+.plan-acts {
+  grid-area: acts;
+  display: flex;
+  gap: 4px;
+}
+
+.plan-acts button {
+  width: 38px;
+  height: 38px;
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  background: var(--card);
+  padding: 0;
+  font-size: 0.85rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.plan-acts button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.plan-acts .del {
+  margin-left: 4px;
+  color: #b3261e;
+}
+
+.plan-box #planUntil {
+  margin: 8px 0 0;
+}
+
+.plan-missed {
+  margin: 10px 0 0;
+  background: #fff6e0;
+  font-weight: 700;
+}
+
+.plan-done {
+  margin-top: 10px;
+}
+
+.plan-box .plan-done-item {
+  margin: 0 0 2px;
+  overflow: hidden;
+  color: var(--soft);
+  font-size: 0.86rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-box .plan-done-item.posted {
+  color: var(--ink);
+}
+
+/* The Post screen: the video, the caption, and three big numbered steps */
+.post .sheet-body h2 {
+  margin-bottom: 2px;
+}
+
+.post-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.post-media {
+  margin: 0 0 12px;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #000;
+}
+
+.post-media video {
+  display: block;
+  width: 100%;
+  max-height: 34vh;
+  background: #000;
+}
+
+.post-wait {
+  margin: 0;
+  padding: 34px 16px;
+  color: #fff;
+  font-weight: 800;
+  text-align: center;
+}
+
+.post-wait::before {
+  content: "";
+  display: block;
+  width: 26px;
+  height: 26px;
+  margin: 0 auto 10px;
+  border: 3px solid #fff;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.post-song {
+  margin-bottom: 8px;
+  padding-top: 0;
+}
+
+.post-cap .cap-head {
+  margin-bottom: 4px;
+}
+
+.post-cap .link-btn {
+  padding: 0 2px;
+  font-size: 0.85rem;
+}
+
+.post-cap .idea {
+  font-size: 15px;
+}
+
+.post-btn {
+  margin-top: 10px;
+  padding: 14px 16px;
+  font-size: 1.15rem;
+  text-align: left;
+  text-decoration: none;
+}
+
+#postCopy {
+  background: var(--sky);
+}
+
+#postDone {
+  background: var(--lime);
+}
+
+#postDone.next {
+  outline: 3px solid var(--grape);
+  outline-offset: 2px;
+}
+
+a.post-btn.off {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.post-alt {
+  margin: 6px 0 0;
+  text-align: right;
+}
+
+.post-alt .link-btn {
+  font-size: 0.88rem;
+}
+
+.post-check {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 2px dashed var(--ink);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.sheet-body .post-check-head {
+  margin: 0 0 4px;
+  font-weight: 800;
+}
+
+.post-check ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 1.2em;
+  font-size: 0.95rem;
+}
+
+.post-check li {
+  overflow-wrap: anywhere;
+}
+
+.post-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px 14px;
+  margin: 14px 0 0;
+}
+
+.post-links .link-btn {
+  font-size: 0.92rem;
+}
+
+/* A computer: the video next to the steps */
+@media (min-width: 760px) {
+  dialog.post {
+    width: min(780px, calc(100vw - 48px));
+  }
+
+  .post-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr);
+    gap: 20px;
+    align-items: start;
+  }
+
+  .post-media video {
+    max-height: 68vh;
+  }
+}
+
+.post h2:focus {
+  outline: none;
+}
+
+.sheet-body .post-cut-note {
+  margin: 0 0 6px;
+  font-weight: 700;
+}

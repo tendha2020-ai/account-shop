@@ -6,13 +6,13 @@ const HF = 'https://huggingface.co';
 const SPACE_NAME = 'antics-worker';
 const DATASET_NAME = 'antics-videos';
 const WORKER_FILES = ['Dockerfile', 'README.md', 'requirements.txt', 'worker.py', 'ideas.py', 'beats.py', 'meme.py', 'sfx.py',
-  'voice.py', 'webpush.py', 'chorus.py'];
-const WORKER_VERSION = '11'; // bump with VERSION in worker/worker.py
+  'voice.py', 'webpush.py', 'chorus.py', 'posting.py'];
+const WORKER_VERSION = '12'; // bump with VERSION in worker/worker.py
 const KEYS = {
   worker: 'antics.worker', clips: 'antics.clips', captions: 'antics.captions', style: 'antics.style', music: 'antics.music',
   track: 'antics.track', part: 'antics.part', seconds: 'antics.seconds', speed: 'antics.speed', animal: 'antics.animal',
   idea: 'antics.idea', brand: 'antics.brand', count: 'antics.count', preview: 'antics.preview', ownerBackup: 'antics.owner',
-  extras: 'antics.extras', pingAsked: 'antics.pingAsked', songId: 'antics.songId',
+  extras: 'antics.extras', pingAsked: 'antics.pingAsked', songId: 'antics.songId', planAsked: 'antics.planAsked',
 };
 // The creator's name and picture, shown in the header and stamped on every video.
 const BRAND = { name: 'TENDHA2', avatar: 'brand/tendha2.png' };
@@ -100,6 +100,10 @@ const state = {
   songs: null, // My songs: the owner's saved songs (workers with 'songs'), once loaded
   songId: null, // the saved song new videos get, while music is 'mysong'
   musicPicked: false, // music was picked on this visit (else new videos get the song set for every video)
+  plan: null, // the owner's posting plan (workers with 'plan'): the worker's GET /plan answer, once loaded
+  planAt: 0, // when it was loaded
+  openPost: null, // a plan item to open on the Post screen once the plan is loaded (from a reminder)
+  openPlan: false, // open the posting plan in Settings once it is loaded (from "Your posting plan is empty")
 };
 
 function load(key, fallback) {
@@ -123,6 +127,9 @@ function save(key, value) {
 let toastTimer;
 function toast(msg) {
   const el = $('#toast');
+  // Over an open dialog the toast goes inside it: only there does it show on top (a dialog covers the page).
+  const host = topDialog() || document.body;
+  if (el.parentNode !== host) host.appendChild(el);
   el.textContent = msg;
   el.classList.add('show');
   clearTimeout(toastTimer);
@@ -135,13 +142,14 @@ function note(el, text, kind = '') {
   el.hidden = !text;
 }
 
-async function copyText(text, done = 'Copied') {
+// host: where the stand-in box goes when the clipboard can't be reached (inside an open dialog: only that one works)
+async function copyText(text, done = 'Copied', host = document.body) {
   try {
     await navigator.clipboard.writeText(text);
   } catch {
     const ta = document.createElement('textarea');
     ta.value = text;
-    document.body.appendChild(ta);
+    host.appendChild(ta);
     ta.select();
     document.execCommand('copy');
     ta.remove();
@@ -151,9 +159,14 @@ async function copyText(text, done = 'Copied') {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+const dialogsUp = []; // dialogs in the order they were opened (the newest is on top)
+const topDialog = () => dialogsUp.filter((d) => d.open).pop() || null;
+
 function openDialog(dlg) {
   if (dlg.showModal) dlg.showModal();
   else dlg.setAttribute('open', '');
+  if (dialogsUp.includes(dlg)) dialogsUp.splice(dialogsUp.indexOf(dlg), 1);
+  dialogsUp.push(dlg);
 }
 
 function closeDialog(dlg) {
@@ -285,6 +298,7 @@ function workerChanged() {
   state.health = null;
   state.guests = null;
   state.songs = null;
+  resetPlan();
   resetPings();
   renderJobs();
   renderRole();
@@ -339,6 +353,7 @@ function leaveInvite() {
   state.jobs = [];
   state.me = null;
   state.songs = null;
+  resetPlan();
   resetPings();
   renderConnect();
   closeDialog($('#settings'));
@@ -1318,6 +1333,12 @@ function renderJobs() {
       else if (job.editable && job.made < job.wanted) add('Make the rest', 'finish', () => finishJob(job));
       if (job.editable) add('Edit', '', () => openEditor(job));
       if (!job.draft) add('Copy caption', '', () => copyText(job.caption || ''));
+      // Posting plan: a finished video can wait in line for TikTok; once it does, its chip opens the Post screen.
+      if (!job.draft && job.has_video && canPlan() && state.plan) {
+        const item = planOf(job.id);
+        if (item) add('📅 In plan', 'plan-in', () => openPost(item.id));
+        else add('+ Plan', 'plan-add', () => addToPlan(job));
+      }
     } else if (job.has_video) {
       add(job.status === 'waiting' ? '▶ Watch so far' : '▶ Last version', 'open', () => openPlayer(job));
     }
@@ -1335,6 +1356,7 @@ function renderJobs() {
   const parts = [ready && `${ready} ready`, busy && `${busy} making`].filter(Boolean);
   $('#jumpVideos').hidden = !state.jobs.length;
   $('#jumpVideos').textContent = parts.length ? `Your videos: ${parts.join(' · ')}` : `Your videos (${state.jobs.length})`;
+  renderPlanStrip();
 }
 
 function replaceJob(job) {
@@ -1369,6 +1391,7 @@ async function refreshJobs() {
     announceReady(res.jobs);
     renderPings();
     syncPings();
+    if (state.plan && Date.now() - state.planAt > 60000) loadPlan(); // (a reminder may have come meanwhile)
     const busy = res.jobs.some((j) => j.status === 'queued' || j.status === 'working');
     schedulePoll(document.hidden ? 60000 : state.watchAfter ? 2000 : busy ? 4000 : 30000);
   } catch (e) {
@@ -1454,11 +1477,13 @@ async function finishAll() {
 }
 
 async function deleteJob(job) {
-  if (!confirm('Delete this video?')) return;
+  const item = canPlan() ? planOf(job.id) : null;
+  if (!confirm(item ? 'Delete this video? It also leaves your posting plan.' : 'Delete this video?')) return;
   try {
     await api(`/jobs/${job.id}`, { method: 'DELETE' });
     state.jobs = state.jobs.filter((j) => j.id !== job.id);
     renderJobs();
+    if (item) planCall(`/plan/queue/${item.id}`, { method: 'DELETE' }, true).then((plan) => plan || loadPlan());
   } catch (e) {
     toast(e.message);
   }
@@ -2825,7 +2850,10 @@ async function startApp() {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.addEventListener('message', (e) => {
       const msg = e.data || {};
-      if (msg.type === 'antics-ready') refreshJobs();
+      if (msg.type === 'antics-ready') { // (a video is ready, or it's time to post one)
+        refreshJobs();
+        loadPlan();
+      }
       if (msg.type === 'antics-open') openFromLink(msg.url);
     });
     try {
@@ -2912,6 +2940,7 @@ async function turnOnPings() {
     await api('/push/subscribe', jsonPost(sub));
     pings.on = true;
     pings.synced = pingTarget();
+    loadPlan(); // (the posting plan stops asking for notifications)
     toast("Done. You'll get a notification when a video is ready.");
   } catch (e) {
     toast(Notification.permission === 'denied'
@@ -2937,7 +2966,10 @@ async function turnOffPings(worker = state.worker) {
   } catch {
     // already off
   }
-  if (state.worker === worker) pings.on = false;
+  if (state.worker === worker) {
+    pings.on = false;
+    loadPlan();
+  }
   renderPings();
 }
 
@@ -3073,9 +3105,19 @@ function chime() {
   });
 }
 
-// index.html#video=<id>, from a notification: open that video once the list is loaded.
+// index.html#video=<id>, from a notification: open that video once the list is loaded. A posting reminder links to
+// index.html#post=<plan item> (the Post screen) or index.html#plan (the posting plan): they open once the plan is in.
 function openFromLink(url, refresh = true) {
-  const m = String(url || '').match(/#video=([\w-]+)/);
+  const text = String(url || '');
+  const toPost = text.match(/#post=([\w-]+)/);
+  if (toPost || /#plan$/.test(text)) {
+    if (toPost) state.openPost = toPost[1];
+    else state.openPlan = true;
+    if (/^#(?:post=|plan$)/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
+    if (refresh) loadPlan();
+    return;
+  }
+  const m = text.match(/#video=([\w-]+)/);
   if (!m) return;
   state.openVideo = m[1];
   if (location.hash.startsWith('#video=')) history.replaceState(null, '', location.pathname + location.search);
@@ -3107,6 +3149,10 @@ function openSettings() {
   openDialog($('#settings'));
   if (state.worker && !isGuest()) loadFriends();
   if (state.worker && !isGuest() && canDo('songs')) loadSongs();
+  if (canPlan()) {
+    syncPlanTz(); // (the times are for where this phone is)
+    loadPlan();
+  }
 }
 
 let friendsChanged = 0; // a list fetched before the latest change is out of date
@@ -3426,6 +3472,760 @@ async function deleteSong(s) {
   }
 }
 
+// ---------- Posting plan ----------
+// The owner's plan for TikTok (workers that list 'plan'). Finished videos wait in line; at 1–3 times a day (in the
+// owner's time zone) the worker sends a reminder for the next one. The Post screen has its caption with hashtags
+// ready and shares the video to TikTok in one tap. A video with one of the owner's own songs goes as its "TikTok
+// cut": the same video without the song (TikTok mutes songs it has no rights to), and the screen says which
+// TikTok sound to add. Friends and older workers see none of it.
+
+const DEFAULT_TIMES = ['12:30', '18:30', '21:00'];
+const MAX_TAGS = 15;
+const canPlan = () => Boolean(state.worker) && !isGuest() && canDo('plan');
+const planItem = (pid) => (state.plan && state.plan.queue.find((i) => i.id === pid)) || null;
+const planOf = (jobId) => (state.plan && state.plan.queue.find((i) => i.job === jobId)) || null;
+
+function deviceTz() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  } catch {
+    return '';
+  }
+}
+
+let planSeq = 0; // every plan call gets a number: only the newest answer is shown
+let planChain = Promise.resolve(); // plan calls go one after the other, in the order they were made
+
+// Sends a plan call once the ones before it are done, and shows the plan it answers with. Returns that plan, or
+// null on trouble (said in a toast unless quiet; then the page loads what the worker has).
+function planCall(path, opts = {}, quiet = false) {
+  const asked = state.worker;
+  const n = ++planSeq;
+  const run = planChain.then(async () => {
+    if (state.worker !== asked) return null;
+    const stop = new AbortController(); // (a call stuck on a bad connection doesn't hold up the ones after it)
+    const timer = setTimeout(() => stop.abort(), 25000);
+    try {
+      const body = await api(path, { ...opts, signal: stop.signal });
+      if (state.worker === asked && n === planSeq) setPlan(body);
+      return body;
+    } catch (e) {
+      if (quiet) return null;
+      toast(e.waking ? 'Your worker is waking up. Try again in a minute.'
+        : e.name === 'AbortError' || e instanceof TypeError ? "Couldn't reach your worker. Check the internet and try again." : e.message);
+      if (state.worker === asked && n === planSeq) loadPlan();
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+  planChain = run;
+  return run;
+}
+
+// The plan as the worker has it (quietly: when it sleeps, the next check tries again).
+const loadPlan = () => (canPlan() ? planCall('/plan', {}, true) : Promise.resolve(null));
+
+function setPlan(body) {
+  if (!body || !body.plan || !Array.isArray(body.queue)) return;
+  state.plan = body;
+  state.planAt = Date.now();
+  renderJobs(); // (+ Plan or 📅 In plan on the cards, and the strip)
+  renderPlanBox();
+  renderPost();
+  showLinkedPost();
+  if (state.openPlan) {
+    state.openPlan = false;
+    openPlanBox();
+  }
+  syncPlanTz();
+}
+
+// Another worker (or one without the plan): nothing of the plan shows.
+function resetPlan() {
+  const had = Boolean(state.plan);
+  state.plan = null;
+  state.planAt = 0;
+  state.openPost = null;
+  state.openPlan = false;
+  planSeq++; // (an answer still on its way belongs to the worker before)
+  planTzSent = '';
+  if ($('#postDialog').open) closeDialog($('#postDialog'));
+  renderPlanBox();
+  if (had) renderJobs();
+  else renderPlanStrip();
+}
+
+// ---------- Posting plan: times ----------
+
+// Times as this phone shows them (12 or 24 hours, like the time boxes), in English words and digits.
+const clock12 = (() => {
+  try {
+    return ['h11', 'h12'].includes(new Intl.DateTimeFormat([], { hour: 'numeric' }).resolvedOptions().hourCycle);
+  } catch {
+    return false;
+  }
+})();
+const localTime = (date, tz) => new Intl.DateTimeFormat(clock12 ? 'en-US' : 'en-GB',
+  { timeZone: tz, hour: clock12 ? 'numeric' : '2-digit', minute: '2-digit', hourCycle: clock12 ? 'h12' : 'h23' })
+  .format(date).replace(/\s(?=[AP]M$)/, '\u00a0'); // ("7:15 PM" stays on one line)
+
+function tzUsable(tz) {
+  try {
+    new Intl.DateTimeFormat('en-GB', { timeZone: tz }).format(0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// The plan's time zone for showing times (the phone's own when it is unknown here).
+const planTz = () => {
+  const tz = state.plan && state.plan.plan.tz;
+  return tz && tzUsable(tz) ? tz : undefined;
+};
+
+// Days since 1970 of a moment, on the calendar of a time zone.
+function localDay(seconds, tz) {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, year: 'numeric', month: 'numeric', day: 'numeric' })
+    .formatToParts(new Date(seconds * 1000));
+  const get = (type) => Number(parts.find((p) => p.type === type).value);
+  return Math.round(Date.UTC(get('year'), get('month') - 1, get('day')) / 86400000);
+}
+
+// A slot as the plan shows it: "Today 18:30", "Tomorrow 12:30", "Thu 12:30" (lower: "today 18:30").
+function whenLabel(seconds, lower = false) {
+  const tz = planTz();
+  const date = new Date(seconds * 1000);
+  const days = localDay(seconds, tz) - localDay(Date.now() / 1000, tz);
+  const near = { '-1': 'Yesterday', 0: 'Today', 1: 'Tomorrow' }[days];
+  const day = near || new Intl.DateTimeFormat('en-GB', days > 1 && days < 7 ? { timeZone: tz, weekday: 'short' }
+    : { timeZone: tz, weekday: 'short', day: 'numeric', month: 'short' }).format(date);
+  return `${near && lower ? day.toLowerCase() : day} ${localTime(date, tz)}`;
+}
+
+// "Asia/Riyadh" -> "Riyadh"
+const tzName = (tz) => (!tz || tz === 'UTC' ? 'UTC' : tz.split('/').pop().replace(/_/g, ' '));
+
+// ---------- Posting plan: the strip above Your videos ----------
+
+function renderPlanStrip() {
+  const strip = $('#planStrip');
+  const body = canPlan() ? state.plan : null;
+  const queue = body ? body.queue : [];
+  strip.hidden = !body || (!body.plan.on && !queue.length);
+  if (strip.hidden) return;
+  const ready = queue.filter((i) => i.status === 'reminded');
+  const waiting = queue.filter((i) => i.status === 'waiting');
+  let text;
+  let act = '';
+  if (ready.length) {
+    text = `📅 ${ready.length} video${ready.length === 1 ? '' : 's'} ready to post`;
+    act = 'post';
+  } else if (!body.plan.on) {
+    text = '📅 Posting plan is off';
+    act = 'on';
+  } else if (waiting.length) {
+    const at = waiting[0].at || (body.next || [])[0];
+    text = `📅 Next post: ${at ? whenLabel(at, true) : 'soon'} · ${waiting.length} waiting`;
+  } else {
+    text = '📅 Your posting plan is empty · Add videos with + Plan';
+  }
+  $('#planStripMain').textContent = text;
+  const btn = $('#planStripAct');
+  btn.hidden = !act;
+  btn.dataset.act = act;
+  btn.textContent = { post: 'Post now', on: 'Turn on' }[act] || '';
+  strip.classList.toggle('ready', ready.length > 0);
+}
+
+function planStripAct() {
+  const ready = state.plan && state.plan.queue.find((i) => i.status === 'reminded');
+  if ($('#planStripAct').dataset.act === 'post' && ready) openPost(ready.id);
+  else setPlanOn(true);
+}
+
+// ---------- Posting plan: the box in Settings ----------
+
+function openPlanBox() {
+  if (!canPlan()) return;
+  if (!$('#settings').open) openSettings();
+  const box = $('#planBox');
+  if (!box.hidden) box.scrollIntoView({ block: 'start' });
+}
+
+function renderPlanBox() {
+  const box = $('#planBox');
+  const body = canPlan() ? state.plan : null;
+  box.hidden = !body;
+  if (!body) return;
+  const plan = body.plan;
+  const first = body.queue.find((i) => i.status === 'waiting');
+  $('#planOn').checked = Boolean(plan.on);
+  $('#planState').textContent = !plan.on ? 'Off' : first && first.at ? `On · next reminder ${whenLabel(first.at, true)}` : 'On';
+  // The reminders come as notifications: without them, the plan can't remind anyone.
+  $('#planNotify').hidden = Boolean(body.notify) || pings.on || !(plan.on || body.queue.length);
+  setSeg('planPerDay', plan.per_day);
+  renderPlanTimes(plan);
+  const tz = planTz();
+  $('#planTz').textContent = body.tz_ok === false
+    ? "Your worker can't read time zones yet, so the times are in UTC."
+    : `Times are for ${tzName(tz || deviceTz())} time (now ${localTime(new Date(), tz)}).`;
+  renderPlanTags(plan);
+  renderPlanQueue(body);
+}
+
+// One time input for each post of the day ("Post 1 [12:30]").
+function renderPlanTimes(plan, force = false) {
+  const box = $('#planTimes');
+  const times = planTimesShown(plan);
+  if (box.children.length !== times.length) {
+    box.innerHTML = '';
+    times.forEach((t, i) => {
+      const row = document.createElement('label');
+      row.className = 'opt-line';
+      const name = document.createElement('span');
+      name.textContent = `Post ${i + 1}`;
+      const input = document.createElement('input');
+      input.type = 'time';
+      input.className = 'small-input plan-time';
+      input.addEventListener('change', savePlanTimes);
+      row.append(name, input);
+      box.appendChild(row);
+    });
+  }
+  box.querySelectorAll('input').forEach((input, i) => {
+    if (force || document.activeElement !== input) input.value = times[i];
+  });
+}
+
+// The times in use: the first per_day of the plan's times (a missing one gets a free usual time).
+function planTimesShown(plan) {
+  const times = (plan.times || []).slice(0, plan.per_day);
+  for (const t of DEFAULT_TIMES) if (times.length < plan.per_day && !times.includes(t)) times.push(t);
+  return times;
+}
+
+function savePlanTimes() {
+  const plan = state.plan && state.plan.plan;
+  if (!plan) return;
+  const times = [...document.querySelectorAll('#planTimes input')].map((i) => i.value.slice(0, 5));
+  const fine = times.every((t) => /^([01]\d|2[0-3]):[0-5]\d$/.test(t));
+  if (!fine || new Set(times).size < times.length) {
+    if (fine) toast('Pick a different time for each post');
+    renderPlanTimes(plan, true); // (back to the times saved)
+    return;
+  }
+  planCall('/plan', jsonPost({ times }));
+}
+
+function setPerDay(n) {
+  const plan = state.plan && state.plan.plan;
+  if (!plan || plan.per_day === n) return;
+  setSeg('planPerDay', n);
+  const times = (plan.times || []).slice(0, 3);
+  for (const t of [...DEFAULT_TIMES, '09:00', '15:00']) if (times.length < n && !times.includes(t)) times.push(t);
+  planCall('/plan', jsonPost({ per_day: n, times }));
+}
+
+async function setPlanOn(on) {
+  const tz = deviceTz();
+  const sendTz = Boolean(on && tz);
+  if (sendTz) planTzSent = tz;
+  // (the times are for where this phone is: its time zone goes along. A worker that can't read that time zone
+  // keeps its own, and the plan still goes on.)
+  const body = (sendTz && await planCall('/plan', jsonPost({ on: true, tz }), true)) || await planCall('/plan', jsonPost({ on }));
+  if (!body) {
+    renderPlanBox(); // (the switch goes back)
+    return;
+  }
+  if (!on) {
+    toast('Posting plan off. Your videos stay in it.');
+    return;
+  }
+  const first = body.queue.find((i) => i.status === 'waiting');
+  toast(first && first.at ? `Posting plan on. First reminder ${whenLabel(first.at, true)}.`
+    : 'Posting plan on. Add videos with + Plan.');
+}
+
+let planTzSent = ''; // the time zone this page sent (once a visit: a worker that can't use it isn't asked again)
+
+// When the plan box is open and the worker's time zone isn't this phone's, the phone's goes to the worker.
+function syncPlanTz() {
+  const tz = deviceTz();
+  const plan = state.plan && state.plan.plan;
+  if (!plan || !tz || plan.tz === tz || planTzSent === tz || !$('#settings').open || $('#planBox').hidden) return;
+  planTzSent = tz;
+  planCall('/plan', jsonPost({ tz }), true);
+}
+
+function renderPlanTags(plan) {
+  const box = $('#planTags');
+  const tags = plan.tags || [];
+  box.innerHTML = '';
+  for (const tag of tags) {
+    const chip = document.createElement('span');
+    chip.className = 'tag-chip';
+    const name = document.createElement('span');
+    name.textContent = tag;
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.textContent = '✕';
+    x.setAttribute('aria-label', `Remove ${tag}`);
+    x.addEventListener('click', () => {
+      const now = state.plan ? state.plan.plan.tags || [] : []; // (as it is now: an earlier ✕ may still be on its way)
+      if (now.includes(tag)) setPlanTags(now.filter((t) => t !== tag));
+    });
+    chip.append(name, x);
+    box.appendChild(chip);
+  }
+  const fixed = tags.slice(0, plan.fixed || 0);
+  const always = fixed.length ? ` ${fixed.join(' ')} ${fixed.length === 1 ? 'is' : 'are'} always there, the rest change each time.`
+    : ' They change each time.';
+  $('#planTagHelp').textContent = `Up to ${plan.per_post} per video.${always}`;
+  $('#planTagAdd').disabled = tags.length >= MAX_TAGS;
+}
+
+// The hashtags change here at once, then on the worker (its answer is shown once the calls before it are back).
+function setPlanTags(tags) {
+  state.plan.plan.tags = tags;
+  renderPlanTags(state.plan.plan);
+  planCall('/plan', jsonPost({ tags }));
+}
+
+// The typed hashtags (one or more, with or without #) join the list.
+function addPlanTags() {
+  const plan = state.plan && state.plan.plan;
+  const input = $('#planTagInput');
+  if (!plan) return;
+  const tags = [...(plan.tags || [])];
+  const have = new Set(tags.map((t) => t.toLowerCase()));
+  let added = 0;
+  let twice = 0;
+  for (const word of input.value.split(/[\s,]+/)) {
+    const tag = `#${word.replace(/[^\p{L}\p{N}\p{M}_]/gu, '')}`; // (like TikTok: letters, numbers and _ only)
+    if (tag.length < 2 || [...tag].length > 50) continue;
+    if (have.has(tag.toLowerCase())) {
+      twice++;
+      continue;
+    }
+    have.add(tag.toLowerCase());
+    tags.push(tag);
+    added++;
+  }
+  if (!added) {
+    toast(!input.value.trim() ? 'Type a hashtag first, like #catsoftiktok'
+      : twice ? 'That hashtag is already there' : 'A hashtag has letters, numbers and _ only (up to 50)');
+    return;
+  }
+  if (tags.length > MAX_TAGS) {
+    toast(`You can keep up to ${MAX_TAGS} hashtags. Remove one first.`);
+    return;
+  }
+  input.value = '';
+  setPlanTags(tags);
+}
+
+function renderPlanQueue(body) {
+  const list = $('#planQueue');
+  const queue = body.queue;
+  list.innerHTML = '';
+  $('#planQueueHead').textContent = queue.length ? `Up next (${queue.length})` : 'Up next';
+  $('#planEmpty').hidden = queue.length > 0;
+  queue.forEach((item, i) => {
+    // [picture] Its name (tap: the Post screen)
+    //           Today 18:30            ▲ ▼ ✕
+    const row = document.createElement('div');
+    row.className = `plan-item${item.status === 'reminded' ? ' ready' : ''}`;
+    row.dataset.pid = item.id;
+    const thumb = document.createElement('button');
+    thumb.type = 'button';
+    thumb.className = 'plan-thumb';
+    thumb.setAttribute('aria-label', `Post ${item.label || 'this video'}`);
+    if (item.thumb) {
+      const img = document.createElement('img');
+      img.alt = '';
+      img.loading = 'lazy';
+      img.src = workerFile(item.thumb);
+      img.addEventListener('error', () => img.remove());
+      thumb.appendChild(img);
+    }
+    const name = document.createElement('button');
+    name.type = 'button';
+    name.className = 'plan-name';
+    name.textContent = item.label || 'Video';
+    const when = document.createElement('span');
+    when.className = 'plan-when';
+    when.textContent = itemWhen(item);
+    for (const b of [thumb, name]) b.addEventListener('click', () => openPost(item.id));
+    const acts = document.createElement('div');
+    acts.className = 'plan-acts';
+    const btn = (label, aria, fn, off, cls = '') => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = cls;
+      b.textContent = label;
+      b.setAttribute('aria-label', aria);
+      b.disabled = off;
+      b.addEventListener('click', fn);
+      return b;
+    };
+    acts.append(
+      btn('▲', 'Move up', () => movePlanItem(item.id, -1), i === 0),
+      btn('▼', 'Move down', () => movePlanItem(item.id, 1), i === queue.length - 1),
+      btn('✕', 'Take out of the plan', () => removePlanItem(item.id), false, 'del'),
+    );
+    row.append(thumb, name, when, acts);
+    list.appendChild(row);
+  });
+  const until = body.plan.on && body.lasts_until && queue.length;
+  $('#planUntil').hidden = !until;
+  if (until) $('#planUntil').textContent = `Enough videos until ${whenLabel(body.lasts_until, true)}.`;
+  const missed = (body.missed || []).length;
+  $('#planMissed').hidden = !missed;
+  $('#planMissed').textContent = `Missed while your worker slept: ${missed}`;
+  // The last few done: ✓ posted / skipped
+  const done = [...(body.history || [])].sort((a, b) => (b.done_at || 0) - (a.done_at || 0)).slice(0, 3);
+  const box = $('#planDone');
+  box.hidden = !done.length;
+  box.innerHTML = '';
+  for (const h of done) {
+    const line = document.createElement('p');
+    line.className = `plan-done-item ${h.status}`;
+    line.textContent = `${h.status === 'posted' ? '✓ Posted' : 'Skipped'} · ${h.label || 'Video'}`;
+    box.appendChild(line);
+  }
+}
+
+function itemWhen(item) {
+  const by = item.by ? ` · by ${item.by}` : '';
+  if (item.status === 'reminded') return `Ready to post${by}`;
+  return `${item.at ? whenLabel(item.at) : 'Waiting (the plan is off)'}${by}`;
+}
+
+// A file of the worker by its path ("/jobs/<id>/thumb"), with the key.
+function workerFile(path) {
+  const w = state.worker;
+  const url = /^https?:\/\//.test(path) ? path : `${w.url}${path.startsWith('/') ? '' : '/'}${path}`;
+  return `${url}${url.includes('?') ? '&' : '?'}key=${encodeURIComponent(w.key)}`;
+}
+
+// ▲ ▼: the line changes here at once (each place keeps its time), then on the worker.
+function movePlanItem(pid, step) {
+  const queue = state.plan ? state.plan.queue : [];
+  const i = queue.findIndex((x) => x.id === pid);
+  const j = i + step;
+  if (i < 0 || j < 0 || j >= queue.length) return;
+  [queue[i], queue[j]] = [queue[j], queue[i]];
+  if (queue[i].status === 'waiting' && queue[j].status === 'waiting') [queue[i].at, queue[j].at] = [queue[j].at, queue[i].at];
+  renderJobs();
+  renderPlanBox();
+  planCall('/plan/queue/order', jsonPost({ ids: queue.map((x) => x.id) }));
+}
+
+async function removePlanItem(pid) {
+  if (await planCall(`/plan/queue/${pid}`, { method: 'DELETE' })) toast('Taken out of your posting plan');
+}
+
+const adding = new Set(); // videos + Plan is being sent for (a second tap is one too many)
+
+async function addToPlan(job) {
+  if (adding.has(job.id)) return;
+  adding.add(job.id);
+  let body = null;
+  try {
+    body = await planCall('/plan/queue', jsonPost({ jobs: [job.id], where: 'end' }));
+  } finally {
+    adding.delete(job.id);
+  }
+  if (!body) return;
+  if (!body.plan.on && !load(KEYS.planAsked, false)) { // the first time: where to turn it on
+    save(KEYS.planAsked, true);
+    openPlanBox();
+  }
+  toast('Added to your posting plan');
+}
+
+// ---------- Posting plan: the Post screen ----------
+// The video (its TikTok cut when that is the choice), the caption, and three big numbered steps. The video file is
+// fetched when the screen opens, so "Share to TikTok" opens the share sheet straight from the tap.
+
+const post = { pid: null, src: '', blob: null, blobUrl: '', tries: 0, failed: false, save: false, shared: false, timer: null, shown: null };
+
+function openPost(pid) {
+  if (!planItem(pid)) {
+    toast('That video is no longer in your posting plan.');
+    return;
+  }
+  const dlg = $('#postDialog');
+  if (post.pid !== pid) clearPost();
+  post.pid = pid;
+  post.save = !canShareFiles();
+  if (!dlg.open) openDialog(dlg);
+  dlg.scrollTop = 0;
+  renderPost();
+  $('#postVideo').play().catch(() => {});
+}
+
+// A reminder's #post=<item>, once the plan is in.
+function showLinkedPost() {
+  const pid = state.openPost;
+  if (!pid || !state.plan) return;
+  state.openPost = null;
+  if (planItem(pid)) {
+    [...document.querySelectorAll('dialog')].forEach((d) => d.open && d.id !== 'postDialog' && closeDialog(d));
+    openPost(pid);
+    return;
+  }
+  const done = (state.plan.history || []).find((h) => h.id === pid);
+  toast(!done ? 'That video is no longer in your posting plan.'
+    : done.status === 'posted' ? 'You posted that one already.' : 'You skipped that one.');
+}
+
+function clearPost() {
+  clearTimeout(post.timer);
+  if (post.blobUrl) URL.revokeObjectURL(post.blobUrl);
+  Object.assign(post, { pid: null, src: '', blob: null, blobUrl: '', tries: 0, failed: false, shared: false, timer: null, shown: null });
+  const video = $('#postVideo');
+  video.pause();
+  video.removeAttribute('src');
+  delete video.dataset.src;
+  video.load();
+}
+
+function canShareFiles() {
+  try {
+    return Boolean(navigator.share && navigator.canShare
+      && navigator.canShare({ files: [new File([new Uint8Array(8)], 'antics.mp4', { type: 'video/mp4' })] }));
+  } catch {
+    return false;
+  }
+}
+
+// The worker couldn't make the TikTok cut of this version (it tries again after an edit or a restart): the Post
+// screen then has the video as it was made, so it can still be posted.
+const cutFailed = (item) => item.audio === 'no_song' && !item.cut_ready && Boolean(item.cut_failed);
+
+// The video for TikTok: the cut without the song (audio 'no_song'), or the video as it was made.
+function postVideoUrl(item, cut) {
+  const w = state.worker;
+  const job = state.jobs.find((j) => j.id === item.job);
+  const v = cut ? `cut${item.cut_rev ?? ''}` : job ? job.rev ?? 0 : `plan${item.cut_rev ?? ''}`;
+  return `${w.url}/jobs/${item.job}/video?key=${encodeURIComponent(w.key)}${cut ? '&cut=tiktok' : ''}&v=${v}`;
+}
+
+function renderPost() {
+  if (!post.pid) return;
+  const dlg = $('#postDialog');
+  const item = planItem(post.pid);
+  if (!item) { // posted, skipped or taken out (maybe on another phone)
+    if (dlg.open) closeDialog(dlg);
+    return;
+  }
+  const job = state.jobs.find((j) => j.id === item.job);
+  $('#postSub').textContent = [item.label, item.by && `by ${item.by}`].filter(Boolean).join(' · ');
+  const cut = item.audio === 'no_song' && Boolean(item.cut_ready); // (shared without the song)
+  const failed = cutFailed(item); // (the cut couldn't be made: the video as it was made instead)
+  const ready = item.audio !== 'no_song' || cut || failed;
+  $('#postWait').hidden = ready;
+  $('#postVideo').hidden = !ready;
+  $('#postCutNote').hidden = !(cut && item.song); // (so a missing song doesn't look like a mistake)
+  $('#postCutFail').hidden = !failed;
+  setPostVideo(ready ? postVideoUrl(item, cut) : '');
+  const poster = item.thumb ? workerFile(item.thumb) : '';
+  if ($('#postVideo').getAttribute('poster') !== poster) $('#postVideo').setAttribute('poster', poster);
+  $('#postSongLine').hidden = failed || !(item.song || (job && ['mysong', 'upload'].includes(job.music)));
+  $('#postSongOpt').checked = item.audio === 'as_made';
+  // The caption: the worker's, unless it is being changed here and not saved yet.
+  const ta = $('#postCaption');
+  if (post.shown === null || ta.value === post.shown) {
+    ta.value = item.caption || '';
+    post.shown = ta.value;
+  }
+  $('#postReset').hidden = !item.custom;
+  renderPostSteps(item, ready);
+  pollCut(item);
+}
+
+// The video is downloaded once: the file fetched for the share sheet is also the one that plays (data-src: the
+// worker address it came from). Until it is in, the video's picture shows.
+function setPostVideo(src) {
+  if (src === post.src) return;
+  if (post.blobUrl) URL.revokeObjectURL(post.blobUrl);
+  Object.assign(post, { src, blob: null, blobUrl: '', tries: 0, failed: false });
+  const video = $('#postVideo');
+  video.dataset.src = src;
+  video.removeAttribute('src');
+  video.load();
+  if (src) fetchPostVideo(src);
+}
+
+// The fetched file plays (or, when it couldn't be fetched or played here, the video from the worker).
+function playPostVideo(fromWorker = false) {
+  const video = $('#postVideo');
+  const src = fromWorker || !post.blob ? post.src : postBlobUrl();
+  if (!src || video.getAttribute('src') === src) return;
+  video.src = src;
+  if ($('#postDialog').open) video.play().catch(() => {});
+}
+
+// The file for the share sheet. A miss is tried again a few times (4 s apart), then "Save video" opens it instead.
+function fetchPostVideo(src) {
+  fetch(src)
+    .then((r) => (r.ok ? r.blob() : null))
+    .catch(() => null)
+    .then((blob) => {
+      if (post.src !== src) return;
+      if (blob) {
+        post.blob = blob.type ? blob : blob.slice(0, blob.size, 'video/mp4');
+        post.tries = 0;
+        playPostVideo();
+      } else if (++post.tries < 4) {
+        setTimeout(() => {
+          if (post.src === src && $('#postDialog').open) fetchPostVideo(src);
+        }, 4000);
+      } else {
+        post.failed = true;
+        playPostVideo(true);
+      }
+      const item = planItem(post.pid);
+      if (item) renderPostSteps(item, true);
+    });
+}
+
+const postBlobUrl = () => {
+  if (!post.blobUrl && post.blob) post.blobUrl = URL.createObjectURL(post.blob);
+  return post.blobUrl;
+};
+
+// Step 2 (Share to TikTok, or Save video where sharing a file can't work) and the checklist for TikTok.
+function renderPostSteps(item, ready) {
+  const save = post.save || post.failed;
+  const share = $('#postShare');
+  share.hidden = save;
+  share.disabled = !ready || !post.blob;
+  share.textContent = ready && !post.blob ? '2 · Getting the video…' : '2 · Share to TikTok';
+  const link = $('#postSave');
+  link.hidden = !save;
+  const href = ready ? (post.blob ? postBlobUrl() : post.src) : '';
+  if (href) link.href = href;
+  else link.removeAttribute('href');
+  link.classList.toggle('off', !href);
+  $('#postAltLine').hidden = save || !post.blob;
+  $('#postDone').classList.toggle('next', post.shared);
+  const list = $('#postList');
+  list.textContent = '';
+  const line = (...pieces) => {
+    const li = document.createElement('li');
+    for (const [text, bold] of pieces) {
+      const el = bold ? document.createElement('b') : document.createTextNode(text);
+      if (bold) el.textContent = text;
+      li.appendChild(el);
+    }
+    list.appendChild(li);
+  };
+  if (save) line(['Open TikTok, tap '], ['+', true], [', then '], ['Upload', true], [' and pick the video']);
+  line(['Paste the caption']);
+  const song = item.song && !cutFailed(item) ? item.song : null;
+  const named = song && song.name && song.name !== 'your song'; // (an uploaded song without a name: the same one)
+  if (named) line(['Add sound: '], [song.name, true], [` — start at ${clock(song.start || 0)}`]);
+  else if (song) line(['Add sound: '], ['the same song', true], [` from TikTok's sounds — start at ${clock(song.start || 0)}`]);
+  line(['More options → '], ['AI-generated content: ON', true]);
+  line(['Post']);
+}
+
+// While the TikTok cut is being made: look again every 4 s.
+function pollCut(item) {
+  clearTimeout(post.timer);
+  if (!$('#postDialog').open || item.audio !== 'no_song' || item.cut_ready || cutFailed(item)) return;
+  post.timer = setTimeout(() => loadPlan().then(() => {
+    const now = planItem(post.pid);
+    if (now) pollCut(now);
+  }), 4000);
+}
+
+async function sharePost() {
+  const blob = post.blob;
+  if (!blob) return;
+  const file = new File([blob], 'antics.mp4', { type: 'video/mp4' });
+  if (!(navigator.canShare && navigator.canShare({ files: [file] }))) {
+    post.save = true;
+  } else {
+    try {
+      await navigator.share({ files: [file] });
+      post.shared = true; // step 3 next
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+      post.save = true;
+      toast("Sharing didn't work here. Save the video, then post it in TikTok.");
+    }
+  }
+  const item = planItem(post.pid);
+  if (item) renderPostSteps(item, true);
+}
+
+function savePostVideo() {
+  const href = post.blob ? postBlobUrl() : post.src;
+  if (!href) return;
+  const a = document.createElement('a');
+  a.href = href;
+  a.download = 'antics.mp4';
+  $('#postDialog').appendChild(a);
+  a.click();
+  a.remove();
+}
+
+// The caption box: a change is saved when you leave the box. Both of the item's choices go along every time, as
+// this screen has them, so the worker ends up with exactly what is shown.
+function savePostCaption() {
+  const item = planItem(post.pid);
+  const ta = $('#postCaption');
+  if (!item) return;
+  const text = ta.value.trim();
+  post.shown = ta.value;
+  if (text === (item.caption || '').trim()) return;
+  if (text) Object.assign(item, { caption: text, custom: true });
+  else item.custom = false; // (empty: the automatic caption again)
+  $('#postReset').hidden = !item.custom;
+  planCall(`/plan/queue/${item.id}`, jsonPost({ caption: text || null, audio: item.audio }));
+}
+
+function resetPostCaption() {
+  const item = planItem(post.pid);
+  if (!item) return;
+  item.custom = false;
+  post.shown = $('#postCaption').value; // (the automatic caption takes its place when the worker answers)
+  $('#postReset').hidden = true;
+  planCall(`/plan/queue/${item.id}`, jsonPost({ caption: null, audio: item.audio }));
+}
+
+function setPostAudio(withSong) {
+  const item = planItem(post.pid);
+  if (!item) return;
+  item.audio = withSong ? 'as_made' : 'no_song';
+  planCall(`/plan/queue/${item.id}`, jsonPost({ caption: item.custom ? item.caption : null, audio: item.audio }));
+}
+
+let finishing = ''; // the video "I posted it" or "Skip this one" is being sent for (a second tap waits for it)
+
+async function finishPost(result) {
+  const item = planItem(post.pid);
+  if (!item || finishing) return;
+  finishing = item.id;
+  const buttons = [$('#postDone'), $('#postSkip')];
+  buttons.forEach((b) => { b.disabled = true; });
+  let body = null;
+  try {
+    body = await planCall(`/plan/queue/${item.id}/done`, jsonPost({ result }));
+  } finally {
+    finishing = '';
+    buttons.forEach((b) => { b.disabled = false; });
+  }
+  if (!body) return;
+  if (post.pid === item.id) closeDialog($('#postDialog'));
+  toast(result === 'posted' ? 'Nice! Marked as posted.' : 'Skipped. The next video is up.');
+}
+
 async function refreshHealth() {
   const asked = state.worker;
   let health;
@@ -3439,6 +4239,8 @@ async function refreshHealth() {
   state.health = health;
   if (!canDo('songs')) state.songs = null;
   else if (!state.songs) loadSongs();
+  if (!canPlan()) resetPlan();
+  else if (!state.plan) loadPlan();
   renderPc();
   renderOptions(); // (the song tiles show or go with the worker's 'songs')
   renderSongsBox();
@@ -3527,6 +4329,7 @@ function renderSettings() {
   }
   renderPc();
   renderSongsBox();
+  renderPlanBox();
   renderPings();
 }
 
@@ -3735,6 +4538,7 @@ function init() {
     save(KEYS.worker, null);
     state.jobs = [];
     state.songs = null;
+    resetPlan();
     resetPings();
     renderJobs();
     renderWorkerDot(false);
@@ -3758,10 +4562,40 @@ function init() {
     state.playing = null;
   });
 
+  // Posting plan: the strip, the box in Settings, and the Post screen
+  $('#planStripMain').addEventListener('click', openPlanBox);
+  $('#planStripAct').addEventListener('click', planStripAct);
+  $('#planOn').addEventListener('change', (e) => setPlanOn(e.target.checked));
+  document.querySelectorAll('#planPerDay button').forEach((b) => b.addEventListener('click', () => setPerDay(Number(b.dataset.v))));
+  $('#planTagAdd').addEventListener('click', addPlanTags);
+  $('#planTagInput').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    addPlanTags();
+  });
+  $('#planNotifyBtn').addEventListener('click', () => {
+    if (iosTab()) $('#appBox').scrollIntoView({ behavior: 'smooth', block: 'center' }); // (the Home Screen steps)
+    turnOnPings();
+  });
+  $('#postCopy').addEventListener('click', () => copyText($('#postCaption').value, 'Caption copied', $('#postDialog')));
+  $('#postShare').addEventListener('click', sharePost);
+  $('#postSaveAlt').addEventListener('click', savePostVideo);
+  $('#postVideo').addEventListener('error', () => { // (a phone that can't play the fetched file: from the worker then)
+    if (/^blob:/.test($('#postVideo').getAttribute('src') || '')) playPostVideo(true);
+  });
+  $('#postCaption').addEventListener('change', savePostCaption);
+  $('#postReset').addEventListener('click', resetPostCaption);
+  $('#postSongOpt').addEventListener('change', (e) => setPostAudio(e.target.checked));
+  $('#postDone').addEventListener('click', () => finishPost('posted'));
+  $('#postSkip').addEventListener('click', () => finishPost('skipped'));
+  $('#postLater').addEventListener('click', () => closeDialog($('#postDialog')));
+  onClosed($('#postDialog'), clearPost);
+
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {
       clearReady();
       refreshJobs();
+      if (state.plan) loadPlan(); // (back from TikTok, or a reminder came)
     }
   });
 

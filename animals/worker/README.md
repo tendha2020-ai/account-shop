@@ -21,3 +21,14 @@ Whisper "base" model the worker already has for speech; every video with that so
 
 "Your video is ready" notifications use Web Push (webpush.py, with the cryptography package, Apache-2.0/BSD).
 The worker's push key and the phones to notify are kept in `push.json` in the same private dataset.
+
+The Posting plan (posting.py) is kept in `posting.json` in the same private dataset: the queue of videos to post,
+when to remind (1-3 times a day, in the owner's time zone; the `tzdata` package has the time zones), the hashtags,
+and which reminders already went. The owner posts by hand with Share to TikTok. A video made with the owner's own
+song is shared as its TikTok cut, `tiktok.mp4` (the same video without the song, cut on the worker's CPU), and
+TikTok's own sound is added when posting. If the cut can't be made, the plan offers the video as it was made.
+The cut is deleted again once the video is posted, skipped or taken out of the plan.
+
+If one of these files (`guests.json`, `push.json`, `songs.json`, `posting.json`, or a video's `job.json`) can't be
+read from the Hub when the worker starts, it is never saved over, and the worker reads it again every minute.
+Meanwhile the friends, notifications, songs or plan answer "still loading" (503), and that video doesn't show yet.

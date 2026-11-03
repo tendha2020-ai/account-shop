@@ -21,8 +21,12 @@
 # notification (Web Push, webpush.py), also when antics is closed.
 # My songs: the owner keeps up to 10 full songs (the account's own sound). Each is cut to its meme part, found
 # by chorus.py when it is added (and adjustable), so every video with that song starts right there.
+# The Posting plan (posting.py): the owner queues finished videos and gets a reminder at 1-3 times a day, with the
+# caption and its hashtags ready, and posts with Share to TikTok. A video with the owner's own song is shared as
+# its TikTok cut (the same video without the song: TikTok mutes songs baked into a file); TikTok's sound is added.
 
 import collections
+import copy
 import json
 import logging
 import os
@@ -38,6 +42,7 @@ import time
 from contextlib import asynccontextmanager
 from io import BytesIO
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit
 
 import numpy as np
@@ -71,8 +76,13 @@ try:  # finding a song's meme part (if it is missing or broken, a saved song sta
 except Exception as e:
     logging.getLogger('antics').warning('no meme-part finder: %s', e)
     chorus = None
+try:  # the Posting plan (if its file is missing or broken, the worker runs without it and the page doesn't offer it)
+    import posting
+except Exception as e:
+    logging.getLogger('antics').warning('no posting plan: %s', e)
+    posting = None
 
-VERSION = '11'
+VERSION = '12'
 HF_TOKEN = os.environ.get('HF_TOKEN') or None
 ANTICS_KEY = os.environ.get('ANTICS_KEY', '')
 DATASET = os.environ.get('ANTICS_DATASET', '')
@@ -245,6 +255,102 @@ def update(job, **fields):
     (job_dir(job['id']) / 'job.json').write_text(json.dumps(job))
 
 
+# Dataset files that are there but couldn't be read when the worker started (the Hub can answer 429 or 503 for a
+# moment). Until one is read, it is never saved over (that would wipe what it holds: the friends, the songs, the
+# phones, the posting plan), what it holds can't be seen or changed (503: still loading, try again in a minute),
+# and the worker tries again every minute (and when it is asked for, at most every READ_AGAIN seconds).
+unread = {}  # its path in the dataset -> the function that loads its text
+unread_tried = {}  # its path -> when it was last tried
+unread_reading = set()  # being read again right now (one read of a file at a time)
+unread_lock = threading.Lock()
+HUB_TRIES = 3  # reads of a file when the worker starts
+HUB_WAIT = 2.0  # seconds before the 2nd read (twice that before the 3rd)
+HUB_WAIT_MAX = 30.0  # waiting at most this long in all, so a Hub that is down doesn't hold up the start
+READ_AGAIN = 20
+JOBS_AGAIN = 10  # videos (job.json) tried again in one round
+hub_waited = [0.0]
+
+
+def hub_text(name, tries=HUB_TRIES):
+    """A dataset file's text. Read again a few times when it fails: the Hub can be busy for a moment."""
+    from huggingface_hub import hf_hub_download
+    for n in range(tries):
+        try:
+            return Path(hf_hub_download(DATASET, name, repo_type='dataset', token=HF_TOKEN)).read_text()
+        except Exception as e:
+            wait = HUB_WAIT * (n + 1)
+            if n + 1 >= tries or hub_waited[0] + wait > HUB_WAIT_MAX:
+                raise
+            log.warning('reading %s from the Hub failed (%s); trying again', name, e)
+            hub_waited[0] += wait
+            time.sleep(wait)
+
+
+def read_hub(name, loader, tries=HUB_TRIES):
+    """Loads a dataset file with loader(text). When it can't be read, it waits in `unread` to be tried again.
+    True when it was read (a file that was read but is broken counts: reading it again wouldn't help)."""
+    try:
+        text = hub_text(name, tries)
+    except Exception as e:
+        log.warning('could not read %s from the Hub (%s); trying again in a minute', name, e)
+        with unread_lock:
+            unread[name] = loader
+            unread_tried[name] = time.time()
+        return False
+    try:
+        loader(text)
+    except Exception as e:
+        log.warning('could not load %s: %s', name, e)
+    with unread_lock:
+        unread.pop(name, None)
+    return True
+
+
+def is_unread(name):
+    with unread_lock:
+        return name in unread
+
+
+def read_again(names=None, now_anyway=True):
+    """Tries the files that couldn't be read once more (each at most every READ_AGAIN seconds unless now_anyway;
+    a few videos a round). What was waiting for one runs once it is read."""
+    with unread_lock:
+        todo = [(name, loader) for name, loader in unread.items() if (names is None or name in names)
+                and name not in unread_reading
+                and (now_anyway or time.time() - unread_tried.get(name, 0) >= READ_AGAIN)]
+        videos = [x for x in todo if x[0].endswith('/job.json')][:JOBS_AGAIN]
+        todo = [x for x in todo if not x[0].endswith('/job.json')] + videos
+        for name, _ in todo:
+            unread_tried[name] = time.time()
+            unread_reading.add(name)
+    for name, loader in todo:
+        try:
+            if read_hub(name, loader, tries=1):
+                log.info('%s read from the Hub at last', name)
+                after_read(name)
+        finally:
+            with unread_lock:
+                unread_reading.discard(name)
+
+
+def after_read(name):
+    """What waited for a file that was read late."""
+    if name == 'posting.json':
+        plan_cuts()
+    with unread_lock:
+        videos_all_read = not any(n.endswith('/job.json') for n in unread)
+    if videos_all_read and (name.endswith('/job.json') or name == 'posting.json'):
+        drop_lost()
+
+
+def need_read(name, what):
+    """503 while that file is still unread (it is tried once more first)."""
+    if is_unread(name):
+        read_again([name], now_anyway=False)
+    if is_unread(name):
+        raise HTTPException(503, f'{what} still loading. Try again in a minute.')
+
+
 guests = {}  # friend id -> {id, name, key, uses_left, used, created, host}
 guests_lock = threading.Lock()
 guests_saving = threading.Lock()
@@ -252,6 +358,8 @@ guests_saving = threading.Lock()
 
 def save_guests():
     """Friends and their remaining videos, kept with the videos so they survive restarts."""
+    if is_unread('guests.json'):  # (it would wipe the friends that couldn't be read)
+        return
     with guests_saving:  # one save at a time, each with the newest numbers
         with guests_lock:
             data = json.dumps(guests)
@@ -275,6 +383,8 @@ push_saving = threading.Lock()
 
 def save_push():
     """Who gets a notification when a video is ready, and the key they were set up with."""
+    if is_unread('push.json'):  # (it would wipe the phones that couldn't be read)
+        return
     with push_saving:  # one save at a time, each with the newest list
         with push_lock:
             data = json.dumps(push)
@@ -287,6 +397,15 @@ def save_push():
                             repo_type='dataset', commit_message='notifications')
         except Exception as e:
             log.warning('saving notifications to the Hub failed: %s', e)
+
+
+def load_guests(text):
+    try:
+        got = json.loads(text)
+        with guests_lock:
+            guests.update({k: v for k, v in got.items() if isinstance(v, dict) and v.get('key')})
+    except Exception as e:  # (no friends is better than no worker)
+        log.warning('could not load friends: %s', e)
 
 
 def load_push(text):
@@ -318,6 +437,8 @@ def song_file(song_id):
 
 def save_songs(added=(), removed=()):
     """The song list (and any song file added or removed) to the Hub in one commit."""
+    if is_unread('songs.json'):  # (it would wipe the songs that couldn't be read)
+        return
     with songs_saving:  # one save at a time, each with the newest list
         with songs_lock:
             data = json.dumps(songs)
@@ -350,11 +471,67 @@ def load_songs(text):
         log.warning('could not load songs: %s', e)
 
 
+# The Posting plan (posting.py): the settings, the queue of videos to post, what was posted, which reminder times
+# already went. Kept in posting.json with the videos (the private dataset), so it survives restarts and updates.
+# There are no secrets in it.
+plan_state = posting.fresh() if posting else {}
+plan_lock = threading.Lock()
+plan_saving = threading.Lock()
+
+
+def save_plan():
+    """The posting plan, here and in the dataset. The scheduler saves before a reminder goes, so a restart never
+    sends one twice."""
+    if is_unread('posting.json'):  # (it would wipe the plan that couldn't be read)
+        return
+    with plan_saving:  # one save at a time, each with the newest plan
+        with plan_lock:
+            data = json.dumps(plan_state)
+        path, part = DATA / 'posting.json', DATA / 'posting.json.part'
+        part.write_text(data)
+        os.replace(part, path)  # (never half a file)
+        if not hub:
+            return
+        try:
+            hub.upload_file(path_or_fileobj=str(path), path_in_repo='posting.json', repo_id=DATASET,
+                            repo_type='dataset', commit_message='posting plan')
+        except Exception as e:
+            log.warning('saving the posting plan to the Hub failed: %s', e)
+
+
+def load_plan(text):
+    try:
+        got = posting.load(json.loads(text))
+        with plan_lock:
+            plan_state.clear()
+            plan_state.update(got)
+    except Exception as e:  # (no plan is better than no worker)
+        log.warning('could not load the posting plan: %s', e)
+
+
+def load_job(text):
+    """One video's job.json (a video that was read late: back in line if it wasn't finished)."""
+    job = json.loads(text)
+    with jobs_lock:
+        if job['id'] in jobs:
+            return
+        jobs[job['id']] = job
+    if threads_up.is_set():
+        if job['status'] in ('queued', 'working'):
+            job['status'] = 'queued'
+            enqueue(job)
+        want_cut(job)
+
+
+threads_up = threading.Event()  # the worker's own threads run (a video read late can go in line)
+
+
 def load_jobs():
     """Bring back jobs after a restart and put unfinished ones back in line."""
     global hub, token_ok
+    names = None
     if DATASET and HF_TOKEN:
-        from huggingface_hub import HfApi, hf_hub_download
+        from huggingface_hub import HfApi
         try:
             api = HfApi(token=HF_TOKEN)
             api.create_repo(DATASET, repo_type='dataset', private=True, exist_ok=True)
@@ -364,29 +541,14 @@ def load_jobs():
             # Keep running so the app can tell the user to paste a new key, instead of crashing.
             log.error('the Hugging Face key does not work (%s); saved videos are unavailable', e)
             token_ok, names = False, []
+        loaders = {'guests.json': load_guests, 'push.json': load_push, 'songs.json': load_songs}
+        if posting:
+            loaders['posting.json'] = load_plan
         for name in names:
-            if name == 'guests.json':
-                try:
-                    guests.update(json.loads(Path(hf_hub_download(DATASET, name, repo_type='dataset',
-                                                                  token=HF_TOKEN)).read_text()))
-                except Exception as e:
-                    log.warning('could not load friends: %s', e)
-            if name == 'push.json':
-                try:
-                    load_push(Path(hf_hub_download(DATASET, name, repo_type='dataset', token=HF_TOKEN)).read_text())
-                except Exception as e:
-                    log.warning('could not load notifications: %s', e)
-            if name == 'songs.json':
-                try:
-                    load_songs(Path(hf_hub_download(DATASET, name, repo_type='dataset', token=HF_TOKEN)).read_text())
-                except Exception as e:
-                    log.warning('could not load songs: %s', e)
-            if name.endswith('/job.json'):
-                try:
-                    job = json.loads(Path(hf_hub_download(DATASET, name, repo_type='dataset', token=HF_TOKEN)).read_text())
-                    jobs[job['id']] = job
-                except Exception as e:
-                    log.warning('could not load %s: %s', name, e)
+            if name in loaders:
+                read_hub(name, loaders[name])
+            elif name.endswith('/job.json'):
+                read_hub(name, load_job)
     else:
         for path in (DATA / 'jobs').glob('*/job.json'):
             job = json.loads(path.read_text())
@@ -397,11 +559,51 @@ def load_jobs():
             load_push((DATA / 'push.json').read_text())
         if (DATA / 'songs.json').exists():
             load_songs((DATA / 'songs.json').read_text())
+        if (DATA / 'posting.json').exists() and posting:
+            load_plan((DATA / 'posting.json').read_text())
+    have = set(names) if names is not None else None
+    for job in jobs.values():  # (a TikTok cut that is gone, e.g. deleted after it was posted: cut again if needed)
+        if job.get('tiktok_rev') is None:
+            continue
+        name = f"jobs/{job['id']}/tiktok.mp4"
+        if not (name in have if have is not None else (DATA / name).exists()):
+            job['tiktok_rev'] = None
     for job in sorted(jobs.values(), key=lambda j: (j['created'], j.get('index', 0))):  # oldest first
         if job['status'] in ('queued', 'working'):
             job['status'] = 'queued'
             enqueue(job)
-    log.info('loaded %d jobs, %d friends and %d songs', len(jobs), len(guests), len(songs))
+    with unread_lock:
+        videos_all_read = not any(n.endswith('/job.json') for n in unread)
+    if videos_all_read:
+        drop_lost()
+    plan_cuts()
+    with unread_lock:
+        if unread:
+            log.warning('not read yet (tried again every minute): %s', ', '.join(sorted(unread)))
+    log.info('loaded %d jobs, %d friends, %d songs and %d videos to post', len(jobs), len(guests), len(songs),
+             len(plan_state.get('queue') or []))
+
+
+def plan_cuts():
+    """TikTok cuts the posting plan needs that weren't made before the restart."""
+    with plan_lock:
+        to_cut = {item['job'] for item in plan_state.get('queue') or [] if item['audio'] == 'no_song'}
+    for job_id in to_cut:
+        want_cut(jobs.get(job_id))
+
+
+def drop_lost():
+    """Videos in the plan whose video is gone (deleted, but the plan's save didn't reach the Hub then) leave the
+    plan. Only once every video was read: one that didn't load isn't gone, and comes back when it is read."""
+    if not posting or is_unread('posting.json'):
+        return
+    with plan_lock:
+        left = [item for item in plan_state['queue'] if item['job'] in jobs]
+        lost = len(plan_state['queue']) - len(left)
+        plan_state['queue'] = left
+    if lost:
+        log.info('%d deleted videos left the posting plan', lost)
+        save_plan()
 
 
 # ---------- Step 1: starting pictures ----------
@@ -1282,6 +1484,45 @@ def process(job):
     made = len(parts)
 
     update(job, stage='Putting your video together…', progress=0.9)
+    cut = cut_video(job, folder, parts, folder / 'final.new.mp4', failed)
+    lead, length, used, start, credit = cut['lead'], cut['length'], cut['used'], cut['start'], cut['credit']
+    os.replace(folder / 'final.new.mp4', folder / 'final.mp4')
+    at = lead + 1  # the thumbnail shows the AI part
+    run(['ffmpeg', '-v', 'error', '-y', '-ss', f'{at:.3f}', '-i', str(folder / 'final.mp4'), '-frames:v', '1',
+         '-vf', 'scale=360:-2', str(folder / 'thumb.new.jpg')])
+    os.replace(folder / 'thumb.new.jpg', folder / 'thumb.jpg')
+    first_text = next((i['caption'] for i in job['ideas'] if i.get('caption')), '')
+    caption = f"{first_text} {ideas.HASHTAGS}".strip() + (f'\n{credit}' if credit else '')
+    _, _, seconds_long = probe(folder / 'final.mp4')
+    full = round(job['seconds'] * wanted)
+    if job.get('draft'):  # (in the animated seconds: the opening and the ending come on top)
+        note = (f'Preview: the first {round(length)} seconds. Edit it, or tap Finish to carry it on to '
+                f'{full} seconds.' if wanted > 1 else 'Preview ready. Edit it, or tap Finish when you like it.')
+    elif made < wanted:
+        note = (f'Made {round(length)} of {full} seconds (the free engines were busy or out of time). '
+                'Tap Make the rest to carry it on.')
+    else:
+        note = ''
+    update(job, status='done', stage=note, progress=1, error='', thumb='thumb.jpg', made=made, caption=caption,
+           music_used=used, music_start=round(start, 2), seconds_long=round(seconds_long, 1),
+           ai_seconds=round(length, 3), opening_s=round(lead, 3) if cut['opening'] else None,
+           rev=(job.get('rev') or 0) + 1, made_with=cut['made_with'], song_name=cut['song_name'])
+    save(job, ['final.mp4', 'thumb.jpg'])
+    if failed and isinstance(failed, (QuotaError, BusyError)):
+        raise failed  # the shorter video is ready to watch; the rest is made by itself when free time is back
+
+
+def extras_of(now):
+    """Which extras a join try has: [the meme edit or sound effects, the pet voice, the opening, the ending]."""
+    return [bool(now[0] or now[1]), bool(now[3]), bool(now[4]), bool(now[5])]
+
+
+def cut_video(job, folder, parts, out, failed=None, song=True):
+    """Cuts the video from its animated parts into `out`: the re-cut every edit uses (captions, music, the meme
+    edit, the pet voice, the opening and the ending, each dropped if the join fails with it). Returns what it was
+    made with. song=False is the TikTok cut: the same plan and the same graph, with silence in place of the song
+    (the video's own sound, the voice and the effects stay), and the same song start and extras as final.mp4 (if
+    it can't have them now, it fails instead). It never changes the job then (`job` is a copy)."""
     clips, captions, text = [], [], ''
     for n, (i, clip) in enumerate(parts):
         if job.get('captions', True):
@@ -1304,18 +1545,23 @@ def process(job):
     lead = min(HOOK_WANT, have)
     music, audio, credit, used, natural = job.get('music', 'funny'), None, '', 'none', 'start'
     saved = None  # a saved song's meme part (music 'mysong'): where it starts, for every video
+    made = {} if song else (job.get('made_with') or {})  # the TikTok cut: what final.mp4 was made with
     if music == 'mine' and job.get('has_sound'):
         audio, used = local_file(job, 'sound.m4a'), 'mine'
     elif music == 'upload' and job.get('has_song'):
         audio, used, natural = local_file(job, 'song.m4a'), 'upload', 'drop'
     elif music == 'mysong' and (mine := my_song(job)):
         (audio, saved), used = mine, 'mysong'
+        if not song:  # the TikTok cut: where this video's song started (the song's meme part may have moved since)
+            saved = float(made.get('start', job['music_start'] if job.get('music_start') is not None else saved))
     elif music != 'none':  # a meme track (chosen or matched to the style), or a missing sound/song
         try:
             audio, used = music_file(job['track']), 'funny'
             credit = ideas.MUSIC_CREDIT.format(track=job['track'])
         except requests.RequestException as e:
             log.warning('%s: no music this time (%s)', job['id'], e)
+    if made.get('used', used) != used:  # (e.g. its saved song was deleted since: the plan can't be the same)
+        raise RuntimeError(f"the video's song ({made['used']}) can't be had right now")
     start, info = saved or 0.0, None
     synced = bool(hook and used == 'mine' and job.get('hook_at') is not None)
     if synced:  # the video's own sound, in step with its real seconds
@@ -1351,7 +1597,7 @@ def process(job):
     # The whoosh into the switch, when the video has sound (with no music the user adds a TikTok sound).
     whoosh = [(round(lead - WHOOSH_PEAK, 4), 'whoosh')] if opening and (used != 'none' or job.get('meme')) else []
     zooms, sounds, gain = meme_edit(job, folder, parts, spans, speed, audio, info, start, used, lead, total, whoosh)
-    voice = voice_edit(job, folder, parts, shown, lead, total)
+    voice = voice_edit(job, folder, parts, shown, lead, total, quiet=not song)
     # Written next to the old version and swapped in, so the old one plays until the new one is ready. The
     # extras must never cost a video: if the join fails, it is made again without the meme edit, then without
     # the pet voice (with the meme edit back), then without both, then without the opening and the ending too.
@@ -1368,11 +1614,16 @@ def process(job):
     extras = (('the meme edit' if job.get('meme') else 'the sound effects', lambda t: t[0] or t[1]),
               ('the pet voice', lambda t: t[3]), ('the opening', lambda t: t[4]), ('the ending', lambda t: t[5]))
     try:
+        if made.get('extras') is not None:  # the TikTok cut: exactly the extras final.mp4 has, or not at all
+            tries = [now for now in tries if extras_of(now) == made['extras']][:1]
+            if not tries:
+                raise RuntimeError("its effects, voice, opening or ending can't be made the same right now")
         for n, now in enumerate(tries):
             try:
                 z, s, g, v, o, e = now
-                join_clips(clips, captions, folder / 'final.new.mp4', spans, speed, audio, start, badge, z, s, g,
-                           o, e, v)
+                # (the TikTok cut: silence in place of the song; the video's own sound isn't a song, it stays)
+                join_clips(clips, captions, out, spans, speed, audio if song or used == 'mine' else None, start,
+                           badge, z, s, g, o, e, v)
                 opening, outro = o, e
                 break
             except Exception as err:
@@ -1394,31 +1645,10 @@ def process(job):
             sounds.unlink(missing_ok=True)
         if voice:
             voice['track'].unlink(missing_ok=True)
-    lead = lead if opening else 0.0
-    os.replace(folder / 'final.new.mp4', folder / 'final.mp4')
-    at = lead + 1  # the thumbnail shows the AI part
-    run(['ffmpeg', '-v', 'error', '-y', '-ss', f'{at:.3f}', '-i', str(folder / 'final.mp4'), '-frames:v', '1',
-         '-vf', 'scale=360:-2', str(folder / 'thumb.new.jpg')])
-    os.replace(folder / 'thumb.new.jpg', folder / 'thumb.jpg')
-    first_text = next((i['caption'] for i in job['ideas'] if i.get('caption')), '')
-    caption = f"{first_text} {ideas.HASHTAGS}".strip() + (f'\n{credit}' if credit else '')
-    _, _, seconds_long = probe(folder / 'final.mp4')
-    full = round(job['seconds'] * wanted)
-    if job.get('draft'):  # (in the animated seconds: the opening and the ending come on top)
-        note = (f'Preview: the first {round(length)} seconds. Edit it, or tap Finish to carry it on to '
-                f'{full} seconds.' if wanted > 1 else 'Preview ready. Edit it, or tap Finish when you like it.')
-    elif made < wanted:
-        note = (f'Made {round(length)} of {full} seconds (the free engines were busy or out of time). '
-                'Tap Make the rest to carry it on.')
-    else:
-        note = ''
-    update(job, status='done', stage=note, progress=1, error='', thumb='thumb.jpg', made=made, caption=caption,
-           music_used=used, music_start=round(start, 2), seconds_long=round(seconds_long, 1),
-           ai_seconds=round(length, 3), opening_s=round(lead, 3) if opening else None,
-           rev=(job.get('rev') or 0) + 1)
-    save(job, ['final.mp4', 'thumb.jpg'])
-    if failed and isinstance(failed, (QuotaError, BusyError)):
-        raise failed  # the shorter video is ready to watch; the rest is made by itself when free time is back
+    song_name = (songs.get(job.get('song_id') or '') or {}).get('name') if used == 'mysong' else None  # (kept)
+    return {'lead': lead if opening else 0.0, 'length': length, 'used': used, 'start': float(start), 'credit': credit,
+            'song_name': song_name, 'opening': bool(opening),
+            'made_with': {'used': used, 'start': float(start), 'extras': extras_of(now)}}
 
 
 def my_song(job):
@@ -1524,12 +1754,13 @@ def meme_edit(job, folder, parts, spans, speed, audio, info, start, used, lead=0
         return None, None, 1.0
 
 
-def voice_edit(job, folder, parts, shown, lead, total):
+def voice_edit(job, folder, parts, shown, lead, total, quiet=False):
     """The pet voice for this cut, when it is on and works here: {'track', 'lines'} for join_clips, else None.
     Each caption is said once, when it shows (a part without its own text keeps the one before, as on the
     video; also when the captions are hidden), by the voice chosen or one that suits the animal. The first
     line waits for the switch when the video opens with the real seconds. shown: each part's seconds. None
-    also when anything goes wrong: the voice must never cost a video. The lines go to voice.json (local only)."""
+    also when anything goes wrong: the voice must never cost a video. The lines go to voice.json (local only).
+    quiet: no "Giving your pet a voice" on the job (the TikTok cut, made from a copy of it)."""
     (folder / 'voice.json').unlink(missing_ok=True)
     choice = job.get('voice') if job.get('voice') in VOICES else 'off'
     if choice == 'off' or not pet_voice:
@@ -1550,8 +1781,8 @@ def voice_edit(job, folder, parts, shown, lead, total):
         lines = [(text, lead + t0 + (VOICE_AFTER_SWITCH if lead and not n else VOICE_AT), lead + t1 - VOICE_GAP)
                  for n, (text, t0, t1) in enumerate(windows)]
         style = pet_voice.style_for(choice, job.get('animal'))
-        placed = pet_voice.track(lines, style, folder, total, path,
-                                 busy=lambda: update(job, stage='Giving your pet a voice…', progress=0.92))
+        busy = None if quiet else (lambda: update(job, stage='Giving your pet a voice…', progress=0.92))
+        placed = pet_voice.track(lines, style, folder, total, path, busy=busy)
         if not placed:
             return None
         (folder / 'voice.json').write_text(json.dumps({'voice': choice, 'style': style, 'lines': placed}))
@@ -1562,7 +1793,7 @@ def voice_edit(job, folder, parts, shown, lead, total):
         path.unlink(missing_ok=True)
         return None
     finally:
-        if job.get('stage') == 'Giving your pet a voice…':
+        if not quiet and job.get('stage') == 'Giving your pet a voice…':
             update(job, stage='Putting your video together…', progress=0.95)
 
 
@@ -1618,6 +1849,147 @@ def needs_animation(job):
         return True
     limit = 1 if job.get('draft') else job['wanted']
     return any(f'clip_{i}.mp4' not in job['clips_done'] for i in range(limit))
+
+
+# ---------- The TikTok cut (Posting plan) ----------
+# TikTok mutes (or takes down) a video when a song is baked into its file. So a video made with the owner's own
+# song is posted as its TikTok cut: the same video without the song (the pet voice, the sound effects, the video's
+# own sound, the opening and the ending stay), and the owner adds TikTok's own sound when posting. It is cut in the
+# background when such a video goes in the posting plan, and again after each edit: never with the AI, one at a
+# time, and kept with the video's files (tiktok.mp4; tiktok_rev = the version it was cut from).
+
+cut_queue = queue.Queue()
+cut_failed = {}  # job id -> the version whose TikTok cut failed (the plan offers the video as made; asked again: retried)
+render_locks = {}  # job id -> held while that video is being made or cut, so the two never share its files
+render_locks_lock = threading.Lock()
+
+
+def render_lock(job_id):
+    with render_locks_lock:
+        return render_locks.setdefault(job_id, threading.Lock())
+
+
+def has_song(job):
+    """True when the video's file has a song in it to take out for TikTok (its own sound isn't one)."""
+    return job.get('music_used') in ('funny', 'upload', 'mysong')
+
+
+def cut_ready(job):
+    """The TikTok cut is there for the video as it is now (a video without a song is its own TikTok cut)."""
+    return not has_song(job) or (job.get('tiktok_rev') is not None and job.get('tiktok_rev') == job.get('rev'))
+
+
+def cut_wanted(job_id):
+    """The posting plan has this video, to be posted without its song."""
+    with plan_lock:
+        return any(item['job'] == job_id and item['audio'] == 'no_song' for item in plan_state.get('queue') or [])
+
+
+def want_cut(job, retry=False):
+    """Asks for the video's TikTok cut when the posting plan needs one and it isn't there for this version. When
+    it failed for this version, it is tried again only on retry (the video went in the plan again, or was switched
+    back to TikTok's sound): a caption change doesn't start it over."""
+    if not (posting and job and cut_wanted(job['id']) and not cut_ready(job)):
+        return
+    if cut_failed.get(job['id']) == job.get('rev') and not retry:
+        return
+    cut_failed.pop(job['id'], None)  # (asked again: the plan waits for this try)
+    cut_queue.put(job['id'])
+
+
+def drop_cut(job_id):
+    """A video that left the plan (posted, skipped or taken out): its TikTok cut is deleted here and in the
+    dataset, so it doesn't keep taking room. It is cut again if the video goes back in the plan. In the background:
+    it waits while the video is being made or cut. (job.json isn't saved for it: at the start, a cut that isn't
+    in the dataset counts as not made.)"""
+    with render_lock(job_id):
+        job = jobs.get(job_id)
+        gone = bool(job) and not cut_wanted(job_id) and job.get('tiktok_rev') is not None
+        if gone:
+            with jobs_lock:
+                job['tiktok_rev'] = None
+            (DATA / 'jobs' / job_id / 'tiktok.mp4').unlink(missing_ok=True)
+    if gone and hub:
+        try:
+            hub.delete_file(f'jobs/{job_id}/tiktok.mp4', repo_id=DATASET, repo_type='dataset',
+                            commit_message=f'{job_id}: TikTok cut no longer needed')
+        except Exception as e:  # (not there, or the video was deleted meanwhile)
+            log.info('%s: the TikTok cut was not deleted from the Hub (%s)', job_id, e)
+    want_cut(jobs.get(job_id))  # (it went back in the plan meanwhile: it is cut again)
+
+
+def left_plan(job_id):
+    if job_id and posting:
+        threading.Thread(target=drop_cut, args=(job_id,), daemon=True).start()
+
+
+def cut_loop():
+    while True:
+        job_id = cut_queue.get()
+        try:
+            make_cut(job_id)
+        except Exception as e:  # (the plan then shares the video as it was made)
+            log.warning('%s: no TikTok cut this time (%s)', job_id, e)
+
+
+def made_parts(job):
+    """The animated parts the video has now, from the clips kept (the first ones, in order, as in final.mp4).
+    Raises when one can't be had: the TikTok cut never asks the AI for anything."""
+    parts = []
+    for i in range(1 if job.get('draft') else job['wanted']):
+        name = f'clip_{i}.mp4'
+        if name not in (job.get('clips_done') or []):
+            break
+        parts.append((i, local_file(job, name)))
+    if not parts:
+        raise RuntimeError('no animated parts kept')
+    return parts
+
+
+def make_cut(job_id):
+    """Cuts the video's TikTok version (tiktok.mp4) for the version it has now, if the plan still wants it. It
+    must come out exactly as long and as big as final.mp4, else it isn't used."""
+    job = jobs.get(job_id)
+    if not job or not cut_wanted(job_id) or cut_ready(job):
+        return
+    lock = render_lock(job_id)
+    if not lock.acquire(blocking=False):
+        return  # being made again right now: when that is done, it asks for its cut again
+    folder = job_dir(job_id)
+    out = folder / 'tiktok.new.mp4'
+    try:
+        with jobs_lock:
+            if job_id not in jobs or job['status'] in ('queued', 'working') or not job.get('thumb'):
+                return  # (an edit is on its way: the same)
+            snap = copy.deepcopy(job)
+        rev, started = snap.get('rev'), time.time()
+        try:
+            cut_video(snap, folder, made_parts(snap), out, song=False)
+            want, got = clip_info(local_file(snap, 'final.mp4')), clip_info(out)
+            if got != want:  # (size, frames, frame rate)
+                raise RuntimeError(f'it came out different from the video: {got} instead of {want}')
+        except Exception:
+            cut_failed[job_id] = rev  # (GET /plan says so: the page offers the video as it was made)
+            raise
+        if not cut_wanted(job_id):  # (it left the plan while it was being cut)
+            return
+        os.replace(out, folder / 'tiktok.mp4')
+        with jobs_lock:
+            current = jobs.get(job_id) is job and job.get('rev') == rev
+            if current:
+                job['tiktok_rev'] = rev
+        if not current:
+            return
+        save(job, ['tiktok.mp4'])
+        with plan_lock:
+            for item in plan_state['queue']:
+                if item['job'] == job_id:
+                    item['cut_rev'] = rev
+        save_plan()
+        log.info('%s: TikTok cut of version %s ready (%.1f s)', job_id, rev, time.time() - started)
+    finally:
+        out.unlink(missing_ok=True)
+        lock.release()
 
 
 # ---------- "Your video is ready" notifications ----------
@@ -1722,7 +2094,8 @@ def worker_loop(lane):
         update(job, error='')
         slow = needs_animation(job)  # new AI clips take minutes: a notification when it's done (re-cuts are watched)
         try:
-            process(job)
+            with render_lock(job_id):  # (its TikTok cut, if one is being cut right now, finishes first)
+                process(job)
             log.info('%s done', job_id)
         except (QuotaError, BusyError) as e:
             why = ('Out of free video time for today.' if isinstance(e, QuotaError)
@@ -1739,6 +2112,8 @@ def worker_loop(lane):
             if slow:
                 ping_done(job, failed=True)
             continue
+        finally:
+            want_cut(job)  # a new version needs its TikTok cut again (when the posting plan has it)
         if slow:
             ping_done(job)
 
@@ -1764,11 +2139,53 @@ def wake_waiting(now_anyway=False):
             enqueue(job)
 
 
+SCHEDULER_EVERY = 60  # seconds between the scheduler's rounds
+
+
 def scheduler_loop():
-    """Wake jobs that were waiting for the free GPU time to come back."""
+    """Every minute: read the dataset files that couldn't be read at the start, wake jobs that were waiting for
+    the free GPU time to come back, and send the posting plan's reminders. None can stop the others, or the loop."""
     while True:
-        time.sleep(60)
-        wake_waiting()
+        time.sleep(SCHEDULER_EVERY)
+        for step in (read_again, wake_waiting, posting_tick):
+            try:
+                step()
+            except Exception as e:
+                log.warning('scheduler: %s failed (%s)', step.__name__, e)
+
+
+def posting_tick():
+    """The posting plan's reminders. Each time that came is marked fired and saved before its notification goes,
+    so a restart never sends one twice. One that came while the worker slept still reminds up to 3 hours late,
+    else it is counted as missed. One notification a round (when two times came at once, it is about both videos),
+    for the next waiting video (it is then 'reminded'); with none waiting, the one ready to post the longest is
+    reminded again; with none at all, the owner hears once a day that the plan is empty. Nothing while the plan
+    is still loading."""
+    if not posting or is_unread('posting.json'):
+        return
+    t = posting.now()
+    with plan_lock:
+        fire, changed = posting.tick(plan_state, t)
+    if not changed:
+        return
+    save_plan()  # (before anything is sent)
+    with plan_lock:
+        kind, items = posting.remind(plan_state, len(fire), t, known=lambda job_id: job_id in jobs)
+        labels = [short_label(jobs.get(item['job']) or {}) for item in items]
+        link = f"index.html#post={items[0]['id']}" if items else 'index.html#plan'
+    if not kind:
+        return
+    if kind == 'empty':
+        message = {'title': 'Your posting plan is empty', 'body': 'Add videos with + Plan'}
+    elif kind == 'again':
+        message = {'title': 'Still ready to post 🎬', 'body': f'{labels[0]} · caption ready'}
+    elif len(items) > 1:
+        message = {'title': 'Time to post on TikTok 🎬',
+                   'body': f'{len(items)} videos ready to post · captions ready'}
+    else:
+        message = {'title': 'Time to post on TikTok 🎬', 'body': f'{labels[0]} · caption ready'}
+    ping(OWNER['id'], dict(message, tag='antics-post', url=link))
+    save_plan()
 
 
 # ---------- API ----------
@@ -1791,7 +2208,9 @@ async def lifespan(_app):
     load_jobs()
     threading.Thread(target=worker_loop, args=(work_queue,), daemon=True).start()
     threading.Thread(target=worker_loop, args=(quick_queue,), daemon=True).start()
+    threading.Thread(target=cut_loop, daemon=True).start()
     threading.Thread(target=scheduler_loop, daemon=True).start()
+    threads_up.set()
     yield
 
 
@@ -1815,6 +2234,9 @@ def caller(header_key, query_key=None):
         for guest in guests.values():
             if same(key, guest['key']):
                 return guest
+    if key and is_unread('guests.json'):
+        need_read('guests.json', 'Your worker is')  # (a friend's key isn't wrong while the friends list loads)
+        return caller(header_key, query_key)
     raise HTTPException(401, 'Wrong or missing worker key')
 
 
@@ -1873,9 +2295,12 @@ def features():
     voice: the pet voice (the voice field), only when its packages import and its model is on disk (checked
     in the background when the worker starts, so it shows up a few seconds after).
     push: "your video is ready" notifications (/push/...), only when the cryptography package imports.
-    songs: My songs (/songs: the owner's saved songs, each starting at its meme part; music 'mysong' + song_id)."""
+    songs: My songs (/songs: the owner's saved songs, each starting at its meme part; music 'mysong' + song_id).
+    plan: the Posting plan (/plan: the owner's queue of videos to post, reminders, hashtags; the TikTok cut of a
+    video with a song: /jobs/{id}/video?cut=tiktok)."""
     return (['chain'] + (['meme'] if meme and sfx else []) + ['opening', 'outro']
-            + (['voice'] if pet_voice and pet_voice.ready() else []) + (['push'] if webpush else []) + ['songs'])
+            + (['voice'] if pet_voice and pet_voice.ready() else []) + (['push'] if webpush else []) + ['songs']
+            + (['plan'] if posting else []))
 
 
 @app.get('/health')
@@ -1930,6 +2355,8 @@ def create_job(
     hooks: list[UploadFile] = File(None),
 ):
     who = caller(x_antics_key)
+    if music == 'mysong':
+        need_read('songs.json', 'Your songs are')
     url = url.strip()
     if not (images or surprise or re.match(r'^https?://\S+$', url)):
         raise HTTPException(400, 'Paste a video link, upload a video, or tap Surprise me')
@@ -2014,7 +2441,7 @@ def build_jobs(who, count, wanted, settings, url, surprise, images, source, song
             shutil.copyfileobj(song.file, f)
         if extract_sound(original, folder / 'song.m4a'):
             shared.append('song.m4a')
-            flags['has_song'] = True
+            flags.update(has_song=True, upload_name=upload_name(song))
         original.unlink(missing_ok=True)
     if images:
         pictures = []
@@ -2109,6 +2536,8 @@ def edit_job(
     it in seconds. A new description, style or animal, or redo (clip numbers), animates the clips concerned again."""
     who = caller(x_antics_key)
     job = own_job(who, job_id)
+    if music == 'mysong':
+        need_read('songs.json', 'Your songs are')
     try:
         texts = [str(t)[:120] for t in json.loads(texts)] if texts else []
     except (ValueError, TypeError):
@@ -2169,7 +2598,7 @@ def edit_job(
             job['track'] = ideas.pick_music(new_template)  # a meme song that suits the style
         if new_song:
             os.replace(new_song, folder / 'song.m4a')
-            job['has_song'] = True
+            job.update(has_song=True, upload_name=upload_name(song))
         if song_part in ('auto', 'start', 'drop', 'custom'):
             job['song_part'] = song_part
         if song_start is not None:
@@ -2232,10 +2661,26 @@ def finish_job(job_id: str, x_antics_key: str = Header(None)):
 
 
 @app.get('/jobs/{job_id}/video')
-def job_video(job_id: str, key: str = Query(None), x_antics_key: str = Header(None)):
-    job = own_job(caller(x_antics_key, key), job_id)
+def job_video(job_id: str, key: str = Query(None), cut: str = Query(None), x_antics_key: str = Header(None)):
+    """The video. cut=tiktok: its TikTok cut, for the owner's posting plan (the video without its song; a video
+    without a song is its own TikTok cut). 404 while that isn't ready for the video as it is now."""
+    who = caller(x_antics_key, key)
+    job = own_job(who, job_id)
     if not job.get('thumb'):  # the newest finished version (an edit swaps it in when it is ready)
         raise HTTPException(409, 'Not ready yet')
+    if cut == 'tiktok' and who is not OWNER:  # (the posting plan is the owner's)
+        raise HTTPException(403, 'Only the owner can do that')
+    if cut == 'tiktok' and has_song(job):
+        if not cut_ready(job):
+            raise HTTPException(404, 'The TikTok version is not ready yet')
+        try:
+            path = local_file(job, 'tiktok.mp4')
+        except Exception as e:  # (gone from the dataset: it is cut again)
+            log.warning('%s: the TikTok cut is missing (%s)', job_id, e)
+            job['tiktok_rev'] = None
+            want_cut(job)
+            raise HTTPException(404, 'The TikTok version is not ready yet')
+        return FileResponse(path, media_type='video/mp4', filename=f'antics-{job_id}-tiktok.mp4')
     return FileResponse(local_file(job, 'final.mp4'), media_type='video/mp4', filename=f'antics-{job_id}.mp4')
 
 
@@ -2274,6 +2719,13 @@ def delete_job(job_id: str, x_antics_key: str = Header(None)):
     with jobs_lock:
         jobs.pop(job_id, None)
     refund(job)  # a friend's video deleted before it was made
+    with plan_lock:  # (and out of the posting plan)
+        left = [item for item in plan_state.get('queue') or [] if item['job'] != job_id]
+        dropped = len(left) < len(plan_state.get('queue') or [])
+        if dropped:
+            plan_state['queue'] = left
+    if dropped:
+        save_plan()
     shutil.rmtree(DATA / 'jobs' / job_id, ignore_errors=True)
     if hub:
         try:
@@ -2342,6 +2794,7 @@ def guest_view(guest):
 @app.get('/guests')
 def list_guests(x_antics_key: str = Header(None)):
     check(x_antics_key)
+    need_read('guests.json', 'Your friends list is')
     with guests_lock:
         return {'guests': sorted((guest_view(g) for g in guests.values()), key=lambda g: g['created'])}
 
@@ -2349,6 +2802,7 @@ def list_guests(x_antics_key: str = Header(None)):
 @app.post('/guests')
 def add_guest(name: str = Form(''), uses: int = Form(5), host: str = Form(''), x_antics_key: str = Header(None)):
     check(x_antics_key)
+    need_read('guests.json', 'Your friends list is')
     guest = {'id': secrets.token_hex(4), 'name': clean_name(name) or 'Friend', 'key': secrets.token_hex(16),
              'uses_left': max(1, min(100, uses)), 'used': 0, 'created': time.time(), 'host': clean_name(host)}
     with guests_lock:
@@ -2360,6 +2814,7 @@ def add_guest(name: str = Form(''), uses: int = Form(5), host: str = Form(''), x
 @app.post('/guests/{guest_id}')
 def change_guest(guest_id: str, add: int = Form(0), x_antics_key: str = Header(None)):
     check(x_antics_key)
+    need_read('guests.json', 'Your friends list is')
     with guests_lock:
         guest = guests.get(guest_id)
         if not guest:
@@ -2372,6 +2827,7 @@ def change_guest(guest_id: str, add: int = Form(0), x_antics_key: str = Header(N
 @app.delete('/guests/{guest_id}')
 def remove_guest(guest_id: str, x_antics_key: str = Header(None)):
     check(x_antics_key)
+    need_read('guests.json', 'Your friends list is')
     with guests_lock:
         guests.pop(guest_id, None)
     save_guests()
@@ -2402,6 +2858,14 @@ def chosen_song(song_id):
 
 def clean_song_name(text):
     return re.sub(r'\s+', ' ', plain_text(text or '')).strip()[:60]
+
+
+def upload_name(upload):
+    """An uploaded song's name, from its file name ('' when that says nothing, like audio.mp3 or IMG_1234)."""
+    name = clean_song_name(Path(getattr(upload, 'filename', '') or '').stem.replace('_', ' '))
+    plain = re.sub(r'[\W\d_]+', ' ', name).strip().lower()
+    return '' if plain in ('', 'song', 'audio', 'sound', 'music', 'track', 'file', 'blob', 'recording', 'voice',
+                           'new recording', 'img', 'vid', 'video', 'rec', 'untitled') else name
 
 
 def audio_seconds(path):
@@ -2437,6 +2901,7 @@ def meme_part(path):
 @app.get('/songs')
 def list_songs(x_antics_key: str = Header(None)):
     caller(x_antics_key)  # the owner and friends
+    need_read('songs.json', 'Your songs are')
     with songs_lock:
         items = sorted(songs.values(), key=lambda v: v.get('added') or 0)
         return {'songs': [song_view(v) for v in items], 'max': MAX_SONGS}
@@ -2446,6 +2911,7 @@ def list_songs(x_antics_key: str = Header(None)):
 def add_song(file: UploadFile = File(...), name: str = Form(''), x_antics_key: str = Header(None)):
     """Adds a song: kept as m4a, its meme part found (about 10 s). Returns it."""
     check(x_antics_key)
+    need_read('songs.json', 'Your songs are')
     with songs_lock:
         if len(songs) >= MAX_SONGS:
             raise HTTPException(409, f'You can keep {MAX_SONGS} songs. Delete one to add another.')
@@ -2492,6 +2958,7 @@ def change_song(song_id: str, name: str = Form(None), start: float = Form(None),
     """Rename a song, move its meme part (start, put on the nearest beat) or make it the default (the one every
     new video gets; default=false: none)."""
     check(x_antics_key)
+    need_read('songs.json', 'Your songs are')
     with songs_lock:
         if song_id not in songs:
             raise HTTPException(404, 'No such song')
@@ -2527,6 +2994,7 @@ def change_song(song_id: str, name: str = Form(None), start: float = Form(None),
 def delete_song(song_id: str, x_antics_key: str = Header(None)):
     """Videos that had this song keep their sound; when one is changed later, it gets the meme song instead."""
     check(x_antics_key)
+    need_read('songs.json', 'Your songs are')
     with songs_lock:
         song = songs.pop(song_id, None)
     if not song:
@@ -2540,6 +3008,7 @@ def delete_song(song_id: str, x_antics_key: str = Header(None)):
 def song_audio(song_id: str, key: str = Query(None), x_antics_key: str = Header(None)):
     """The song itself, to hear its meme part (the owner and friends)."""
     caller(x_antics_key, key)
+    need_read('songs.json', 'Your songs are')
     with songs_lock:
         if song_id not in songs:
             raise HTTPException(404, 'No such song')
@@ -2557,6 +3026,7 @@ def song_audio(song_id: str, key: str = Query(None), x_antics_key: str = Header(
 def can_push():
     if not webpush:
         raise HTTPException(503, "This worker can't send notifications yet. Update it in Settings.")
+    need_read('push.json', 'Notifications are')
 
 
 @app.get('/push/key')
@@ -2606,6 +3076,7 @@ def push_subscribe(body: dict = Body(...), x_antics_key: str = Header(None)):
 @app.post('/push/unsubscribe')
 def push_unsubscribe(body: dict = Body(...), x_antics_key: str = Header(None)):
     who = caller(x_antics_key)
+    need_read('push.json', 'Notifications are')
     endpoint = str(body.get('endpoint', ''))
     with push_lock:
         mine = push['subs'].get(who['id']) or []
@@ -2624,6 +3095,237 @@ def push_test(x_antics_key: str = Header(None)):
     sent = ping(who['id'], {'title': 'Notifications are on', 'body': "You'll get one like this when a video is ready.",
                             'tag': 'antics-test', 'url': 'index.html'}, wait=True)
     return {'sent': sent}
+
+
+# ---------- The Posting plan ----------
+# The owner's only (friends get 403): a queue of finished videos, 1-3 times a day in the owner's time zone, a
+# notification at each time, and the caption with its hashtags ready. The owner posts by hand, with Share to
+# TikTok on the page (TikTok's posting API isn't open to personal tools). posting.py has the rules.
+
+def plan_owner(header_key):
+    check(header_key)
+    if not posting:
+        raise HTTPException(503, "This worker can't plan posts yet. Update it in Settings.")
+    need_read('posting.json', 'Your posting plan is')
+
+
+def plan_body(body):
+    if not isinstance(body, dict):
+        raise HTTPException(400, 'Send a JSON object')
+    return body
+
+
+def short_label(job):
+    """A video's name in the plan and its reminder."""
+    label = job.get('label') or ('Surprise' if job.get('kind') == 'surprise' else 'Your video')
+    label = re.sub(r'\s+', ' ', str(label)).strip()
+    return label if len(label) <= 60 else label[:59].rstrip() + '…'
+
+
+def first_caption(job):
+    return next((i['caption'] for i in job.get('ideas') or [] if i.get('caption')), '')
+
+
+def plan_song(item, job):
+    """The song to add in TikTok when the video is posted without its own (the TikTok cut), and where it starts in
+    this video; None when there is none to add."""
+    if item['audio'] != 'no_song':
+        return None
+    used = job.get('music_used')
+    if used == 'mysong':
+        with songs_lock:
+            song = dict(songs.get(job.get('song_id') or '') or {})
+        start = job.get('music_start') if job.get('music_start') is not None else song.get('start')
+        return {'name': song.get('name') or job.get('song_name') or 'your song', 'start': round(float(start or 0), 2)}
+    if used == 'upload':  # ('your song': the page says "the same song" then)
+        return {'name': job.get('upload_name') or 'your song', 'start': round(float(job.get('music_start') or 0), 2)}
+    return None
+
+
+def plan_caption(item, job, state):
+    """(the caption, whether it is the owner's own, its hashtags). Automatic: the video's first caption, the
+    hashtags for this post and, for a Kevin MacLeod song left in the video, its CC BY credit (an own caption
+    gets that credit too)."""
+    credit = (ideas.MUSIC_CREDIT.format(track=job['track'])
+              if item['audio'] == 'as_made' and job.get('music_used') == 'funny' and job.get('track') else '')
+    if item.get('caption'):  # (the owner's own words; the credit is added when they left it out)
+        return posting.with_credit(item['caption'], credit), True, posting.tags_in(item['caption'])
+    tags = posting.pick_tags(state['plan'], job, state['posted_count'])
+    return posting.compose(first_caption(job), tags, credit), False, tags
+
+
+def plan_view():
+    """GET /plan: the settings, the queue in order (each with its caption, hashtags, the song to add, whether its
+    TikTok cut is ready, or couldn't be made this time, and the time it is planned for), the last ones done (newest
+    first), the next times, the times missed while the worker slept, and whether reminders can reach the owner's
+    phone."""
+    t = posting.now()
+    with plan_lock:
+        state = copy.deepcopy(plan_state)
+    plan = state['plan']
+    rows = [(item, jobs.get(item['job'])) for item in state['queue']]
+    rows = [(item, job) for item, job in rows if job]  # (a video deleted meanwhile)
+    times = posting.upcoming(state, t, max(plan['per_day'], len(rows)))
+    planned, queue_view, last = iter(times), [], None
+    for item, job in rows:
+        caption, own, tags = plan_caption(item, job, state)
+        at = None
+        if plan['on']:
+            at = next(planned, None) if item['status'] == 'waiting' else item['reminded_at']
+            last = at if item['status'] == 'waiting' and at is not None else last
+        ready = item['audio'] == 'as_made' or cut_ready(job)
+        queue_view.append(dict(item, label=short_label(job), thumb=f"/jobs/{job['id']}/thumb", caption=caption,
+                               custom=own, tags=tags, song=plan_song(item, job), cut_ready=ready, at=at,
+                               cut_rev=job.get('tiktok_rev'),
+                               cut_failed=not ready and cut_failed.get(job['id']) == job.get('rev')))
+    history = [{k: h.get(k) for k in ('id', 'job', 'label', 'status', 'done_at')} for h in state['history'][-20:]]
+    with push_lock:
+        notify = bool(webpush) and bool(push['subs'].get(OWNER['id']))
+    return {'plan': plan, 'queue': queue_view, 'history': history[::-1], 'next': times, 'lasts_until': last,
+            'missed': [m for m in state['missed'] if m['at'] >= t - posting.MISSED_SECONDS],
+            'notify': notify, 'tz_ok': posting.tz_ok(plan['tz'])}
+
+
+def plan_item(pid):
+    item = posting.find(plan_state, pid)
+    if not item:
+        raise HTTPException(404, "That video isn't in your posting plan any more")
+    return item
+
+
+def postable(job):
+    """Why a video can't go in the plan ('' when it can)."""
+    if job.get('draft'):
+        return "That's a preview. Tap Finish first, then add the whole video."
+    if job.get('status') != 'done':
+        return "That video isn't finished yet. Add it when it's ready."
+    if not job.get('thumb'):
+        return "That video has no finished version yet."
+    return ''
+
+
+@app.get('/plan')
+def get_plan(x_antics_key: str = Header(None)):
+    plan_owner(x_antics_key)
+    return plan_view()
+
+
+@app.post('/plan')
+def set_plan(body: Any = Body(None), x_antics_key: str = Header(None)):
+    """Change the settings (any of on, per_day, times, tz, tags, fixed, per_post). Turning it on or moving its
+    times counts every time before now as done, so nothing old reminds."""
+    plan_owner(x_antics_key)
+    with plan_lock:
+        try:
+            new, moved = posting.settings(plan_state['plan'], plan_body(body))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        plan_state['plan'] = new
+        if moved:
+            posting.mark_past(plan_state, posting.now())
+    save_plan()
+    return plan_view()
+
+
+@app.post('/plan/queue')
+def plan_add(body: Any = Body(None), x_antics_key: str = Header(None)):
+    """Put finished videos in the plan, at the end (or the start). One made with the owner's own song is posted
+    without it: its TikTok cut is made now, in the background."""
+    plan_owner(x_antics_key)
+    body = plan_body(body)
+    ids, where = body.get('jobs'), body.get('where', 'end')
+    if (not isinstance(ids, list) or not ids or len(ids) > posting.MAX_QUEUE or not all(isinstance(i, str) for i in ids)
+            or where not in ('end', 'start')):
+        raise HTTPException(400, "Send jobs: [the videos' ids] and where: 'end' or 'start'")
+    ids = list(dict.fromkeys(ids))
+    t = posting.now()
+    with plan_lock:
+        queued = {item['job'] for item in plan_state['queue']}
+        items = []
+        for job_id in ids:
+            job = jobs.get(job_id)
+            if not job:
+                raise HTTPException(404, 'No such video')
+            why = postable(job) or ('That video is already in your posting plan.' if job_id in queued else '')
+            if why:
+                raise HTTPException(409, why)
+            audio = 'no_song' if job.get('music') in ('mysong', 'upload') else 'as_made'
+            by = (job.get('owner_name') or 'A friend') if job.get('owner', 'me') != OWNER['id'] else None
+            items.append(posting.new_item(job_id, audio, by, t))
+        if len(plan_state['queue']) + len(items) > posting.MAX_QUEUE:
+            raise HTTPException(409, f'Your posting plan holds {posting.MAX_QUEUE} videos. Post or remove some first.')
+        plan_state['queue'] = items + plan_state['queue'] if where == 'start' else plan_state['queue'] + items
+    save_plan()
+    for item in items:
+        want_cut(jobs.get(item['job']), retry=True)
+    return plan_view()
+
+
+@app.post('/plan/queue/order')
+def plan_order(body: Any = Body(None), x_antics_key: str = Header(None)):
+    """The queue in a new order: ids must be exactly the videos in it now (those GET /plan shows: one whose video
+    is missing for now keeps its place)."""
+    plan_owner(x_antics_key)
+    with plan_lock:
+        hidden = {item['id'] for item in plan_state['queue'] if item['job'] not in jobs}  # (not on the page)
+        try:
+            posting.reorder(plan_state, plan_body(body).get('ids'), hidden)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    save_plan()
+    return plan_view()
+
+
+@app.post('/plan/queue/{pid}')
+def plan_change(pid: str, body: Any = Body(None), x_antics_key: str = Header(None)):
+    """A video's caption (the owner's own; null: automatic again) and its sound ('no_song': the TikTok cut, for
+    TikTok's own sound; 'as_made': the video as it was made, with its song)."""
+    plan_owner(x_antics_key)
+    body = plan_body(body)
+    if 'caption' in body and body['caption'] is not None and not isinstance(body['caption'], str):
+        raise HTTPException(400, 'caption must be text, or null for the automatic one')
+    if 'audio' in body and body['audio'] not in posting.AUDIO:
+        raise HTTPException(400, "audio must be 'no_song' or 'as_made'")
+    with plan_lock:
+        item = plan_item(pid)
+        if 'caption' in body:  # ('' or only spaces: automatic again too)
+            item['caption'] = posting.custom(body['caption'] or '') or None
+        switched = 'audio' in body and body['audio'] != item['audio']
+        if 'audio' in body:
+            item['audio'] = body['audio']
+        job_id = item['job']
+    save_plan()
+    if switched and body['audio'] == 'no_song':  # (a caption change doesn't start a cut that failed over)
+        want_cut(jobs.get(job_id), retry=True)
+    return plan_view()
+
+
+@app.delete('/plan/queue/{pid}')
+def plan_remove(pid: str, x_antics_key: str = Header(None)):
+    """Out of the plan (not counted as posted or skipped)."""
+    plan_owner(x_antics_key)
+    with plan_lock:
+        item = plan_item(pid)
+        plan_state['queue'].remove(item)
+    save_plan()
+    left_plan(item['job'])
+    return plan_view()
+
+
+@app.post('/plan/queue/{pid}/done')
+def plan_done(pid: str, body: Any = Body(None), x_antics_key: str = Header(None)):
+    """'posted' (the hashtags move on one step) or 'skipped': it goes to the history."""
+    plan_owner(x_antics_key)
+    result = plan_body(body).get('result')
+    if result not in ('posted', 'skipped'):
+        raise HTTPException(400, "result must be 'posted' or 'skipped'")
+    with plan_lock:
+        job_id = plan_item(pid)['job']
+        job = jobs.get(job_id)
+        posting.finish(plan_state, pid, result, short_label(job) if job else 'A video', posting.now())
+    save_plan()
+    left_plan(job_id)
+    return plan_view()
 
 
 # ---------- PC helper API ----------

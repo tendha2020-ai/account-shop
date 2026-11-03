@@ -220,6 +220,11 @@
     </form>
 
     <section class="list" id="videos" aria-label="Your videos">
+      <!-- Posting plan (workers with 'plan', the owner only): what's next, and a shortcut to post -->
+      <div id="planStrip" class="plan-strip" hidden>
+        <button type="button" id="planStripMain" class="plan-strip-main"></button>
+        <button type="button" id="planStripAct" class="plan-strip-act" hidden></button>
+      </div>
       <div class="list-head">
         <h2>Your videos <span id="pcChip" class="pc-chip" hidden>made on your PC</span></h2>
         <button type="button" id="finishAll" class="plain" hidden>Finish all previews</button>
@@ -366,6 +371,48 @@
     </div>
   </dialog>
 
+  <!-- Post on TikTok (Posting plan): the video, its caption, and three numbered steps -->
+  <dialog id="postDialog" class="sheet post">
+    <div class="sheet-body">
+      <!-- (it takes the focus when the screen opens: the top shows first, and no keyboard pops up) -->
+      <h2 tabindex="-1" autofocus>Post on TikTok</h2>
+      <p class="fine post-sub" id="postSub"></p>
+      <div class="post-grid">
+        <div class="post-media">
+          <video id="postVideo" playsinline controls loop preload="metadata"></video>
+          <p id="postWait" class="post-wait" hidden>Getting the TikTok version ready…</p>
+        </div>
+        <div class="post-steps">
+          <p id="postCutNote" class="fine post-cut-note" hidden>🔇 No song in this version, so TikTok won't mute it. You add the song in TikTok.</p>
+          <p id="postCutFail" class="fine post-cut-note" hidden>Couldn't take the song out this time, so this is your video with its song. TikTok may mute it.</p>
+          <label class="opt-line switch-line post-song" id="postSongLine" hidden>
+            <span>Use the video with the song<small>TikTok may mute songs inside a video. Off is safer: add the sound in TikTok.</small></span>
+            <input type="checkbox" id="postSongOpt" class="sw-input"><span class="sw" aria-hidden="true"></span>
+          </label>
+          <div class="post-cap">
+            <div class="cap-head">
+              <label for="postCaption">Caption</label>
+              <button type="button" id="postReset" class="link-btn" hidden>Reset</button>
+            </div>
+            <textarea id="postCaption" class="idea" rows="4" maxlength="2200" aria-label="Caption for TikTok"></textarea>
+          </div>
+          <button type="button" id="postCopy" class="go post-btn">1 · Copy caption</button>
+          <button type="button" id="postShare" class="go post-btn">2 · Share to TikTok</button>
+          <a id="postSave" class="go post-btn" download="antics.mp4" target="_blank" rel="noopener" hidden>2 · Save video</a>
+          <p class="post-alt" id="postAltLine" hidden><button type="button" id="postSaveAlt" class="link-btn">or save the video</button></p>
+          <div class="post-check">
+            <p class="post-check-head">In TikTok:</p>
+            <ul id="postList"></ul>
+          </div>
+          <button type="button" id="postDone" class="go post-btn">3 · I posted it ✓</button>
+          <p class="post-links">
+            <button type="button" id="postSkip" class="link-btn">Skip this one</button>
+            <button type="button" id="postLater" class="link-btn">Remind me later</button>
+          </p>
+        </div>
+      </div>
+    </div>
+  </dialog>
 
   <!-- Setup / settings -->
   <dialog id="settings" class="sheet">
@@ -396,6 +443,44 @@
         <p class="worker-line">Worker: <a id="workerLink" target="_blank" rel="noopener"></a> <span id="workerState"></span></p>
         <p class="fine">Free Hugging Face time makes about 3–5 clips a day. When it runs out, unfinished videos wait and finish by themselves.</p>
         <p id="updateNote" class="note bad" hidden>A new version is ready. <button type="button" id="updateBtn" class="plain">Update my worker</button></p>
+
+        <!-- Posting plan (workers with 'plan'): finished videos wait in line, and at each time antics reminds you
+             to post the next one, with its caption and hashtags ready -->
+        <div class="friends-box plan-box" id="planBox" hidden>
+          <label class="opt switch-line plan-on">
+            <span>Posting plan<small id="planState"></small></span>
+            <input type="checkbox" id="planOn" class="sw-input"><span class="sw" aria-hidden="true"></span>
+          </label>
+          <p class="fine">At each time you get a reminder with the next video and its caption ready. You post it in TikTok with one tap.</p>
+          <div id="planNotify" class="note bad plan-notify" hidden>
+            <span>Turn on notifications to get reminders</span>
+            <button type="button" id="planNotifyBtn" class="plain">Turn on notifications</button>
+          </div>
+          <div class="opt-line">
+            <span>Posts a day</span>
+            <div class="seg" id="planPerDay" aria-label="Posts a day">
+              <button type="button" data-v="1">1</button>
+              <button type="button" data-v="2">2</button>
+              <button type="button" data-v="3">3</button>
+            </div>
+          </div>
+          <div id="planTimes" class="plan-times"></div>
+          <p class="fine" id="planTz"></p>
+          <h3 class="sub-label">Hashtags</h3>
+          <div id="planTags" class="tag-chips"></div>
+          <div class="plan-tag-add">
+            <input type="text" id="planTagInput" class="small-input" maxlength="120" placeholder="#hashtag" aria-label="New hashtag"
+                   autocomplete="off" autocapitalize="off" spellcheck="false">
+            <button type="button" id="planTagAdd" class="plain">Add</button>
+          </div>
+          <p class="fine" id="planTagHelp"></p>
+          <h3 class="sub-label" id="planQueueHead">Up next</h3>
+          <div id="planQueue" class="plan-queue"></div>
+          <p class="fine" id="planEmpty">No videos yet. Tap <b>+ Plan</b> on a finished video.</p>
+          <p class="fine" id="planUntil" hidden></p>
+          <p id="planMissed" class="note plan-missed" hidden></p>
+          <div id="planDone" class="plan-done" hidden></div>
+        </div>
 
         <!-- My songs: full songs, each cut to its meme part (found by the worker, adjustable) -->
         <div class="friends-box songs-box" id="songsBox" hidden>
