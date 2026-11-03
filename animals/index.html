@@ -98,7 +98,15 @@
       <div class="maker-b">
         <section class="block step" id="step3">
           <h2 class="step-title"><span class="step-num" aria-hidden="true">3</span>Music</h2>
+          <!-- My songs (workers with 'songs'): the owner's saved songs first, each with ▶ to hear its meme part -->
+          <div id="mySongs" class="my-songs" hidden>
+            <div class="song-tiles" id="mySongRow" role="group" aria-label="My songs"></div>
+          </div>
           <div class="chips-wrap" id="musicRow"></div>
+          <label class="link-btn add-song-link" id="addSongLink" hidden>
+            <input type="file" id="addSongFile" accept="audio/*,video/*,.mp3,.m4a,.wav,.aac,.ogg,.mp4,.mov">
+            + Add a song
+          </label>
           <div id="songList" class="song-list" hidden></div>
           <div id="songUpload" class="song-upload" hidden>
             <label class="plain">
@@ -388,6 +396,47 @@
         <p class="worker-line">Worker: <a id="workerLink" target="_blank" rel="noopener"></a> <span id="workerState"></span></p>
         <p class="fine">Free Hugging Face time makes about 3–5 clips a day. When it runs out, unfinished videos wait and finish by themselves.</p>
         <p id="updateNote" class="note bad" hidden>A new version is ready. <button type="button" id="updateBtn" class="plain">Update my worker</button></p>
+
+        <!-- My songs: full songs, each cut to its meme part (found by the worker, adjustable) -->
+        <div class="friends-box songs-box" id="songsBox" hidden>
+          <div class="opt">
+            <span>My songs</span>
+            <span id="songsCount" class="fine"></span>
+          </div>
+          <p class="fine">Add a full song. antics finds its meme part, and every video with it starts right there. Your friends can use your songs too.</p>
+          <div id="songAdd" class="song-add" hidden>
+            <p class="song-add-head" id="songAddHead">Finding the meme part…</p>
+            <div id="songAddBody" hidden>
+              <div class="part-pick">
+                <input type="range" id="songAddStart" min="0" max="180" step="0.1" value="0" aria-label="Where the meme part starts">
+                <div class="part-pick-row">
+                  <span>Starts at <b id="songAddStartLabel">0:00</b> <span id="songAddLength" class="fine"></span></span>
+                  <button type="button" id="songAddHear" class="plain">▶ Hear</button>
+                </div>
+                <div class="chips-wrap song-cands" id="songAddCands"></div>
+              </div>
+              <label class="opt-line">
+                <span>Name</span>
+                <input type="text" id="songAddName" class="small-input" maxlength="60" aria-label="Song name">
+              </label>
+              <label class="opt-line switch-line">
+                <span>Use for every video<small>New videos start with this song</small></span>
+                <input type="checkbox" id="songAddDefault" class="sw-input" checked><span class="sw" aria-hidden="true"></span>
+              </label>
+              <div class="row">
+                <button type="button" id="songAddSave" class="go small">Save</button>
+              </div>
+            </div>
+          </div>
+          <div id="songRows" class="friend-list song-rows"></div>
+          <div class="row">
+            <label class="plain add-song-btn" id="songAddBtn">
+              <input type="file" id="songAddFile" accept="audio/*,video/*,.mp3,.m4a,.wav,.aac,.ogg,.mp4,.mov">
+              + Add a song
+            </label>
+          </div>
+          <p id="songsNote" class="note" hidden></p>
+        </div>
 
         <div class="friends-box">
           <div class="opt">

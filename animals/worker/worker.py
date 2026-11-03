@@ -19,6 +19,8 @@
 # For browsers that can't turn speech into text themselves, the worker writes it down (Whisper).
 # When a video that needed the AI is ready (or couldn't be made), the phones of whoever made it get a
 # notification (Web Push, webpush.py), also when antics is closed.
+# My songs: the owner keeps up to 10 full songs (the account's own sound). Each is cut to its meme part, found
+# by chorus.py when it is added (and adjustable), so every video with that song starts right there.
 
 import collections
 import json
@@ -64,8 +66,13 @@ try:  # "your video is ready" notifications: they need the cryptography package 
 except Exception as e:
     logging.getLogger('antics').warning('no notifications: %s', e)
     webpush = None
+try:  # finding a song's meme part (if it is missing or broken, a saved song starts at its liveliest part)
+    import chorus
+except Exception as e:
+    logging.getLogger('antics').warning('no meme-part finder: %s', e)
+    chorus = None
 
-VERSION = '10'
+VERSION = '11'
 HF_TOKEN = os.environ.get('HF_TOKEN') or None
 ANTICS_KEY = os.environ.get('ANTICS_KEY', '')
 DATASET = os.environ.get('ANTICS_DATASET', '')
@@ -77,7 +84,7 @@ MAX_CLIPS = 3
 MAX_VIDEOS = 5  # videos made at once from one link or upload
 GUEST_REDOS = 3  # times a friend may animate a video's clips again (each edit that re-animates counts once)
 SPEEDS = {'slow': 0.8, 'normal': 1.0, 'fast': 1.25}
-MUSIC_MODES = ('funny', 'track', 'upload', 'mine', 'none')
+MUSIC_MODES = ('funny', 'track', 'upload', 'mine', 'none', 'mysong')  # mysong: one of the owner's saved songs
 # The Real -> AI opening: the real video's last seconds before the start picture, then the switch to the AI.
 HOOK_MAX = 2.0  # seconds of real video kept before each start picture (hook.mp4, FPS frames a second)
 HOOK_MIN = 0.8  # less real video than this: no opening
@@ -88,6 +95,9 @@ DUCK = 0.45  # the music's volume under the real seconds (full from the switch o
 WHOOSH_PEAK = 0.27  # seconds from the start of sfx's whoosh to its loudest moment (put on the switch)
 # The Follow me ending: the last frame held, blurred and darkened, under the owner's follow card.
 OUTRO_SECONDS = 1.5
+# My songs: the owner's saved songs, each starting at its meme part.
+MAX_SONGS = 10
+SONG_MB = 25  # the biggest song file (audio or video) that can be added
 # The pet voice: each caption said once, when it shows.
 VOICES = ('off', 'auto', 'squeaky', 'deep', 'narrator')  # auto: a voice that suits the animal
 VOICE_AT = 0.25  # the pet starts talking this long after its caption shows
@@ -169,7 +179,7 @@ def public(job):
     keys = ['id', 'created', 'status', 'stage', 'progress', 'error', 'label', 'kind', 'caption', 'sound',
             'made', 'wanted', 'retry_at', 'seconds_long', 'template', 'music', 'track', 'music_used', 'speed', 'idea',
             'owner_name', 'animal', 'song_part', 'song_start', 'has_sound', 'has_song', 'rev', 'group', 'index',
-            'batch', 'opening_s']
+            'batch', 'opening_s', 'song_id', 'music_start']  # song_id: the saved song of music 'mysong'
     view = {k: job.get(k) for k in keys}  # opening_s: the opening's seconds in the current video (None: none)
     view['has_video'] = bool(job.get('thumb'))  # a finished version exists (also while an edit is being made)
     view['has_thumb'] = bool(job.get('thumb'))
@@ -287,6 +297,57 @@ def load_push(text):
         log.warning('could not load notifications: %s', e)
 
 
+# My songs: id -> {id, name, start, seconds_hint, default, added, candidates, duration}. The list is songs.json and
+# each song songs/<id>.m4a, kept with the videos (the private dataset), so they survive restarts and updates.
+songs = {}
+songs_lock = threading.Lock()
+songs_saving = threading.Lock()
+
+
+def song_file(song_id):
+    """A saved song's sound file, fetched from the Hub if this Space restarted since it was added."""
+    path = DATA / 'songs' / f'{song_id}.m4a'
+    if path.exists() or not hub:
+        return path
+    from huggingface_hub import hf_hub_download
+    path.parent.mkdir(parents=True, exist_ok=True)
+    got = hf_hub_download(DATASET, f'songs/{song_id}.m4a', repo_type='dataset', token=HF_TOKEN)
+    shutil.copy(got, path)
+    return path
+
+
+def save_songs(added=(), removed=()):
+    """The song list (and any song file added or removed) to the Hub in one commit."""
+    with songs_saving:  # one save at a time, each with the newest list
+        with songs_lock:
+            data = json.dumps(songs)
+        path = DATA / 'songs.json'
+        path.write_text(data)
+        if not hub:
+            return
+        try:
+            from huggingface_hub import CommitOperationAdd, CommitOperationDelete
+            ops = [CommitOperationAdd('songs.json', str(path))]
+            ops += [CommitOperationAdd(f'songs/{i}.m4a', str(DATA / 'songs' / f'{i}.m4a')) for i in added]
+            gone = [CommitOperationDelete(f'songs/{i}.m4a') for i in removed]
+            try:
+                hub.create_commit(DATASET, ops + gone, commit_message='songs', repo_type='dataset')
+            except Exception:
+                if not gone:
+                    raise
+                hub.create_commit(DATASET, ops, commit_message='songs', repo_type='dataset')  # (file already gone)
+        except Exception as e:
+            log.warning('saving songs to the Hub failed: %s', e)
+
+
+def load_songs(text):
+    try:
+        got = json.loads(text)
+        songs.update({k: v for k, v in got.items() if isinstance(v, dict) and v.get('id') == k})
+    except Exception as e:  # (no songs is better than no worker)
+        log.warning('could not load songs: %s', e)
+
+
 def load_jobs():
     """Bring back jobs after a restart and put unfinished ones back in line."""
     global hub, token_ok
@@ -313,6 +374,11 @@ def load_jobs():
                     load_push(Path(hf_hub_download(DATASET, name, repo_type='dataset', token=HF_TOKEN)).read_text())
                 except Exception as e:
                     log.warning('could not load notifications: %s', e)
+            if name == 'songs.json':
+                try:
+                    load_songs(Path(hf_hub_download(DATASET, name, repo_type='dataset', token=HF_TOKEN)).read_text())
+                except Exception as e:
+                    log.warning('could not load songs: %s', e)
             if name.endswith('/job.json'):
                 try:
                     job = json.loads(Path(hf_hub_download(DATASET, name, repo_type='dataset', token=HF_TOKEN)).read_text())
@@ -327,11 +393,13 @@ def load_jobs():
             guests.update(json.loads((DATA / 'guests.json').read_text()))
         if (DATA / 'push.json').exists():
             load_push((DATA / 'push.json').read_text())
+        if (DATA / 'songs.json').exists():
+            load_songs((DATA / 'songs.json').read_text())
     for job in sorted(jobs.values(), key=lambda j: (j['created'], j.get('index', 0))):  # oldest first
         if job['status'] in ('queued', 'working'):
             job['status'] = 'queued'
             enqueue(job)
-    log.info('loaded %d jobs and %d friends', len(jobs), len(guests))
+    log.info('loaded %d jobs, %d friends and %d songs', len(jobs), len(guests), len(songs))
 
 
 # ---------- Step 1: starting pictures ----------
@@ -500,7 +568,7 @@ def extract_sound(source, out):
     """Keeps the sound of the user's own video (for "my video's sound"). False if it has none."""
     try:
         run(['ffmpeg', '-v', 'error', '-y', '-i', str(source), '-vn', '-ac', '2', '-ar', '44100',
-             '-c:a', 'aac', '-b:a', '160k', str(out)])
+             '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', str(out)])
     except subprocess.CalledProcessError:
         out.unlink(missing_ok=True)
         return False
@@ -1233,17 +1301,20 @@ def process(job):
     have = hook['frames'] / FPS if hook else 0.0
     lead = min(HOOK_WANT, have)
     music, audio, credit, used, natural = job.get('music', 'funny'), None, '', 'none', 'start'
+    saved = None  # a saved song's meme part (music 'mysong'): where it starts, for every video
     if music == 'mine' and job.get('has_sound'):
         audio, used = local_file(job, 'sound.m4a'), 'mine'
     elif music == 'upload' and job.get('has_song'):
         audio, used, natural = local_file(job, 'song.m4a'), 'upload', 'drop'
+    elif music == 'mysong' and (mine := my_song(job)):
+        (audio, saved), used = mine, 'mysong'
     elif music != 'none':  # a meme track (chosen or matched to the style), or a missing sound/song
         try:
             audio, used = music_file(job['track']), 'funny'
             credit = ideas.MUSIC_CREDIT.format(track=job['track'])
         except requests.RequestException as e:
             log.warning('%s: no music this time (%s)', job['id'], e)
-    start, info = 0.0, None
+    start, info = saved or 0.0, None
     synced = bool(hook and used == 'mine' and job.get('hook_at') is not None)
     if synced:  # the video's own sound, in step with its real seconds
         lead = round(lead * FPS) / FPS
@@ -1254,6 +1325,8 @@ def process(job):
             info = beats.analyse(audio)
             if synced:
                 pass
+            elif used == 'mysong':  # always the song's meme part, however long the video (on its beat)
+                start = beats.nearest_beat(info, saved)
             elif part == 'custom':  # the user's own start time, nudged onto the nearest beat
                 start = beats.nearest_beat(info, max(0.0, float(job.get('song_start') or 0)))
             else:
@@ -1346,6 +1419,20 @@ def process(job):
         raise failed  # the shorter video is ready to watch; the rest is made by itself when free time is back
 
 
+def my_song(job):
+    """The saved song of a 'mysong' video and where its meme part starts: (file, seconds), or None when the song
+    was deleted or can't be fetched (the video then gets the meme song for its style)."""
+    with songs_lock:
+        song = dict(songs.get(job.get('song_id') or '') or {})
+    if not song:
+        return None
+    try:
+        return song_file(song['id']), float(song.get('start') or 0)
+    except Exception as e:
+        log.warning('%s: saved song %s unavailable (%s); the meme song instead', job['id'], song['id'], e)
+        return None
+
+
 def opening_for(job, parts):
     """The Real -> AI opening for this cut, or None: it is switched on, the real seconds before the start
     picture were kept, and clip 1 (where the real video turns into the AI) is in the video (also in a
@@ -1414,7 +1501,7 @@ def meme_edit(job, folder, parts, spans, speed, audio, info, start, used, lead=0
         total = lead + at if total is None else total
         zooms, events = [], []
         if on:  # (the song is at start + lead when the animated parts begin)
-            zooms, events = meme.plan(layout, info, start + lead, use_beats=used in ('funny', 'upload'),
+            zooms, events = meme.plan(layout, info, start + lead, use_beats=used in ('funny', 'upload', 'mysong'),
                                       speed=speed, motion=True)
             for p in zooms:
                 p['t0'] += lead
@@ -1783,9 +1870,10 @@ def features():
     outro: the Follow me ending (the outro field; the owner's endcard).
     voice: the pet voice (the voice field), only when its packages import and its model is on disk (checked
     in the background when the worker starts, so it shows up a few seconds after).
-    push: "your video is ready" notifications (/push/...), only when the cryptography package imports."""
+    push: "your video is ready" notifications (/push/...), only when the cryptography package imports.
+    songs: My songs (/songs: the owner's saved songs, each starting at its meme part; music 'mysong' + song_id)."""
     return (['chain'] + (['meme'] if meme and sfx else []) + ['opening', 'outro']
-            + (['voice'] if pet_voice and pet_voice.ready() else []) + (['push'] if webpush else []))
+            + (['voice'] if pet_voice and pet_voice.ready() else []) + (['push'] if webpush else []) + ['songs'])
 
 
 @app.get('/health')
@@ -1831,6 +1919,7 @@ def create_job(
     outro: bool = Form(False),
     voice: str = Form('off'),
     hook_fps: float = Form(30),
+    song_id: str = Form(''),
     images: list[UploadFile] = File(None),
     source: UploadFile = File(None),
     song: UploadFile = File(None),
@@ -1851,10 +1940,14 @@ def create_job(
             who['uses_left'] -= count
             who['used'] += count
     wanted = max(1, min(MAX_CLIPS, clips))
+    music = music if music in MUSIC_MODES else 'funny'
+    song_id = chosen_song(song_id) if music == 'mysong' else ''  # (friends may use the owner's songs too)
+    if music == 'mysong' and not song_id:
+        music = 'funny'  # no saved song (any more): the meme song for the style
     settings = {
         'captions': captions, 'seconds': max(2, min(5, seconds)), 'animal': clean_animal(animal),
         'template': template if template in ideas.TEMPLATES else 'random',
-        'music': music if music in MUSIC_MODES else 'funny',
+        'music': music, 'song_id': song_id,
         'track': track if music == 'track' and track in ideas.MUSIC else '',
         'song_part': song_part if song_part in ('auto', 'start', 'drop', 'custom') else 'auto',
         'song_start': max(0.0, min(3600.0, song_start)),
@@ -2008,6 +2101,7 @@ def edit_job(
     voice: str = Form(None),
     redo: str = Form(''),
     song: UploadFile = File(None),
+    song_id: str = Form(None),
 ):
     """Change a video. Text, music, speed, length, meme effects, the pet voice, the opening and the ending re-cut
     it in seconds. A new description, style or animal, or redo (clip numbers), animates the clips concerned again."""
@@ -2017,6 +2111,9 @@ def edit_job(
         texts = [str(t)[:120] for t in json.loads(texts)] if texts else []
     except (ValueError, TypeError):
         raise HTTPException(400, 'Could not read the new texts')
+    new_song_id = chosen_song(song_id or job.get('song_id')) if music == 'mysong' else None
+    if music == 'mysong' and not new_song_id:
+        raise HTTPException(400, "That song isn't saved any more. Pick another one.")
     folder = job_dir(job['id'])
     new_song = None
     if song is not None and music == 'upload':
@@ -2062,6 +2159,8 @@ def edit_job(
             job['draft'] = False
         if music in MUSIC_MODES and not (music == 'mine' and not job.get('has_sound')):
             job['music'] = music
+        if new_song_id:  # a saved song (or another one): just a re-cut
+            job['song_id'] = new_song_id
         if job['music'] == 'track' and track in ideas.MUSIC:
             job['track'] = track
         elif job['music'] == 'funny' and (old_music != 'funny' or new_template != old_template):
@@ -2279,6 +2378,174 @@ def remove_guest(guest_id: str, x_antics_key: str = Header(None)):
     if dropped is not None:
         save_push()
     return {'ok': True}
+
+
+# ---------- My songs ----------
+# The owner adds full songs (any audio or video file, up to SONG_MB). Each is kept as m4a and cut to its meme part,
+# found by chorus.py (on a beat, adjustable), and every video with music 'mysong' starts it right there. Friends see
+# and use them too (they are the account's own sound), but only the owner adds, changes or deletes them.
+
+def song_view(song):
+    return {k: song.get(k) for k in ('id', 'name', 'start', 'seconds_hint', 'default', 'added', 'candidates',
+                                     'duration')}
+
+
+def chosen_song(song_id):
+    """The saved song to use: the one asked for while it is there, else the default one ('' when none)."""
+    with songs_lock:
+        if song_id and song_id in songs:
+            return song_id
+        return next((k for k, v in songs.items() if v.get('default')), '')
+
+
+def clean_song_name(text):
+    return re.sub(r'\s+', ' ', plain_text(text or '')).strip()[:60]
+
+
+def audio_seconds(path):
+    try:
+        out = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', str(path)],
+                             capture_output=True, text=True, check=True).stdout
+        return round(float(out.strip()), 2)
+    except (subprocess.CalledProcessError, ValueError):
+        return None
+
+
+def words_model():
+    """Whisper (the model /listen uses), for the meme-part finder to hear the words with; None when it's missing."""
+    try:
+        return whisper()
+    except Exception as e:
+        log.info('the meme-part finder works without words here: %s', getattr(e, 'detail', e))
+        return None
+
+
+def meme_part(path):
+    """Where a song's meme part starts (chorus.find), or its liveliest part when the finder can't say."""
+    if chorus:
+        try:
+            return chorus.find(path, words_model(), whisper_lock)
+        except Exception as e:  # (it doesn't raise for a readable song; this is in case)
+            log.warning('the meme-part finder failed: %s', e)
+    info = beats.analyse(path)
+    start = round(beats.pick_start(info, 15, 'drop'), 2) if info else 0.0
+    return {'start': start, 'seconds': 15.0, 'candidates': [{'start': start, 'why': 'loudest part'}], 'how': 'loudest'}
+
+
+@app.get('/songs')
+def list_songs(x_antics_key: str = Header(None)):
+    caller(x_antics_key)  # the owner and friends
+    with songs_lock:
+        items = sorted(songs.values(), key=lambda v: v.get('added') or 0)
+        return {'songs': [song_view(v) for v in items], 'max': MAX_SONGS}
+
+
+@app.post('/songs')
+def add_song(file: UploadFile = File(...), name: str = Form(''), x_antics_key: str = Header(None)):
+    """Adds a song: kept as m4a, its meme part found (about 10 s). Returns it."""
+    check(x_antics_key)
+    with songs_lock:
+        if len(songs) >= MAX_SONGS:
+            raise HTTPException(409, f'You can keep {MAX_SONGS} songs. Delete one to add another.')
+    folder = DATA / 'songs'
+    folder.mkdir(parents=True, exist_ok=True)
+    song_id = secrets.token_hex(4)
+    original, path = folder / f'{song_id}.original', folder / f'{song_id}.m4a'
+    try:
+        size = 0
+        with open(original, 'wb') as f:
+            while chunk := file.file.read(1 << 20):
+                size += len(chunk)
+                if size > SONG_MB * 1024 * 1024:
+                    raise HTTPException(413, f'That file is over {SONG_MB} MB. Try a shorter one, or an MP3.')
+                f.write(chunk)
+        if not extract_sound(original, path):
+            raise HTTPException(400, "That file has no sound we can use. Try an MP3, an M4A or a video with sound.")
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    finally:
+        original.unlink(missing_ok=True)
+    found = meme_part(path)
+    title = (clean_song_name(name) or clean_song_name(Path(file.filename or '').stem.replace('_', ' '))
+             or 'My song')
+    song = {'id': song_id, 'name': title, 'start': float(found['start']), 'seconds_hint': found.get('seconds') or 15.0,
+            'default': False, 'added': time.time(), 'candidates': found.get('candidates') or [],
+            'duration': audio_seconds(path)}
+    with songs_lock:
+        if len(songs) >= MAX_SONGS:  # (two added at the same time)
+            path.unlink(missing_ok=True)
+            raise HTTPException(409, f'You can keep {MAX_SONGS} songs. Delete one to add another.')
+        song['default'] = not any(v.get('default') for v in songs.values())  # the first song is for every video
+        songs[song_id] = song
+        view = song_view(song)
+    save_songs(added=[song_id])
+    log.info('song %s "%s": meme part at %.2f s (%s)', song_id, title, song['start'], found.get('how', ''))
+    return view
+
+
+@app.post('/songs/{song_id}')
+def change_song(song_id: str, name: str = Form(None), start: float = Form(None), default: bool = Form(None),
+                x_antics_key: str = Header(None)):
+    """Rename a song, move its meme part (start, put on the nearest beat) or make it the default (the one every
+    new video gets; default=false: none)."""
+    check(x_antics_key)
+    with songs_lock:
+        if song_id not in songs:
+            raise HTTPException(404, 'No such song')
+        known = songs[song_id].get('duration')
+    if start is not None:
+        try:
+            path = song_file(song_id)
+            info = beats.analyse(path)
+        except Exception:
+            raise HTTPException(404, "That song's file is missing. Delete it and add it again.")
+        end = info['duration'] if info else (known or 0)
+        start = max(0.0, min(float(start), max(0.0, end - 1)))
+        start = round(beats.nearest_beat(info, start, within=1.0), 2)  # on the beat
+    with songs_lock:
+        song = songs.get(song_id)
+        if not song:
+            raise HTTPException(404, 'No such song')
+        if name is not None and clean_song_name(name):
+            song['name'] = clean_song_name(name)
+        if start is not None:
+            song['start'] = start
+        if default:
+            for other in songs.values():
+                other['default'] = other is song
+        elif default is False:
+            song['default'] = False
+        view = song_view(song)
+    save_songs()
+    return view
+
+
+@app.delete('/songs/{song_id}')
+def delete_song(song_id: str, x_antics_key: str = Header(None)):
+    """Videos that had this song keep their sound; when one is changed later, it gets the meme song instead."""
+    check(x_antics_key)
+    with songs_lock:
+        song = songs.pop(song_id, None)
+    if not song:
+        raise HTTPException(404, 'No such song')
+    (DATA / 'songs' / f'{song_id}.m4a').unlink(missing_ok=True)
+    save_songs(removed=[song_id])
+    return {'ok': True}
+
+
+@app.get('/songs/{song_id}/audio')
+def song_audio(song_id: str, key: str = Query(None), x_antics_key: str = Header(None)):
+    """The song itself, to hear its meme part (the owner and friends)."""
+    caller(x_antics_key, key)
+    with songs_lock:
+        if song_id not in songs:
+            raise HTTPException(404, 'No such song')
+    try:
+        path = song_file(song_id)
+    except Exception:
+        raise HTTPException(404, "That song's file is missing")
+    return FileResponse(path, media_type='audio/mp4')
 
 
 # ---------- Notifications ----------

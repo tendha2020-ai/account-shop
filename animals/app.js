@@ -6,13 +6,13 @@ const HF = 'https://huggingface.co';
 const SPACE_NAME = 'antics-worker';
 const DATASET_NAME = 'antics-videos';
 const WORKER_FILES = ['Dockerfile', 'README.md', 'requirements.txt', 'worker.py', 'ideas.py', 'beats.py', 'meme.py', 'sfx.py',
-  'voice.py', 'webpush.py'];
-const WORKER_VERSION = '10'; // bump with VERSION in worker/worker.py
+  'voice.py', 'webpush.py', 'chorus.py'];
+const WORKER_VERSION = '11'; // bump with VERSION in worker/worker.py
 const KEYS = {
   worker: 'antics.worker', clips: 'antics.clips', captions: 'antics.captions', style: 'antics.style', music: 'antics.music',
   track: 'antics.track', part: 'antics.part', seconds: 'antics.seconds', speed: 'antics.speed', animal: 'antics.animal',
   idea: 'antics.idea', brand: 'antics.brand', count: 'antics.count', preview: 'antics.preview', ownerBackup: 'antics.owner',
-  extras: 'antics.extras', pingAsked: 'antics.pingAsked',
+  extras: 'antics.extras', pingAsked: 'antics.pingAsked', songId: 'antics.songId',
 };
 // The creator's name and picture, shown in the header and stamped on every video.
 const BRAND = { name: 'TENDHA2', avatar: 'brand/tendha2.png' };
@@ -97,6 +97,9 @@ const state = {
   surprise: false, // step 1 is "Surprise me": a painted scene, no video
   extras: { ...EXTRAS_DEFAULT },
   openVideo: null, // a video to open once the list is loaded (from a notification)
+  songs: null, // My songs: the owner's saved songs (workers with 'songs'), once loaded
+  songId: null, // the saved song new videos get, while music is 'mysong'
+  musicPicked: false, // music was picked on this visit (else new videos get the song set for every video)
 };
 
 function load(key, fallback) {
@@ -281,6 +284,7 @@ function workerChanged() {
   state.me = null;
   state.health = null;
   state.guests = null;
+  state.songs = null;
   resetPings();
   renderJobs();
   renderRole();
@@ -334,6 +338,7 @@ function leaveInvite() {
   save(KEYS.ownerBackup, null);
   state.jobs = [];
   state.me = null;
+  state.songs = null;
   resetPings();
   renderConnect();
   closeDialog($('#settings'));
@@ -608,7 +613,8 @@ async function submit(what) {
   unlockSound(); // still inside the tap: the "ready" chime can play later
   if (sending) return;
   const msg = $('#note');
-  if (state.music === 'upload' && !state.songFile) {
+  const music = musicNow();
+  if (music === 'upload' && !state.songFile) {
     note(msg, 'Choose your song file first (Music, Upload a song), or pick other music.', 'bad');
     return;
   }
@@ -636,16 +642,17 @@ async function submit(what) {
     form.append('captions', String(state.captions));
     form.append('template', state.style);
     // A surprise scene has no sound of its own, so it gets a meme song instead.
-    form.append('music', what.kind === 'surprise' && state.music === 'mine' ? 'funny' : state.music);
+    form.append('music', what.kind === 'surprise' && music === 'mine' ? 'funny' : music);
+    if (music === 'mysong') form.append('song_id', state.songId); // (from its meme part, whatever the length)
     form.append('track', state.track);
-    const canPick = ['track', 'upload'].includes(state.music);
+    const canPick = ['track', 'upload'].includes(music);
     form.append('song_part', state.part === 'custom' && !canPick ? 'auto' : state.part);
     form.append('song_start', state.songStart.toFixed(1));
     form.append('seconds', String(state.seconds));
     form.append('speed', state.speed);
     form.append('idea', $('#idea').value.trim());
     form.append('animal', $('#animalOpt').value.trim());
-    if (state.music === 'upload') form.append('song', state.songFile);
+    if (music === 'upload') form.append('song', state.songFile);
     for (const x of EXTRAS) if (canDo(x.key)) form.append(x.key, extraValue(x.key));
     const missing = []; // never let the name tag or the Follow me card stop a video
     if (state.brand && !isGuest()) {
@@ -685,7 +692,7 @@ async function submit(what) {
         o.frames.forEach((f, i) => form.append('hooks', f, `v${k}_${String(i).padStart(3, '0')}.jpg`));
       });
       if (fps) form.append('hook_fps', fps.toFixed(3));
-      if (state.music === 'mine' && isVideoFile(what.file)) {
+      if (music === 'mine' && isVideoFile(what.file)) {
         if (what.file.size < 150 * 1024 * 1024) form.append('source', what.file);
         else toast('That video is too big to keep its sound, so it gets funny music.');
       }
@@ -1436,6 +1443,10 @@ function renderPlayerTip(job) {
   };
   if (job.music_used === 'funny') line(['Music: '], [`"${songLabel(job.track || '')}"`, true], [' is already in (credit in the caption).']);
   else if (job.music_used === 'upload') line(['Your song is already in.']);
+  else if (job.music_used === 'mysong') {
+    const s = mySong(job.song_id);
+    line(['Music: '], [s ? `"${s.name}"` : 'your song', true], [' is already in, from its meme part.']);
+  }
   else if (job.music_used === 'mine') line(["Your video's sound is already in."]);
   else line(['No music: add '], [job.sound || 'a trending sound', true], [' in TikTok.']);
   line(['Before posting, turn on '], ['AI-generated content', true], [' in TikTok.']);
@@ -1511,6 +1522,158 @@ function togglePreview(name) {
     previewing = name;
   }
   renderOptions();
+}
+
+// ---------- My songs ----------
+// The owner's saved songs (workers that list 'songs'), each cut to its meme part by the worker. In Music they
+// come first, each with ▶ to hear its meme part; the song set for every video is picked for new videos (until
+// other music is picked on that visit). Friends see and use them; the owner adds and changes them in Settings
+// (or with + Add a song under Music).
+
+const SONG_MAX = 10;
+const SONG_MB = 25;
+const songsOn = () => canDo('songs') && Array.isArray(state.songs);
+const mySong = (id) => (state.songs || []).find((s) => s.id === id) || null;
+const defaultSong = () => (state.songs || []).find((s) => s.default) || null;
+const songAudioUrl = (id) => `${state.worker.url}/songs/${id}/audio?key=${encodeURIComponent(state.worker.key)}`;
+// The music the next video gets: a saved song only while it is there (an older worker: the meme song).
+const musicNow = () => (state.music === 'mysong' && !(songsOn() && mySong(state.songId)) ? 'funny' : state.music);
+// Seconds of video (and so of song) the next video has.
+const videoSeconds = () => (state.clips * state.seconds) / ({ slow: 0.8, normal: 1, fast: 1.25 }[state.speed] || 1);
+
+// A song file's name as a song name: "7e1de5ab-Rauf__Faik_-_Detstvo_(Lyrics).mp3" -> "Rauf Faik - Detstvo".
+function songNameFrom(file) {
+  return (file.name || '')
+    .replace(/\.[a-z0-9]{2,4}$/i, '')
+    .replace(/[_]+/g, ' ')
+    .replace(/[([](?:official\s+)?(?:lyrics?|audio|video|music\s+video|official|hq|hd|mp3)[^)\]]*[)\]]/gi, ' ')
+    .replace(/(\S)\s+(?:official\s+)?(?:lyrics?|audio|video|hq|hd)\b.*$/i, '$1')
+    .replace(/^[0-9a-f]{6,}[-\s]+/i, '') // a random prefix some apps add
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 60)
+    .replace(/^\p{Ll}/u, (c) => c.toUpperCase()) || 'My song';
+}
+
+let songsAsked = 0; // a list fetched before the latest change is out of date
+async function loadSongs() {
+  if (!state.worker || !canDo('songs')) return;
+  const asked = state.worker;
+  const n = ++songsAsked;
+  try {
+    const { songs } = await api('/songs');
+    if (state.worker !== asked || n !== songsAsked) return;
+    state.songs = songs;
+  } catch {
+    return; // asleep or offline: the next check tries again
+  }
+  settleSongChoice();
+  renderOptions();
+  renderSongsBox();
+}
+
+// Once the songs are known: new videos get the song set for every video, unless other music was picked on this
+// visit; a saved song that is gone gives way to that one (or to the meme song).
+function settleSongChoice() {
+  if (!songsOn()) return;
+  const def = defaultSong();
+  if (!state.musicPicked && def) {
+    state.music = 'mysong';
+    state.songId = def.id;
+  } else if (state.music === 'mysong' && !mySong(state.songId)) {
+    state.songId = def ? def.id : null;
+    if (!def) state.music = 'funny';
+  }
+}
+
+function pickSong(id) {
+  state.music = 'mysong';
+  state.songId = id;
+  state.musicPicked = true;
+  save(KEYS.music, 'mysong');
+  save(KEYS.songId, id);
+  songChanged();
+  renderOptions();
+}
+
+// The Music step's song tiles: tap the name to use it, ▶ to hear its meme part.
+function renderMySongs() {
+  const songs = songsOn() ? state.songs : [];
+  $('#mySongs').hidden = !songs.length;
+  $('#addSongLink').hidden = !(songsOn() && !isGuest() && songs.length < SONG_MAX);
+  const row = $('#mySongRow');
+  row.innerHTML = '';
+  for (const s of songs) {
+    const on = state.music === 'mysong' && state.songId === s.id;
+    const tile = document.createElement('div');
+    tile.className = 'voice song-tile';
+    tile.classList.toggle('on', on);
+    const pick = document.createElement('button');
+    pick.type = 'button';
+    pick.className = 'voice-name';
+    pick.textContent = s.name;
+    pick.title = s.name;
+    pick.setAttribute('aria-pressed', String(on));
+    pick.addEventListener('click', () => pickSong(s.id));
+    tile.append(pick, songHearButton(s, 'hear'));
+    row.appendChild(tile);
+  }
+}
+
+// ▶ for a saved song (■ while it plays). label: shown next to the sign (e.g. "Hear").
+function songHearButton(s, cls, label = '') {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = cls;
+  b.dataset.song = s.id;
+  if (label) b.dataset.label = label;
+  b.addEventListener('click', () => hearSong(s.id));
+  renderSongButton(b);
+  return b;
+}
+
+function renderSongButton(b) {
+  const s = mySong(b.dataset.song);
+  const playing = previewing === `song:${b.dataset.song}` && !preview.paused;
+  b.textContent = `${playing ? '■' : '▶'}${b.dataset.label ? ` ${playing ? 'Stop' : b.dataset.label}` : ''}`;
+  b.setAttribute('aria-label', `${playing ? 'Stop' : 'Hear'} ${s ? s.name : 'the song'}`);
+}
+
+const renderSongButtons = () => document.querySelectorAll('[data-song]').forEach(renderSongButton);
+
+// Plays a saved song from `from` (its meme part when not given) for as long as a video is; tap again to stop.
+function hearSong(id, from = null) {
+  const s = mySong(id);
+  if (!s) return;
+  const key = `song:${id}`;
+  clearTimeout(previewStop);
+  if (previewing === key && !preview.paused && from === null) {
+    preview.pause();
+    previewing = '';
+    renderSongButtons();
+    return;
+  }
+  previewing = key;
+  const url = songAudioUrl(id);
+  const at = from ?? s.start ?? 0;
+  const go = () => {
+    if (previewing !== key) return;
+    preview.currentTime = at;
+    preview.play().catch((e) => {
+      if (previewing === key && e.name !== 'AbortError') toast("Couldn't play that song");
+    });
+    previewStop = setTimeout(() => {
+      if (previewing === key) preview.pause();
+    }, Math.max(5, videoSeconds()) * 1000);
+  };
+  if (preview.src !== url) {
+    preview.src = url;
+    preview.addEventListener('loadedmetadata', go, { once: true });
+  } else {
+    go();
+  }
+  renderSongButtons();
+  renderHear(); // a voice sample's ■ turns back to ▶
 }
 
 // ---------- Pet voice: which voice, and ▶ to hear each one ----------
@@ -1613,15 +1776,18 @@ function renderOptions() {
     save(KEYS.style, key);
     renderOptions();
   });
-  chips($('#musicRow'), MUSIC, state.music, (key) => {
+  const music = musicNow();
+  chips($('#musicRow'), MUSIC, music, (key) => {
     state.music = key;
+    state.musicPicked = true;
     save(KEYS.music, key);
     songChanged();
     renderOptions();
   });
+  renderMySongs();
 
   const list = $('#songList');
-  list.hidden = state.music !== 'track';
+  list.hidden = music !== 'track';
   list.innerHTML = '';
   for (const name of SONGS) {
     const row = document.createElement('div');
@@ -1647,16 +1813,18 @@ function renderOptions() {
     list.appendChild(row);
   }
 
-  $('#songUpload').hidden = state.music !== 'upload';
+  $('#songUpload').hidden = music !== 'upload';
   $('#songName').textContent = state.songFile ? state.songFile.name : 'No song chosen yet';
-  $('#partLine').hidden = state.music === 'none';
+  $('#partLine').hidden = music === 'none' || music === 'mysong'; // a saved song always starts at its meme part
   $('#musicRow [data-key="mine"]').disabled = state.surprise;
-  const hint = state.surprise && state.music === 'mine' ? 'A surprise has no sound of its own, so it gets a meme song.'
-    : MUSIC_HINT[state.music] || '';
+  const song = music === 'mysong' ? mySong(state.songId) : null;
+  const hint = state.surprise && music === 'mine' ? 'A surprise has no sound of its own, so it gets a meme song.'
+    : song ? `Every video starts at its meme part (${clock(song.start)}).${isGuest() ? '' : ' Change it in Settings.'}`
+      : MUSIC_HINT[music] || '';
   $('#musicHelp').textContent = hint;
   $('#musicHelp').hidden = !hint;
-  $('#musicNote').hidden = !['mine', 'upload'].includes(state.music);
-  const canPick = ['track', 'upload'].includes(state.music);
+  $('#musicNote').hidden = !['mine', 'upload', 'mysong'].includes(music);
+  const canPick = ['track', 'upload'].includes(music);
   $('#partSeg [data-v="custom"]').hidden = !canPick;
   const picking = canPick && state.part === 'custom';
   $('#partPick').hidden = !picking;
@@ -1785,6 +1953,7 @@ const EDIT_EXTRAS = [['voice', 'editVoice', 'editVoiceLine'], ['meme', 'editMeme
 const cleanAnimal = (text) => text.replace(/[^a-zA-Z ]/g, '').trim().toLowerCase().slice(0, 30);
 
 function musicValue(job) {
+  if (job.music === 'mysong') return songsOn() && mySong(job.song_id) ? `song:${job.song_id}` : 'funny';
   if (job.music === 'track' && SONGS.includes(job.track)) return `track:${job.track}`;
   if (job.music === 'upload') return job.has_song ? 'upload' : 'funny';
   if (job.music === 'mine') return job.has_sound ? 'mine' : 'funny';
@@ -1820,6 +1989,12 @@ function openEditor(job) {
     o.textContent = label;
     parent.appendChild(o);
   };
+  if (songsOn() && state.songs.length) { // the account's own songs first, each from its meme part
+    const mine = document.createElement('optgroup');
+    mine.label = 'My songs';
+    sel.appendChild(mine);
+    for (const s of state.songs) opt(`song:${s.id}`, s.name, mine);
+  }
   opt('funny', 'Auto meme song');
   const group = document.createElement('optgroup');
   group.label = 'Meme songs';
@@ -1916,6 +2091,7 @@ function losesAnimation() {
 
 function editSongUrl() {
   const sel = $('#editMusic').value;
+  if (sel.startsWith('song:')) return mySong(sel.slice(5)) ? songAudioUrl(sel.slice(5)) : null;
   if (sel.startsWith('track:')) return songUrl(sel.slice(6));
   if (sel === 'upload-new' && edit.songFile) {
     if (!edit.songFileUrl) edit.songFileUrl = URL.createObjectURL(edit.songFile);
@@ -1982,7 +2158,7 @@ function renderEditor() {
   $('#editSongUpload').hidden = music !== 'upload-new';
   $('#editSongName').textContent = edit.songFile ? edit.songFile.name : 'No song chosen yet';
   $('#editHear').hidden = !editSongUrl();
-  $('#editPartLine').hidden = music === 'none';
+  $('#editPartLine').hidden = music === 'none' || music.startsWith('song:'); // a saved song: its meme part
   const canPick = music.startsWith('track:') || music === 'upload-new' || music === 'upload';
   $('#editPartSeg [data-v="custom"]').hidden = !canPick;
   const part = edit.part === 'custom' && !canPick ? 'auto' : edit.part;
@@ -2032,6 +2208,9 @@ async function saveEdit() {
   } else if (sel.startsWith('track:')) {
     form.append('music', 'track');
     form.append('track', sel.slice(6));
+  } else if (sel.startsWith('song:')) {
+    form.append('music', 'mysong');
+    form.append('song_id', sel.slice(5));
   } else {
     form.append('music', sel);
   }
@@ -2276,6 +2455,46 @@ const STYLE_WORDS = [
 ];
 const STYLE_NAMES = String.raw`twerk(?:ing)?|danc(?:e|ing)|walk(?:ing)?|fight(?:ing)?|fail|sassy|star|honest(?:y)?|moment\s+of\s+honesty|random`;
 
+// My songs by name: "with Detstvo", "to the song Детство", "play my song". A name is matched as said, and in
+// Latin letters (speech in English writes "Detstvo" for Детство); the title after " - " (no artist) works too.
+const CYRILLIC = { а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'yo', ж: 'zh', з: 'z', и: 'i', й: 'y', к: 'k', л: 'l',
+  м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'kh', ц: 'ts', ч: 'ch', ш: 'sh', щ: 'shch',
+  ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya' };
+const toLatin = (t) => t.toLowerCase().replace(/[а-яё]/g, (c) => CYRILLIC[c] ?? c);
+const escapeRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+function songNames(name) {
+  const words = (t) => t.toLowerCase().replace(/\([^)]*\)|\[[^\]]*\]/g, ' ').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const forms = new Set();
+  for (const t of [name, toLatin(name)]) {
+    for (const part of [t, t.split(/\s[-–—]\s/).pop()]) {
+      const w = words(part || '');
+      if (w.length >= 3) forms.add(w);
+    }
+  }
+  return [...forms].sort((a, b) => b.length - a.length).map((f) => f.split(' ').map(escapeRe).join(String.raw`\s+`));
+}
+
+// The saved song an order names, with where it was said: { id, index, length }, or null.
+function songOrder(text) {
+  if (!songsOn() || !state.songs.length) return null;
+  const B = String.raw`(?<![\p{L}\p{N}])`;
+  const E = String.raw`(?![\p{L}\p{N}])`;
+  const cue = String.raw`(?:to|with|using|use|play(?:ing)?|put|add)\s+`;
+  const kind = String.raw`(?:song|music|track|tune)`;
+  for (const s of state.songs) {
+    for (const name of songNames(s.name)) {
+      const re = new RegExp(String.raw`${B}(?:${cue}(?:(?:the|my)\s+)?(?:${kind}\s+(?:called\s+)?)?|(?:(?:the|my)\s+)?${kind}\s+(?:called\s+)?)(?:${name})${E}(?:\s+${kind}${E})?`, 'iu');
+      const m = re.exec(text);
+      if (m) return { id: s.id, index: m.index, length: m[0].length };
+    }
+  }
+  const mine = new RegExp(String.raw`${B}(?:${cue})?my\s+(?:own\s+|saved\s+)?${kind}${E}`, 'iu').exec(text);
+  if (!mine) return null;
+  const pick = defaultSong() || state.songs[0];
+  return { id: pick.id, index: mine.index, length: mine[0].length };
+}
+
 function styleFromName(name) {
   const n = name.toLowerCase();
   if (n.startsWith('twerk')) return 'twerk';
@@ -2303,6 +2522,14 @@ function understand(said, currentStyle) {
       orders.track = song;
       return true;
     });
+  }
+  if (!orders.track) { // one of My songs ("with my song", "with Detstvo")
+    const said = songOrder(text);
+    if (said) {
+      orders.music = 'mysong';
+      orders.songId = said.id;
+      text = `${text.slice(0, said.index)} ${text.slice(said.index + said.length)}`;
+    }
   }
   // The extras (before the music: "no sound effects" is not "no sound").
   const no = String.raw`(?:no|without(?:\s+(?:any|a|an|the))?|skip(?:\s+the)?)\s+`;
@@ -2382,6 +2609,7 @@ function orderLabels(o, target) {
   const labels = [];
   if (o.style) labels.push(STYLES.find((x) => x.key === o.style).label);
   if (o.music === 'track') labels.push(songLabel(o.track));
+  if (o.music === 'mysong') labels.push((mySong(o.songId) || { name: 'My song' }).name);
   if (o.music === 'none') labels.push('No music');
   if (o.music === 'mine') labels.push("Your video's sound");
   if (o.clips) labels.push(`${o.clips * 5} sec`);
@@ -2428,7 +2656,7 @@ function applyOrders(o, target) {
       $('#editVoice').checked = voice !== 'off';
       if (VOICE_PICKS.includes(voice)) edit.voice = voice;
     }
-    const want = o.music === 'track' ? `track:${o.track}` : o.music;
+    const want = o.music === 'track' ? `track:${o.track}` : o.music === 'mysong' ? `song:${o.songId}` : o.music;
     if (want && [...sel.options].some((x) => x.value === want)) sel.value = want;
     loadEditSongDuration();
     renderEditor();
@@ -2444,15 +2672,20 @@ function applyOrders(o, target) {
       renderEditor();
     };
   }
-  const keys = ['style', 'music', 'track', 'clips', 'count', 'speed', 'captions', 'preview'];
+  const keys = ['style', 'music', 'track', 'clips', 'count', 'speed', 'captions', 'preview', 'songId'];
   const before = Object.fromEntries(keys.map((k) => [k, state[k]]));
+  const pickedBefore = state.musicPicked;
   const extrasBefore = { ...state.extras };
   const set = (k, v) => {
     state[k] = v;
     save(KEYS[k], v);
   };
   if (o.style) set('style', o.style);
-  if (o.music) set('music', o.music);
+  if (o.music) {
+    set('music', o.music);
+    state.musicPicked = true;
+  }
+  if (o.songId) set('songId', o.songId);
   if (o.track) set('track', o.track);
   if (o.clips) set('clips', o.clips);
   if (o.count) set('count', o.count);
@@ -2469,6 +2702,7 @@ function applyOrders(o, target) {
   renderOptions();
   return () => {
     keys.forEach((k) => set(k, before[k]));
+    state.musicPicked = pickedBefore;
     if (extras.length || voice) {
       state.extras = extrasBefore;
       save(KEYS.extras, state.extras);
@@ -2830,6 +3064,7 @@ function openSettings() {
   note($('#setupNote'), state.pending ? 'One quick setup first, then your video starts by itself.' : '');
   openDialog($('#settings'));
   if (state.worker && !isGuest()) loadFriends();
+  if (state.worker && !isGuest() && canDo('songs')) loadSongs();
 }
 
 let friendsChanged = 0; // a list fetched before the latest change is out of date
@@ -2952,6 +3187,203 @@ async function removeFriend(g) {
   }
 }
 
+// ---------- Settings: My songs ----------
+// Add a song: pick a file, it uploads and the worker finds its meme part (about 10-20 s). Then hear it, move it
+// (the worker puts it on the beat when saved), name it, and choose whether every new video gets it.
+
+const songAdd = { busy: false, song: null }; // the song being added (saved already, with the part found)
+// The worker's reasons for each good place to start, as short chip labels.
+const WHY = { chorus: 'chorus', 'catchy part': 'catchy', 'chorus again': 'again', 'same part, softer': 'softer',
+  'another catchy part': 'other part', 'loudest part': 'loudest', 'start of the song': 'start' };
+
+function renderSongsBox() {
+  const show = Boolean(state.worker) && !isGuest() && canDo('songs');
+  $('#songsBox').hidden = !show;
+  if (!show) return;
+  const songs = state.songs || [];
+  $('#songsCount').textContent = songs.length ? `${songs.length} of ${SONG_MAX}` : '';
+  $('#songAddBtn').hidden = songAdd.busy || songs.length >= SONG_MAX;
+  const list = $('#songRows');
+  list.innerHTML = '';
+  for (const s of songs) {
+    const row = document.createElement('div');
+    row.className = 'friend-row song-row';
+    const who = document.createElement('span');
+    const name = document.createElement('b');
+    name.textContent = s.name;
+    who.append(name, document.createTextNode(` · from ${clock(s.start || 0)}`));
+    if (s.default) {
+      const tag = document.createElement('span');
+      tag.className = 'song-tag';
+      tag.textContent = 'every video';
+      who.append(' ', tag);
+    }
+    const acts = document.createElement('div');
+    acts.className = 'acts';
+    const btn = (label, cls, fn) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = `plain ${cls}`;
+      b.textContent = label;
+      b.addEventListener('click', fn);
+      return b;
+    };
+    acts.append(songHearButton(s, 'plain'), btn('Rename', '', () => renameSong(s)));
+    if (!s.default) acts.append(btn('Set default', '', () => setDefaultSong(s)));
+    acts.append(btn('Delete', 'danger', () => deleteSong(s)));
+    row.append(who, acts);
+    list.appendChild(row);
+  }
+}
+
+async function addSong(file) {
+  if (!file || !state.worker || isGuest()) return;
+  if (!$('#settings').open) openSettings();
+  const noteEl = $('#songsNote');
+  if ((state.songs || []).length >= SONG_MAX) {
+    note(noteEl, `You can keep ${SONG_MAX} songs. Delete one to add another.`, 'bad');
+    return;
+  }
+  if (file.size > SONG_MB * 1024 * 1024) {
+    note(noteEl, `That file is over ${SONG_MB} MB. Try a shorter one, or an MP3.`, 'bad');
+    return;
+  }
+  note(noteEl, '');
+  songAdd.busy = true;
+  songAdd.song = null;
+  $('#songAdd').hidden = false;
+  $('#songAddBody').hidden = true;
+  $('#songAddHead').textContent = 'Finding the meme part… (about 20 s)';
+  renderSongsBox();
+  $('#songAdd').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('name', songNameFrom(file));
+    const song = await api('/songs', { method: 'POST', body: form });
+    songsAsked++; // (a list fetched meanwhile is out of date)
+    state.songs = [...(state.songs || []).filter((x) => x.id !== song.id), song];
+    songAdd.song = song;
+    showSongPanel(song);
+  } catch (e) {
+    $('#songAdd').hidden = true;
+    note(noteEl, e.waking ? 'Your worker is waking up (up to a minute). Try again then.' : e.message, 'bad');
+  } finally {
+    songAdd.busy = false;
+    $('#songAddFile').value = '';
+    $('#addSongFile').value = '';
+    renderSongsBox();
+    renderOptions();
+  }
+}
+
+// The song just added: where its meme part was found, ▶ Hear, a slider and a few other good places to start.
+function showSongPanel(song) {
+  $('#songAddHead').textContent = `Meme part found at ${clock(song.start)}`;
+  $('#songAddBody').hidden = false;
+  const range = $('#songAddStart');
+  range.max = String(Math.max(1, Math.floor((song.duration || 180) - 1)));
+  setSongAddStart(song.start);
+  $('#songAddLength').textContent = song.duration ? `of ${clock(song.duration)}` : '';
+  $('#songAddName').value = song.name;
+  $('#songAddDefault').checked = true;
+  const hear = $('#songAddHear');
+  hear.dataset.song = song.id;
+  hear.dataset.label = 'Hear';
+  renderSongButton(hear);
+  const cands = $('#songAddCands');
+  cands.innerHTML = '';
+  for (const c of (song.candidates || []).slice(0, 4)) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = `${clock(c.start)} ${WHY[c.why] || c.why}`;
+    b.dataset.start = String(c.start);
+    b.addEventListener('click', () => {
+      setSongAddStart(c.start);
+      hearSong(song.id, c.start);
+    });
+    cands.appendChild(b);
+  }
+  cands.hidden = cands.children.length < 2;
+}
+
+function setSongAddStart(t) {
+  $('#songAddStart').value = String(t);
+  $('#songAddStartLabel').textContent = clock(Number($('#songAddStart').value));
+  document.querySelectorAll('#songAddCands button').forEach((b) => {
+    b.setAttribute('aria-pressed', String(Math.abs(Number(b.dataset.start) - Number($('#songAddStart').value)) < 0.05));
+  });
+}
+
+async function saveSongPanel() {
+  const song = songAdd.song;
+  if (!song) return;
+  const btn = $('#songAddSave');
+  btn.disabled = true;
+  try {
+    const form = new FormData();
+    form.append('name', $('#songAddName').value.trim() || song.name);
+    form.append('start', $('#songAddStart').value);
+    form.append('default', String($('#songAddDefault').checked));
+    const saved = await api(`/songs/${song.id}`, { method: 'POST', body: form });
+    preview.pause();
+    songAdd.song = null;
+    $('#songAdd').hidden = true;
+    if (saved.default) pickSong(saved.id); // new videos get it
+    await loadSongs();
+    toast(`Saved. Videos with ${saved.name} start at ${clock(saved.start)}.`);
+  } catch (e) {
+    note($('#songsNote'), e.waking ? 'Your worker is waking up. Try Save again in a moment.' : e.message, 'bad');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function changeSong(s, fields, done) {
+  try {
+    const form = new FormData();
+    for (const [k, v] of Object.entries(fields)) form.append(k, String(v));
+    const saved = await api(`/songs/${s.id}`, { method: 'POST', body: form });
+    await loadSongs();
+    if (done) toast(done(saved));
+    return saved;
+  } catch (e) {
+    toast(e.waking ? 'Your worker is waking up. Try again in a moment.' : e.message);
+    return null;
+  }
+}
+
+async function renameSong(s) {
+  const name = (prompt('Song name', s.name) || '').trim();
+  if (!name || name === s.name) return;
+  await changeSong(s, { name }, (saved) => `Renamed to ${saved.name}`);
+}
+
+async function setDefaultSong(s) {
+  const saved = await changeSong(s, { default: true }, (x) => `New videos get ${x.name}`);
+  if (saved) pickSong(saved.id);
+}
+
+async function deleteSong(s) {
+  if (!confirm(`Delete ${s.name}? Videos already made keep their sound.`)) return;
+  try {
+    await api(`/songs/${s.id}`, { method: 'DELETE' });
+    if (previewing === `song:${s.id}`) preview.pause();
+    if (songAdd.song && songAdd.song.id === s.id) {
+      songAdd.song = null;
+      $('#songAdd').hidden = true;
+    }
+    songsAsked++;
+    state.songs = (state.songs || []).filter((x) => x.id !== s.id);
+    settleSongChoice();
+    renderSongsBox();
+    renderOptions();
+    loadSongs();
+  } catch (e) {
+    toast(e.message);
+  }
+}
+
 async function refreshHealth() {
   const asked = state.worker;
   let health;
@@ -2963,7 +3395,11 @@ async function refreshHealth() {
   }
   if (state.worker !== asked) return; // a link put another worker here meanwhile: its own answer is on the way
   state.health = health;
+  if (!canDo('songs')) state.songs = null;
+  else if (!state.songs) loadSongs();
   renderPc();
+  renderOptions(); // (the song tiles show or go with the worker's 'songs')
+  renderSongsBox();
   renderExtras();
   renderMake();
   renderPings();
@@ -3044,6 +3480,7 @@ function renderSettings() {
     $('#workerState').textContent = state.online ? '(running)' : '(asleep or starting)';
   }
   renderPc();
+  renderSongsBox();
   renderPings();
 }
 
@@ -3053,7 +3490,8 @@ function init() {
   state.captions = load(KEYS.captions, true);
   const pickSaved = (key, allowed, fallback) => (allowed.includes(load(key, null)) ? load(key, null) : fallback);
   state.style = pickSaved(KEYS.style, STYLES.map((x) => x.key), 'random');
-  state.music = pickSaved(KEYS.music, MUSIC.map((x) => x.key), 'funny');
+  state.music = pickSaved(KEYS.music, [...MUSIC.map((x) => x.key), 'mysong'], 'funny');
+  state.songId = load(KEYS.songId, null);
   state.track = pickSaved(KEYS.track, SONGS, SONGS[0]);
   state.part = pickSaved(KEYS.part, ['auto', 'start', 'drop', 'custom'], 'auto');
   state.clips = pickSaved(KEYS.clips, [1, 2, 3], 3);
@@ -3149,7 +3587,9 @@ function init() {
     $('#editSongStartLabel').textContent = clock(edit.songStart);
   });
   $('#editHear').addEventListener('click', () => {
+    const v = $('#editMusic').value;
     if (!preview.paused && !previewing.startsWith('voice:')) preview.pause(); // a voice sample just gives way
+    else if (v.startsWith('song:')) playSong(editSongUrl(), (mySong(v.slice(5)) || {}).start || 0, 15); // its meme part
     else playSong(editSongUrl(), 0);
   });
   $('#editHearPart').addEventListener('click', () => {
@@ -3197,6 +3637,21 @@ function init() {
     previewing = '';
     renderOptions();
   });
+  for (const ev of ['play', 'pause', 'ended']) preview.addEventListener(ev, renderSongButtons);
+  // My songs: add one (Settings, or + Add a song under Music), hear and move its meme part, save it
+  $('#addSongFile').addEventListener('change', (e) => addSong(e.target.files[0] || null));
+  $('#songAddFile').addEventListener('change', (e) => addSong(e.target.files[0] || null));
+  $('#songAddStart').addEventListener('input', (e) => setSongAddStart(Number(e.target.value)));
+  $('#songAddStart').addEventListener('change', (e) => {
+    if (songAdd.song && previewing === `song:${songAdd.song.id}` && !preview.paused) hearSong(songAdd.song.id, Number(e.target.value));
+  });
+  $('#songAddHear').addEventListener('click', () => {
+    const id = songAdd.song && songAdd.song.id;
+    if (!id) return;
+    if (previewing === `song:${id}` && !preview.paused) hearSong(id); // (stops it)
+    else hearSong(id, Number($('#songAddStart').value));
+  });
+  $('#songAddSave').addEventListener('click', saveSongPanel);
 
   $('#makeForm').addEventListener('submit', onMake);
   $('#pasteBtn').addEventListener('click', async () => {
@@ -3220,6 +3675,7 @@ function init() {
   onClosed($('#settings'), () => {
     state.setupMode = 'setup';
     $('#steps').hidden = true;
+    if (previewing.startsWith('song:')) preview.pause();
   });
   $('#redoSetup').addEventListener('click', () => {
     $('#setupPane').hidden = false;
@@ -3232,6 +3688,7 @@ function init() {
     state.worker = null;
     save(KEYS.worker, null);
     state.jobs = [];
+    state.songs = null;
     resetPings();
     renderJobs();
     renderWorkerDot(false);
