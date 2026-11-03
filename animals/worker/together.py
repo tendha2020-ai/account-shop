@@ -703,12 +703,7 @@ def scene_parts(scene_id, cast, count, extra='', plain=False):
         return own_parts(cast, count, extra)
     src = SCENES['normal'] if plain else scene
     picks = sorted(src['order'][:count]) if count < len(src['parts']) else list(range(len(src['parts'])))
-    out = []
-    for k, p in enumerate(picks):
-        text = src['parts'][p]
-        if p == 0 and n > 2 and src.get('group_part'):  # 3-4 animals: a group action with one standout gag
-            text = src['group_part']
-        out.append(_part(src, text, desc, pick_caption(src, n) if k == 0 else '', src['moments'][p], p))
+    out = [story_part(src, p, desc, n, pick_caption(src, n) if k == 0 else '') for k, p in enumerate(picks)]
     if extra:
         k = 1 if count > 1 else 0  # the middle of the story
         words = story_words(extra, desc)
@@ -716,6 +711,41 @@ def scene_parts(scene_id, cast, count, extra='', plain=False):
             words = f"The {desc[0]['word']} on the left {words}"
         idea = _part(src, words, desc, out[k]['caption_t'], [], out[k]['part'], custom=True)
         out[k] = idea
+    return out
+
+
+def story_part(src, p, desc, n, caption_t=''):
+    """Part p of a scene's story (3-4 animals: the first part is a group action with one standout gag)."""
+    text = src['group_part'] if p == 0 and n > 2 and src.get('group_part') else src['parts'][p]
+    return _part(src, text, desc, caption_t, src['moments'][p], p)
+
+
+def more_parts(job, have, wanted):
+    """One scene made longer: the parts made stay, and new ones carry on after them, never a part of the story it
+    already has (the next ones in the story first, then the funniest left); with the whole story in, everyone
+    stares at the camera. Your own: the story carries on even more dramatically, then the stare."""
+    out = list(have[:wanted])
+    desc, n = describe_cast(job['cast']), len(job['cast'])
+    plain = bool((job.get('compose') or {}).get('plain'))
+    if job['scene'] == 'own' and not plain:
+        scene, story = SCENES['own'], job.get('idea') or ''
+        last = (ideas.split_beats(story) or [story or 'have fun together'])[-1]
+        while len(out) < wanted:
+            i = len(out)
+            if i == wanted - 1 and not any(x.get('action') == STARE for x in out):
+                out.append(_part(scene, STARE, desc, '', [('stare', 0.4)], i))
+            else:
+                out.append(_part(scene, f'They carry on even more dramatically: {story_words(last, desc)}', desc, '',
+                                 [], i, custom=True))
+        return out
+    src = SCENES['normal'] if plain else scene_of(job['scene'])
+    used = {x.get('part') for x in out}
+    after = max((p for p in used if isinstance(p, int)), default=-1)
+    left = [p for p in range(len(src['parts'])) if p not in used]
+    for p in ([p for p in left if p > after] + [p for p in src['order'] if p in left and p < after])[:wanted - len(out)]:
+        out.append(story_part(src, p, desc, n))
+    while len(out) < wanted:
+        out.append(_part(src, STARE, desc, '', [('stare', 0.4)], None))
     return out
 
 
@@ -748,6 +778,7 @@ def turn_parts(scene_id, cast, count, story=''):
     the first, then "Luna's turn". A small punch-in lands on each cut (meme hits)."""
     scene, desc, n = scene_of(scene_id), describe_cast(cast), len(cast)
     beats_ = ideas.split_beats(story) if scene_id == 'own' else []
+    solo = scene if scene['solo'] else SCENES['normal']  # (Your own words with no action in them: everyday moves)
     seen, out = set(), []
     first = pick_caption(scene, n)
     for k in range(count):
@@ -758,8 +789,8 @@ def turn_parts(scene_id, cast, count, story=''):
             sentence = action if _has_subject(action, desc) else f"The {d['word']} {action}"
             moments = None
         else:
-            role = min(i, len(scene['solo']) - 1)
-            sentence, moments = f"The {d['word']} {scene['solo'][role]}", scene['solo_moments'][role]
+            role = min(i, len(solo['solo']) - 1)
+            sentence, moments = f"The {d['word']} {solo['solo'][role]}", solo['solo_moments'][role]
         guard = f' {PLAYFUL}' if scene.get('playful') else ''
         prompt = (f"{TURN_LOOK}. {_sentence(sentence)}{guard} Natural, physically believable movement, the "
                   f"{d['kind']} keeps exactly the same look, fur and face.")
@@ -805,6 +836,24 @@ def uses_ai(job):
             or (job.get('voice') or 'off') != 'off')
 
 
+def credit_lines(job):
+    """Each free clip's credit line, once, in the cast's order. A CC BY clip says it was edited (every look crops
+    and re-times it, the AI looks also animate it), as its licence asks; CC0 and public domain need no credit,
+    but get it too."""
+    out = []
+    for c in job.get('cast') or []:
+        if c.get('credit'):
+            free = re.match(r'\s*(cc0|public domain|pdm)', c.get('license') or '', re.I)
+            out.append(('Clip: ' if free else 'Clip (edited): ') + c['credit'])
+    return list(dict.fromkeys(out))
+
+
+def caption_credit(job, music_credit=''):
+    """Every credit line a post of this video needs, one per line: the music's, then the free clips'. (Version 12's
+    posting plan: its plan_caption() gives this as the credit, for its own captions and the owner's.)"""
+    return '\n'.join(dict.fromkeys(([music_credit] if music_credit else []) + credit_lines(job)))
+
+
 def tiktok_caption(job, first_text, music_credit=''):
     """The TikTok caption: the first line + tags (#catsanddogs when both are in it; #aivideo when AI made any of
     it), the music's credit and each library clip's credit line."""
@@ -812,8 +861,7 @@ def tiktok_caption(job, first_text, music_credit=''):
     tags = TAGS if uses_ai(job) else TAGS.replace(' #aivideo', '')
     if 'cat' in kinds and 'dog' in kinds:
         tags += ' #catsanddogs'
-    credits = list(dict.fromkeys(c['credit'] for c in job.get('cast') or [] if c.get('credit')))
-    return '\n'.join([f'{first_text} {tags}'.strip()] + ([music_credit] if music_credit else []) + credits)
+    return '\n'.join(part for part in (f'{first_text} {tags}'.strip(), caption_credit(job, music_credit)) if part)
 
 
 def free_labels(scene_id, cast, look):
@@ -1391,7 +1439,8 @@ def paint(w, folder, i, c):
 
 def gather(job, w):
     """Gets the animals that aren't in yet (links, painted animals), once for every video of the batch: the files go
-    to the batch's other videos with the same animals too."""
+    to the batch's other videos with the same animals too. The ones got are saved even when a later one fails (out
+    of free time, a link that fails): the job only fetches what is still missing when it tries again."""
     cast = job['cast']
     todo = [i for i, c in enumerate(cast) if not c.get('pic')]
     if not todo:
@@ -1400,25 +1449,40 @@ def gather(job, w):
     # (the batch's other videos with the same animals, found before this one's animals are filled in)
     others = [o for o in list(w.jobs.values()) if o is not job and job.get('group') and o.get('group') == job['group']
               and o.get('kind') == 'together' and same_cast(o['cast'], cast)]
-    for i in todo:
-        w.update(job, stage=f'Getting your animals… ({i + 1} of {len(cast)})', progress=0.02 + 0.08 * i / len(cast))
-        c = cast[i]
-        if c['from'] == 'link':
-            fetch_link(job, w, folder, i, c)
-        elif c['from'] == 'surprise':
-            paint(w, folder, i, c)
-        else:
-            raise RuntimeError(f"Animal {i + 1}'s picture is missing. Make the video again.")
-    names = [n for i in todo for n in (cast[i]['pic'], cast[i].get('real')) if n]
+    got = []
+    try:
+        for i in todo:
+            w.update(job, stage=f'Getting your animals… ({i + 1} of {len(cast)})', progress=0.02 + 0.08 * i / len(cast))
+            c = cast[i]
+            if c['from'] == 'link':
+                fetch_link(job, w, folder, i, c)
+            elif c['from'] == 'surprise':
+                paint(w, folder, i, c)
+            else:
+                raise RuntimeError(f"Animal {i + 1}'s picture is missing. Make the video again.")
+            got.append(i)
+    finally:
+        if got:
+            try:
+                share_animals(job, w, others, got)
+            except Exception as e:  # (it must never hide why the next animal failed)
+                w.log.warning('%s: the animals got could not be shared (%s)', job['id'], e)
+
+
+def share_animals(job, w, others, got):
+    """The animals just got (cast numbers `got`): saved with the job, and copied to the batch's other videos that
+    have the same animals and don't have them yet."""
+    cast, folder = job['cast'], w.job_dir(job['id'])
+    names = [n for i in got for n in (cast[i]['pic'], cast[i].get('real')) if n]
     w.update(job, cast=cast, animal=cast[0]['animal'] or 'animal', label=job_label(job['scene'], cast),
              hook_frames=job.get('hook_frames') or hook_planned(cast))
     batch = [(job, names)]
     for other in others:
-        if other['id'] not in w.jobs or all(other['cast'][i].get('pic') for i in todo):
+        if other['id'] not in w.jobs or all(other['cast'][i].get('pic') for i in got):
             continue
         for name in names:
             shutil.copy(folder / name, w.job_dir(other['id']) / name)
-        for i in todo:
+        for i in got:
             if not other['cast'][i].get('pic'):
                 other['cast'][i].update({k: cast[i].get(k) for k in ('pic', 'real', 'real_frames', 'real_s', 'real_at',
                                                                        'label', 'animal')})
@@ -1480,7 +1544,7 @@ def compose(job, w):
             if kind_of(cast[i]) == 'animal':  # (nobody knew what it was: the composer saw it)
                 cast[i]['animal'] = kind
         w.update(job, inputs=['input_0.jpg'], compose=info, cast=cast, note='', animal=cast[0]['animal'] or 'animal',
-                 label=job_label(job['scene'], cast))
+                 label=job_label(job['scene'], cast), gpu_spent=True)  # (gpu_spent: a friend's use stays used)
         return True
     w.update(job, note=NOTES['turns'], compose={'error': str(last)[:200], 'tries': 2})
     return False
@@ -1510,7 +1574,11 @@ def plan(job, w, kind):
     if not same:
         w.drop_clips(job, 0)
         have = []
-    if len(have) != wanted:
+    if len(have) > wanted:  # shorter: the parts after the end go
+        w.drop_clips(job, wanted)
+    if kind == 'ai' and have:  # longer: new parts carry the story on (each part of it once)
+        have = more_parts(job, have, wanted)
+    elif len(have) != wanted:
         have = have[:wanted] + make_parts(job, kind, wanted)[len(have):]
     for i, text in (job.get('keep_texts') or {}).items():  # the user's own lines from an edit
         if int(i) < len(have):
@@ -1603,30 +1671,40 @@ def free_panels(job, w):
     return panels
 
 
+def layout_key(job, w, look, panels):
+    """What a free look's layout.mp4 shows (it is made again only when this changes)."""
+    seconds = float(job['length'])
+    cuts = song_cuts(job, w, seconds, w.SPEEDS.get(job.get('speed'), 1.0)) if look == 'cuts' else []
+    labels = free_labels(job['scene'], job['cast'], look)
+    return json.dumps([look, [str(p['src']) for p in panels], labels, seconds, cuts]), labels, cuts
+
+
+def lay_out(job, w, look, panels, labels, cuts, out):
+    """Renders the free look into `out`; a clip ffmpeg can't use: everyone as a still this time."""
+    try:
+        return render_layout(look, panels, float(job['length']), out, labels, cuts)
+    except subprocess.CalledProcessError as e:
+        w.log.warning('%s: the %s look failed (%s); made with the pictures', job['id'], look,
+                      (e.stderr or b'').decode(errors='replace')[-300:])
+        panels = [{'src': w.local_file(job, c['pic']), 'still': True} for c in job['cast']]
+        return render_layout(look, panels, float(job['length']), out, labels, cuts)
+
+
 def free_cut(job, w, look):
     """A free look: the real clips laid out on the CPU (layout.mp4, made again only when what it shows changes),
-    then the worker's own join (w.cut_video) as one clip: caption, music, meme punches, voice, name tag, ending.
-    An AI version the video had is kept aside, so switching the look back is just a cut too."""
+    then the worker's own join and finish (w.finish_video) as one clip: caption, music, meme punches, voice, name
+    tag, ending. An AI version the video had is kept aside, so switching the look back is just a cut too."""
     folder = w.job_dir(job['id'])
     if job.get('made_as') in ('ai', 'turns') and job.get('ideas'):
         w.update(job, ai_plan={'made_as': job['made_as'], 'ideas': job['ideas'], 'wanted': job['wanted'],
                                'seconds': job['seconds'], 'draft': job.get('draft')})
     seconds = float(job['length'])
-    speed = w.SPEEDS.get(job.get('speed'), 1.0)
-    cuts = song_cuts(job, w, seconds, speed) if look == 'cuts' else []
-    labels = free_labels(job['scene'], job['cast'], look)
     panels = free_panels(job, w)
-    key = json.dumps([look, [str(p['src']) for p in panels], labels, seconds, cuts])
+    key, labels, cuts = layout_key(job, w, look, panels)
     layout = folder / 'layout.mp4'
     if not (layout.exists() and job.get('layout_key') == key):
         w.update(job, stage=STAGES[look], progress=0.3)
-        try:
-            made = render_layout(look, panels, seconds, layout, labels, cuts)
-        except subprocess.CalledProcessError as e:  # a clip ffmpeg can't use: everyone as a still this time
-            w.log.warning('%s: the %s look failed (%s); made with the pictures', job['id'], look,
-                          (e.stderr or b'').decode(errors='replace')[-300:])
-            panels = [{'src': w.local_file(job, c['pic']), 'still': True} for c in job['cast']]
-            made = render_layout(look, panels, seconds, layout, labels, cuts)
+        made = lay_out(job, w, look, panels, labels, cuts, layout)
         w.update(job, layout_key=key, layout_hits=made['hits'])
     old = (job.get('ideas') or [{}])[0] if (job.get('ideas') or [{}])[0].get('free') else {}
     line = old.get('caption_t') or free_line(job)
@@ -1639,7 +1717,33 @@ def free_cut(job, w, look):
             idea.update(caption=text, typed=True)
     w.update(job, made_as=look, wanted=1, seconds=seconds, ideas=[idea], draft=False, picture_check=False,
              keep_texts=None)
-    w.cut_video(job, folder, [(0, layout)])
+    w.finish_video(job, folder, [(0, layout)])
+
+
+def made_parts(job, w):
+    """The parts final.mp4 is cut from now, for a re-cut that never asks the AI for anything and never changes the
+    job (`job` may be a copy): a free look's one layout clip (laid out again, the same, when it isn't on this disk
+    any more, e.g. after a restart), else the AI parts kept, in order. Raises when one can't be had. (For version
+    12's TikTok cut: its worker.made_parts() returns this for a Together video.)"""
+    if job.get('made_as') in FREE_LOOKS:
+        look = job['made_as']
+        panels = free_panels(job, w)
+        key, labels, cuts = layout_key(job, w, look, panels)
+        if key != job.get('layout_key'):
+            raise RuntimeError('the free look changed since the video was made')
+        layout = w.job_dir(job['id']) / 'layout.mp4'
+        if not layout.exists():
+            lay_out(job, w, look, panels, labels, cuts, layout)
+        return [(0, layout)]
+    parts = []
+    for i in range(1 if job.get('draft') else job['wanted']):
+        name = f'clip_{i}.mp4'
+        if name not in (job.get('clips_done') or []):
+            break
+        parts.append((i, w.local_file(job, name)))
+    if not parts:
+        raise RuntimeError('no animated parts kept')
+    return parts
 
 
 def opening(job, parts, w):
@@ -1686,8 +1790,13 @@ def public(job):
     cast = [{'from': c.get('from'), 'animal': c.get('animal') or 'animal', 'name': c.get('name') or '',
              'label': c.get('label') or '', 'has_real': bool(c.get('real')), 'credit': c.get('credit') or '',
              'id': c.get('id') or ''} for c in job.get('cast') or []]
-    scene = scene_of(job)
+    scene, stash = scene_of(job), job.get('ai_plan') or {}
+    turns = job if job.get('made_as') == 'turns' else stash if stash.get('made_as') == 'turns' else {}
     return {'cast': cast, 'scene': job.get('scene'), 'scene_title': scene['title'], 'look': job.get('look') or 'ai',
+            # (for the editor: the AI version a free look keeps aside, the AI parts kept, each turn's seconds, and
+            # whether its one free copy was made)
+            'kept_look': stash.get('made_as'), 'ai_parts': len(job.get('clips_done') or []),
+            'turn_seconds': turns.get('seconds'), 'free_copy': bool(job.get('free_copy')),
             'made_as': job.get('made_as'), 'picture_check': bool(job.get('picture_check')),
             'has_picture': has_picture(job), 'compose_engine': (job.get('compose') or {}).get('engine'),
             'free_look': free_look(job.get('scene'), len(cast)), 'note': job.get('note') or '',
@@ -1720,10 +1829,13 @@ def edit(w, job, who, f):
     new_song / new_song_id). Texts, music, speed and the extras work as for any video (a re-cut), and:
     scene (another card: a new picture and new parts), look ('ai' | 'turns' | 'free'; compared with the look the
     video has now: a free look, or back to the AI version it already had, is just a cut; 'ai' on a video the
-    worker made one by one tries the picture again), recompose (↻ New picture), order (⇄ Swap places: the
-    animals' new order as their old numbers, e.g. [1, 0]), names (one per animal, in the new order), idea, clips
-    (the length in 5 s parts) and redo (part numbers). template and animal are ignored, so an old page can't break
-    it. A friend's new picture, or an animated part lost to a change, uses one of their new animations."""
+    worker made one by one tries the picture again), recompose (↻ New picture: a new picture of them all, so one
+    scene; nothing on a free look), order (⇄ Swap places: the animals' new order as their old numbers, e.g.
+    [1, 0]), names (one per animal, in the new order), idea, clips (the length in 5 s parts) and redo (part
+    numbers). template and animal are ignored, and so is clips from an old page (it sends its number of parts,
+    which isn't the length here: a page that sends none of scene, look, names, order or recompose), so an old page
+    can't break it. A friend's new picture, or an animated part lost to a change, uses one of their new
+    animations."""
     order = _json_list(f.get('order'), w, 'new order')
     names = _json_list(f.get('names'), w, 'names')
     folder = w.job_dir(job['id'])
@@ -1743,18 +1855,27 @@ def edit(w, job, who, f):
         if scene_id == 'own' and not idea:
             raise w.HTTPException(400, 'Describe what they do together')
         now = current_look(job)
-        look = f['look'] if f.get('look') in LOOKS else now
+        asked = f['look'] if f.get('look') in LOOKS else None
+        recompose = bool(f.get('recompose')) and (asked or now) != 'free'  # (a free look uses no picture)
+        if recompose and (asked or now) == 'turns':
+            asked = 'ai'  # ↻ New picture of a video made one by one: one scene again, from a new picture
+        look = asked or now
         stash = job.get('ai_plan') or {}
-        length = job['length'] if f.get('clips') is None else (max(1, min(w.MAX_CLIPS, int(f['clips'])))
-                                                                 * job['part_seconds'])
+        new_page = any(f.get(k) is not None for k in ('scene', 'look', 'names', 'order', 'recompose'))
+        length = job['length'] if f.get('clips') is None or not new_page else (
+            max(1, min(w.MAX_CLIPS, int(f['clips']))) * job['part_seconds'])
         redo = {int(x) for x in re.findall(r'\d+', f.get('redo') or '')}
-        new_picture = (scene_id != job['scene'] or bool(f.get('recompose')) or order != list(range(n))
+        new_picture = (scene_id != job['scene'] or recompose or order != list(range(n))
                        or (scene_id == 'own' and idea != old_idea))
         new_parts = new_picture or idea != old_idea
         # Another AI version than the one made (one by one <-> one scene): the parts made for this one go.
         other_ai = look != 'free' and look != now and not (now == 'free' and stash.get('made_as') == look)
+        # One by one with another length for each turn: its turns are all made again.
+        turns = job if job.get('made_as') == 'turns' else stash if stash.get('made_as') == 'turns' else None
+        resized = bool(look == 'turns' and turns and abs(turn_plan(n, length)[1] - float(turns['seconds'])) > 1e-6)
         made = bool(job.get('clips_done'))
-        lost = made and (new_parts or other_ai or (look == now != 'free' and bool(redo & set(range(job['wanted'])))))
+        lost = made and (new_parts or other_ai or resized
+                         or (look == now != 'free' and bool(redo & set(range(job['wanted'])))))
         repaint = has_picture(job) and new_picture
         if look == 'free':  # (a free look is made on the CPU: it never uses one of a friend's new animations)
             lost = repaint = False
@@ -1792,18 +1913,21 @@ def edit(w, job, who, f):
             else:
                 job.update(made_as=None, ideas=[])
             job['note'] = ''
-        if f.get('look') in LOOKS:
-            job['look'] = f['look']
+        if asked:
+            job['look'] = asked
         job['length'] = length
         have = job.get('ideas') or []
-        if have and job.get('made_as') == 'turns' and turn_plan(n, length) != (job['wanted'], job.get('seconds')):
-            w.drop_clips(job, 0)  # (each animal's part gets another length: all made again)
-            job.update(ideas=[], made_as=None)
-        elif have and job.get('made_as') == 'ai':
+        if have and job.get('made_as') == 'turns':
+            wanted, seconds = turn_plan(n, length)
+            if abs(seconds - float(job.get('seconds') or 0)) > 1e-6:
+                w.drop_clips(job, 0)  # (each animal's turn gets another length: all made again)
+                job.update(ideas=[], made_as=None)
+            elif wanted != job['wanted']:  # the same turns: the ones made stay, the next ones are added (or go)
+                w.drop_clips(job, wanted)
+                job.update(ideas=have[:wanted] + make_parts(job, 'turns', wanted)[len(have):], wanted=wanted)
+        elif have and job.get('made_as') == 'ai':  # (longer: the story carries on, each part of it once)
             wanted = max(1, min(w.MAX_CLIPS, int(round(length / job['part_seconds']))))
-            if len(have) < wanted:
-                have = have + make_parts(job, 'ai', wanted)[len(have):]
-            job.update(ideas=have[:wanted], wanted=wanted, draft=bool(job.get('draft')) and wanted > 1)
+            job.update(ideas=more_parts(job, have, wanted), wanted=wanted, draft=bool(job.get('draft')) and wanted > 1)
         if job.get('made_as') in ('ai', 'turns') and job.get('ideas'):  # a part made again takes the ones after it
             w.drop_clips(job, min({i for i in redo if i < job['wanted']} | {job['wanted']}))
         if names is not None:
@@ -1845,9 +1969,15 @@ def edit(w, job, who, f):
 
 def copy(w, job, who, look):
     """A new video of the same animals and scene in another look (POST /jobs/{id}/copy): "Make the VS screen now ·
-    free" while the AI one waits for free time. A free copy doesn't use a friend's video; another look does."""
+    free" while the AI one waits for free time. That one free copy (one per video, while it waits for AI time)
+    doesn't use a friend's video; any other copy does, like a new video."""
     look = look if look in LOOKS else 'free'
-    if who is not w.OWNER and look != 'free':
+    with w.jobs_lock:
+        waits = job['status'] == 'waiting' and not job.get('picture_check') and current_look(job) != 'free'
+        free = look == 'free' and waits and not job.get('free_copy')
+        if free:
+            job['free_copy'] = True  # (taken now: a second tap is a copy like any other)
+    if who is not w.OWNER and not free:
         with w.guests_lock:
             if who['uses_left'] <= 0:
                 raise w.HTTPException(403, f'No videos left. Ask {w.host_of(who)} for more.')
@@ -1866,8 +1996,10 @@ def copy(w, job, who, look):
     new.update(id=f"{time.strftime('%Y%m%d-%H%M%S')}-{w.secrets.token_hex(3)}", created=time.time(), index=index,
                batch=len(mates) + 1, group=group, kind='together', look=look, made_as=None, status='queued',
                stage='In line…', progress=0, error='', wanted=1, made=0, clips_done=[], chain={}, redos=0,
-               picture_check=False, note='', inputs=None, ideas=[], draft=False, unpaid=look == 'free',
+               picture_check=False, note='', inputs=None, ideas=[], draft=False, unpaid=free,
                cast=json.loads(json.dumps(job['cast'])))
+    if free:
+        job['free_copy'] = new['id']  # (the page then stops offering it)
     dst = w.job_dir(new['id'])
     flags = {'badge.png': 'has_badge', 'endcard.png': 'has_endcard', 'song.m4a': 'has_song'}
     files = [name for name, flag in flags.items() if new.get(flag)]

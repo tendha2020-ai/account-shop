@@ -1295,17 +1295,52 @@ def process(job):
         save(job, [name])
     if not parts:
         raise failed or RuntimeError('No clips could be made')
-    cut_video(job, folder, parts, failed)
+    finish_video(job, folder, parts, failed)
 
 
-def cut_video(job, folder, parts, failed=None):
-    """Joins the parts [(clip number, file)] into final.mp4 with the captions, music, meme edit, pet voice, opening
-    and ending, and finishes the job (Together's free looks come here with their one layout clip). failed: why the
-    parts stopped early (a QuotaError or BusyError is raised again once the shorter video is saved)."""
+def finish_video(job, folder, parts, failed=None):
+    """Cuts final.mp4 from the animated parts [(clip number, file)] and finishes the job: thumbnail, TikTok caption,
+    note, status done, saved. failed: why the parts stopped early (a QuotaError or BusyError is raised again once
+    the shorter video is saved). (Together: its free looks come here too, with their one layout clip. Version 12
+    has this code at the end of process(); merged, it lives here, with v12's own fields.)"""
     wanted = job['wanted']
     made = len(parts)
 
     update(job, stage='Putting your video together…', progress=0.9)
+    cut = cut_video(job, folder, parts, folder / 'final.new.mp4', failed)
+    lead, length, used, start, credit = cut['lead'], cut['length'], cut['used'], cut['start'], cut['credit']
+    os.replace(folder / 'final.new.mp4', folder / 'final.mp4')
+    at = lead + 1  # the thumbnail shows the AI part
+    run(['ffmpeg', '-v', 'error', '-y', '-ss', f'{at:.3f}', '-i', str(folder / 'final.mp4'), '-frames:v', '1',
+         '-vf', 'scale=360:-2', str(folder / 'thumb.new.jpg')])
+    os.replace(folder / 'thumb.new.jpg', folder / 'thumb.jpg')
+    first_text = next((i['caption'] for i in job['ideas'] if i.get('caption')), '')
+    caption = f"{first_text} {ideas.HASHTAGS}".strip() + (f'\n{credit}' if credit else '')
+    if job.get('kind') == 'together' and together:  # (Together) its own tags, and the free clips' credits
+        caption = together.tiktok_caption(job, first_text, credit)
+    _, _, seconds_long = probe(folder / 'final.mp4')
+    full = round(job['seconds'] * wanted)
+    if job.get('draft'):  # (in the animated seconds: the opening and the ending come on top)
+        note = (f'Preview: the first {round(length)} seconds. Edit it, or tap Finish to carry it on to '
+                f'{full} seconds.' if wanted > 1 else 'Preview ready. Edit it, or tap Finish when you like it.')
+    elif made < wanted:
+        note = (f'Made {round(length)} of {full} seconds (the free engines were busy or out of time). '
+                'Tap Make the rest to carry it on.')
+    else:
+        note = ''
+    update(job, status='done', stage=note, progress=1, error='', thumb='thumb.jpg', made=made, caption=caption,
+           music_used=used, music_start=round(start, 2), seconds_long=round(seconds_long, 1),
+           ai_seconds=round(length, 3), opening_s=round(lead, 3) if cut['opening'] else None,
+           rev=(job.get('rev') or 0) + 1)
+    save(job, ['final.mp4', 'thumb.jpg'])
+    if failed and isinstance(failed, (QuotaError, BusyError)):
+        raise failed  # the shorter video is ready to watch; the rest is made by itself when free time is back
+
+
+def cut_video(job, folder, parts, out, failed=None):
+    """Cuts the video from its animated parts into `out`: the re-cut every edit uses (captions, music, the meme
+    edit, the pet voice, the opening and the ending, each dropped if the join fails with it). Returns what it was
+    made with. (The same call as version 12's cut_video, which adds its TikTok cut's song=False.)"""
     clips, captions, text = [], [], ''
     for n, (i, clip) in enumerate(parts):
         if job.get('captions', True):
@@ -1398,8 +1433,7 @@ def cut_video(job, folder, parts, failed=None):
         for n, now in enumerate(tries):
             try:
                 z, s, g, v, o, e = now
-                join_clips(clips, captions, folder / 'final.new.mp4', spans, speed, audio, start, badge, z, s, g,
-                           o, e, v)
+                join_clips(clips, captions, out, spans, speed, audio, start, badge, z, s, g, o, e, v)
                 opening, outro = o, e
                 break
             except Exception as err:
@@ -1421,33 +1455,8 @@ def cut_video(job, folder, parts, failed=None):
             sounds.unlink(missing_ok=True)
         if voice:
             voice['track'].unlink(missing_ok=True)
-    lead = lead if opening else 0.0
-    os.replace(folder / 'final.new.mp4', folder / 'final.mp4')
-    at = lead + 1  # the thumbnail shows the AI part
-    run(['ffmpeg', '-v', 'error', '-y', '-ss', f'{at:.3f}', '-i', str(folder / 'final.mp4'), '-frames:v', '1',
-         '-vf', 'scale=360:-2', str(folder / 'thumb.new.jpg')])
-    os.replace(folder / 'thumb.new.jpg', folder / 'thumb.jpg')
-    first_text = next((i['caption'] for i in job['ideas'] if i.get('caption')), '')
-    caption = f"{first_text} {ideas.HASHTAGS}".strip() + (f'\n{credit}' if credit else '')
-    if job.get('kind') == 'together' and together:  # (Together) its own tags, and the free clips' credits
-        caption = together.tiktok_caption(job, first_text, credit)
-    _, _, seconds_long = probe(folder / 'final.mp4')
-    full = round(job['seconds'] * wanted)
-    if job.get('draft'):  # (in the animated seconds: the opening and the ending come on top)
-        note = (f'Preview: the first {round(length)} seconds. Edit it, or tap Finish to carry it on to '
-                f'{full} seconds.' if wanted > 1 else 'Preview ready. Edit it, or tap Finish when you like it.')
-    elif made < wanted:
-        note = (f'Made {round(length)} of {full} seconds (the free engines were busy or out of time). '
-                'Tap Make the rest to carry it on.')
-    else:
-        note = ''
-    update(job, status='done', stage=note, progress=1, error='', thumb='thumb.jpg', made=made, caption=caption,
-           music_used=used, music_start=round(start, 2), seconds_long=round(seconds_long, 1),
-           ai_seconds=round(length, 3), opening_s=round(lead, 3) if opening else None,
-           rev=(job.get('rev') or 0) + 1)
-    save(job, ['final.mp4', 'thumb.jpg'])
-    if failed and isinstance(failed, (QuotaError, BusyError)):
-        raise failed  # the shorter video is ready to watch; the rest is made by itself when free time is back
+    return {'lead': lead if opening else 0.0, 'length': length, 'used': used, 'start': float(start), 'credit': credit,
+            'opening': bool(opening)}
 
 
 def my_song(job):
@@ -1633,11 +1642,13 @@ def new_ideas(job, animal, count):
 
 
 def refund(job):
-    """A friend's video that never got made (it failed, or was deleted before any clip) gives the use back."""
+    """A friend's video that never got made (it failed, or was deleted before any clip or AI picture) gives the use
+    back."""
     with guests_lock:
         guest = guests.get(job.get('owner', 'me'))
-        if not guest or job.get('refunded') or job.get('made') or job.get('thumb') or job.get('unpaid'):
-            return  # (unpaid: a free Together copy used no video)
+        if not guest or job.get('refunded') or job.get('made') or job.get('thumb') or job.get('unpaid') \
+                or job.get('gpu_spent'):
+            return  # (Together: unpaid: a free copy used no video; gpu_spent: the AI made its picture)
         guest['uses_left'] += 1
         guest['used'] = max(0, guest['used'] - 1)
         job['refunded'] = True
@@ -1745,6 +1756,15 @@ def enqueue(job):
     (work_queue if needs_animation(job) else quick_queue).put(job['id'])
 
 
+def make_video(job):
+    """(Together) Makes the video: a Together video by together.process (it gets the animals and the picture first,
+    then calls process() for its AI parts, or cuts a free look), any other by process(). (Merged with version 12:
+    worker_loop calls this inside its render_lock.)"""
+    if job.get('kind') == 'together' and together:
+        return together.process(job, THIS)
+    return process(job)
+
+
 def worker_loop(lane):
     while True:
         job_id = lane.get()
@@ -1756,10 +1776,7 @@ def worker_loop(lane):
         update(job, error='')
         slow = needs_animation(job)  # new AI clips take minutes: a notification when it's done (re-cuts are watched)
         try:
-            if job.get('kind') == 'together' and together:  # (Together) gets the animals and the picture first
-                together.process(job, THIS)
-            else:
-                process(job)
+            make_video(job)  # (Together: a Together video goes to together.process)
             log.info('%s done', job_id)
         except Paused:  # (Together) the picture check: it carries on by itself, no notification
             continue

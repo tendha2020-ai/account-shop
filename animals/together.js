@@ -97,7 +97,7 @@
     keys: 0,
     reading: Promise.resolve(), // videos are read one at a time (phones have little memory)
     scene: 'dance',
-    scenePicked: false, // tapped, said or set by an idea on this visit: typed words then add to it
+    scenePicked: false, // tapped, said or set by an idea on this visit (a card shown picked counts too: see onIdeaInput)
     autoOwn: null, // the scene before typing picked "Your own" by itself
     look: 'ai',
     library: null, // the free clips (worker/library.json), once loaded
@@ -429,7 +429,8 @@
     for (const id of ['castLinkBtn', 'castLibBtn', 'castSurpriseBtn']) $(`#${id}`).disabled = full;
     $('#castLibBtn').hidden = known() && !canDo('library');
     $('#castTools').hidden = T.cast.length < 2;
-    $('#castCount').textContent = T.cast.length < 2 ? '' : `${T.cast.length} animals · the first one is the star`;
+    $('#castCount').textContent = T.cast.length < 2 ? '' : T.cast.length === 4 ? '4 animals · 2–3 look best (each one is bigger)'
+      : `${T.cast.length} animals · the first one is the star`;
     if (sig === T.sigs.cast) return;
     T.sigs.cast = sig;
     const row = $('#castRow');
@@ -801,7 +802,7 @@
         ['Delete', 'del', () => deleteJob(job)],
       ];
     }
-    const list = [[nowLabel(free), 'finish', () => freeCopy(job, free)]];
+    const list = job.free_copy ? [] : [[nowLabel(free), 'finish', () => freeCopy(job, free)]]; // (one free copy)
     if (job.has_video) list.push(['▶ Watch so far', 'open', () => openPlayer(job)]);
     list.push(['Try now', '', () => retryJob(job)], ['Delete', 'del', () => deleteJob(job)]);
     return list;
@@ -969,7 +970,7 @@
   // order: the animals' new order as their numbers now ([1, 0] = swapped); names: one per animal, in the new
   // order. Scene, ↻ New picture and ⇄ Swap make a new picture and animate it again.
 
-  const ed = { on: false, scene: 'normal', look: 'ai', recompose: false, order: [], names: [], len0: 1 };
+  const ed = { on: false, scene: 'normal', look: 'ai', recompose: false, order: [], names: [] };
   let editPlaceholder = null;
   const orderChanged = () => ed.order.some((v, i) => v !== i);
   // The look the video has now (current_look() in worker/together.py): the edit's look is compared with it.
@@ -995,7 +996,6 @@
     ed.order = cast.map((_, i) => i);
     ed.names = cast.map((c) => c.name || '');
     edit.len = lengthSteps(job); // (app.js set it to the number of parts)
-    ed.len0 = edit.len;
     buildEditCast();
   }
 
@@ -1037,13 +1037,11 @@
       b.disabled = !fitsCast(sceneOr(b.dataset.key), n) && b.dataset.key !== ed.scene;
     });
     lookButtons($('#editLookSeg'), ed.look, ed.scene, n);
+    // ↻ New picture: only for One scene, when there is a picture (else One scene makes a new one anyway)
+    $('#editRecompose').hidden = !canRecompose(job);
     $('#editRecompose').setAttribute('aria-pressed', String(ed.recompose));
     $('#editSwap').hidden = n < 2;
-    let help = '↻ New picture: the same scene, a new AI picture of them (a few seconds of AI time), then new animation.';
-    if (ed.scene !== sceneOr(job.scene).id) help = 'A new scene makes a new picture of them, then new animation.';
-    else if (orderChanged()) help = 'New places: a new picture (the first one is the star), then new animation.';
-    else if (ed.look === 'free' && lookNow(job) !== 'free') help = 'The free look is made from the real clips in about a minute. No AI time.';
-    $('#editTogetherHelp').textContent = help;
+    $('#editTogetherHelp').textContent = togetherHelp(job);
     const now = lookNow(job);
     if (now === 'ai') return;
     // One by one: a line (and ↻) per animal's turn. A free look: its one line, and no ↻ (nothing to animate).
@@ -1057,6 +1055,26 @@
       + (now !== 'free' && left < Infinity ? ` New animations left for this video: ${left}.` : '');
   }
 
+  const canRecompose = (job) => ed.look === 'ai' && Boolean(job.has_picture);
+
+  // The line under Scene and look: what saving does with the look picked.
+  function togetherHelp(job) {
+    const now = lookNow(job);
+    const scene = ed.scene !== sceneOr(job.scene).id;
+    if (ed.look === 'free') {
+      return now !== 'free' || scene || orderChanged() ? 'The free look is made from the real clips in about a minute. No AI time.'
+        : 'The free look of the real clips. Changing it is quick, no AI time.';
+    }
+    if (ed.look === 'turns') {
+      if (scene || orderChanged()) return 'Each animal gets a new AI moment of its own, in this order.';
+      return 'One by one: each animal gets its own AI moment. To put them all in one picture, pick One scene.';
+    }
+    if (scene) return 'A new scene makes a new picture of them, then new animation.';
+    if (orderChanged()) return 'New places: a new picture (the first one is the star), then new animation.';
+    if (!job.has_picture) return 'One scene: a new try at one AI picture of them all (a few seconds of AI time), then new animation.';
+    return '↻ New picture: the same scene, a new AI picture of them (a few seconds of AI time), then new animation.';
+  }
+
   // How many of the editor's lines can be made again with ↻ (app.js keeps only those): One scene one per 5 s,
   // One by one one per turn, a free look none.
   function editParts() {
@@ -1065,15 +1083,33 @@
     return now === 'free' ? 0 : now === 'turns' ? (edit.job.texts || []).length : edit.len;
   }
 
+  // One by one: how many turns and each one's seconds for a length (turn_plan() in worker/together.py).
+  function turnPlan(n, length) {
+    const parts = Math.max(n, Math.ceil(length / 5 - 1e-6));
+    return [parts, Math.round(Math.max(2.5, Math.min(5, length / parts)) * 1000) / 1000];
+  }
+  const editTurns = (job) => turnPlan((job.cast || []).length, edit.len * (job.part_seconds || 5));
+  // The turns made (or kept aside by a free look) get another length each: they are all animated again.
+  const turnsResized = (job) => ed.look === 'turns' && typeof job.turn_seconds === 'number'
+    && Math.abs(editTurns(job)[1] - job.turn_seconds) > 1e-6;
+  // The AI parts the video has, also the ones a free look keeps aside (the worker's clips_done).
+  const aiParts = (job) => (typeof job.ai_parts === 'number' ? job.ai_parts : animatedClips(job));
+  // Back from a free look to the AI version it keeps aside: no new picture, its parts stay.
+  const backToKept = (job) => lookNow(job) === 'free' && job.kept_look === ed.look;
+  const pictureChanges = (job) => ed.scene !== sceneOr(job.scene).id || ed.recompose || orderChanged()
+    || (ed.scene === 'own' && ideaChanged(job));
+
   // Whether saving animates again (true / false), or null: app.js's usual rules (One scene: a new idea, ↻ on a
-  // part, longer than made). A free look is always a cut on the worker's CPU, whatever else changes.
+  // part, longer than made). A free look is always a cut on the worker's CPU, whatever else changes. One by one:
+  // a shorter length with the same seconds a turn is a cut (the turns made stay).
   function editAnimates() {
     if (!ed.on || !edit.job) return null;
     const job = edit.job;
     const now = lookNow(job);
     if (ed.look === 'free') return false;
-    if (ed.scene !== sceneOr(job.scene).id || ed.recompose || orderChanged() || ed.look !== now) return true;
-    if (now === 'turns') return edit.len !== ed.len0 || edit.redo.size > 0 || ideaChanged(job); // (every turn's length)
+    if (pictureChanges(job) || (ed.look !== now && !backToKept(job))) return true;
+    if (ed.look === 'turns') return turnsResized(job) || editTurns(job)[0] > aiParts(job) || edit.redo.size > 0 || ideaChanged(job);
+    if (now === 'free') return edit.len > aiParts(job) || ideaChanged(job); // (back to its One scene)
     return null;
   }
 
@@ -1084,10 +1120,10 @@
     const job = edit.job;
     if (ed.look === 'free') return false;
     const now = lookNow(job);
-    const made = now !== 'free' && animatedClips(job) > 0;
-    if (ed.scene !== sceneOr(job.scene).id || ed.recompose || orderChanged()) return Boolean(job.has_picture) || made;
-    if (ed.look !== now) return made;
-    if (now === 'turns') return made && (edit.redo.size > 0 || ideaChanged(job));
+    const made = aiParts(job) > 0;
+    if (pictureChanges(job)) return Boolean(job.has_picture) || made;
+    if (ed.look !== now) return made && (!backToKept(job) || turnsResized(job) || ideaChanged(job));
+    if (now === 'turns') return made && (edit.redo.size > 0 || ideaChanged(job) || turnsResized(job));
     return null;
   }
 
@@ -1095,7 +1131,7 @@
   function editFields(form) {
     form.append('scene', ed.scene);
     form.append('look', ed.look);
-    if (ed.recompose) form.append('recompose', 'true');
+    if (ed.recompose && canRecompose(edit.job)) form.append('recompose', 'true'); // (One scene only)
     if (orderChanged()) form.append('order', JSON.stringify(ed.order));
     form.append('names', JSON.stringify(ed.order.map((was) => cleanName(ed.names[was]))));
     if (ed.recompose || orderChanged() || ed.scene !== sceneOr(edit.job.scene).id) {
@@ -1221,11 +1257,14 @@
 
   const spoken = (target) => (target === 'edit' ? Boolean(ed.on && edit.job) : on());
 
-  // Typing (or speaking) a story while no scene was picked makes it "Your own"; emptying the box undoes that.
+  // Typing (or speaking) a story with no scene card picked makes it "Your own"; emptying the box undoes that. A
+  // card shown picked (tapped, said, set by an idea, remembered from last time, or Dance at first) keeps its scene:
+  // the words are an extra idea for it, as step 2 says.
   function onIdeaInput() {
     if (!on()) return;
     const text = $('#idea').value.trim();
-    if (text && !T.scenePicked && T.scene !== 'own') {
+    const picked = T.scenePicked || SCENES.some((sc) => sc.id === T.scene);
+    if (text && !picked && T.scene !== 'own') {
       T.autoOwn = T.scene;
       T.scene = 'own';
       redraw();
@@ -1332,8 +1371,10 @@
 
   const SAVED = ['style', 'music', 'track', 'songId', 'clips', 'count', 'speed', 'preview'];
 
-  // Everything an idea can change, and a function that puts it all back.
-  function snapshot() {
+  // Everything an idea can change, and a function that puts it all back. What the user picked stays (the video or
+  // link picked after tapping it, the animals): only an idea that set Surprise me puts back the video (or no
+  // Surprise) there was before, and only when nothing was picked since.
+  function snapshot(setsSurprise) {
     const k = Object.fromEntries(SAVED.map((key) => [key, state[key]]));
     Object.assign(k, {
       musicPicked: state.musicPicked, extras: { ...state.extras }, surprise: state.surprise, file: state.file, idea: $('#idea').value,
@@ -1347,9 +1388,10 @@
       state.musicPicked = k.musicPicked;
       state.extras = k.extras;
       save(KEYS.extras, k.extras);
-      state.surprise = k.surprise;
-      state.file = k.file;
-      if (!k.file) $('#file').value = '';
+      if (setsSurprise && state.surprise && !state.file) { // (still the idea's Surprise)
+        state.surprise = k.surprise;
+        state.file = k.file;
+      }
       $('#idea').value = k.idea;
       save(KEYS.idea, k.idea);
       Object.assign(T, k.t);
@@ -1366,8 +1408,8 @@
       return;
     }
     if (T.recipe) T.recipe.undo(); // another idea: from where things were before the first one
-    const undo = snapshot();
     const s = r.set;
+    const undo = snapshot(Boolean(s.surprise));
     T.mode = r.together ? 'together' : 'one';
     T.modeSaved = false;
     save(KEY.mode, T.mode);
@@ -1556,6 +1598,7 @@
       const b = e.target.closest('button[data-v]');
       if (!b) return;
       ed.look = b.dataset.v;
+      if (ed.look !== 'ai') ed.recompose = false; // (↻ New picture is One scene's)
       renderEditor();
     });
     redraw();
