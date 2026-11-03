@@ -84,7 +84,7 @@ const state = {
   part: 'auto',
   seconds: 5,
   speed: 'normal',
-  setupMode: 'setup', // or 'update': rebuild the worker with a new key
+  setupMode: 'setup', // or 'update': send the newest worker files to the Space (made again only if its own key broke)
   brand: true,
   songStart: 0, // seconds into the song, when Song part is "Pick myself"
   songDuration: 0,
@@ -429,36 +429,41 @@ async function setupWorker() {
     step('key', 'done');
 
     step('create', 'active');
-    // Secrets (like the Hugging Face key) can only be set when a Space is created, so both a new setup
-    // and an update rebuild the Space. An update keeps the worker's connection key, so every device and
-    // the PC helper stay connected; videos live in the dataset and are kept either way.
+    // A web page can set a Space's secrets (its Hugging Face key, its connection key) only while it
+    // creates the Space. So an update sends the new files to the worker that is already there: nothing
+    // is deleted, and its keys, connections and videos stay. The worker is made again from scratch only
+    // when its own Hugging Face key stopped working, or when the page doesn't know its connection key.
+    // Videos live in the dataset and are kept either way.
     const existing = await hf(`/api/spaces/${space}`, token);
-    if (existing.ok) {
-      const del = await hf('/api/repos/delete', token, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'space', name: SPACE_NAME }),
-      });
-      if (!del.ok) throw new Error(await hfError(del));
-      await sleep(2000);
-    }
+    const inPlace = existing.ok && updating && !keyBroken();
     const key = updating ? state.worker.key : randomKey();
-    const created = await hf('/api/repos/create', token, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        type: 'space',
-        name: SPACE_NAME,
-        private: false,
-        sdk: 'docker',
-        secrets: [
-          { key: 'HF_TOKEN', value: token },
-          { key: 'ANTICS_KEY', value: key },
-          { key: 'ANTICS_DATASET', value: `${user}/${DATASET_NAME}` },
-        ],
-      }),
-    });
-    if (!created.ok) throw new Error(await hfError(created));
+    if (!inPlace) {
+      if (existing.ok) {
+        const del = await hf('/api/repos/delete', token, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'space', name: SPACE_NAME }),
+        });
+        if (!del.ok) throw new Error(await hfError(del));
+        await sleep(2000);
+      }
+      const created = await hf('/api/repos/create', token, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'space',
+          name: SPACE_NAME,
+          private: false,
+          sdk: 'docker',
+          secrets: [
+            { key: 'HF_TOKEN', value: token },
+            { key: 'ANTICS_KEY', value: key },
+            { key: 'ANTICS_DATASET', value: `${user}/${DATASET_NAME}` },
+          ],
+        }),
+      });
+      if (!created.ok) throw new Error(await hfError(created));
+    }
 
     const summary = updating ? 'Update the Animal Antics worker' : 'Set up the Animal Antics worker';
     const lines = [{ key: 'header', value: { summary, description: '' } }];
@@ -477,7 +482,8 @@ async function setupWorker() {
 
     step('build', 'active');
     $('#token').value = '';
-    const url = await waitForBuild(space);
+    // After an update in place the old worker keeps answering until the new one is built.
+    const url = await waitForBuild(space, inPlace ? { version: WORKER_VERSION, token } : {});
     const changed = !state.worker || state.worker.url !== url || state.worker.key !== key;
     state.worker = { space, url, key };
     save(KEYS.worker, state.worker);
@@ -507,10 +513,31 @@ async function setupWorker() {
   }
 }
 
-// Polls the Space until Docker has built it. Returns its web address.
-async function waitForBuild(space) {
+// The worker's own Hugging Face key stopped working (it says so in /health).
+const keyBroken = () => Boolean(state.worker && state.health && state.health.token_ok === false);
+
+// The worker's /health answer, or null while it is asleep, building or starting.
+async function healthOf(url) {
+  const stop = new AbortController();
+  const timer = setTimeout(() => stop.abort(), 10000);
+  try {
+    const res = await fetch(`${url}/health`, { cache: 'no-store', signal: stop.signal });
+    if (!res.ok || !(res.headers.get('content-type') || '').includes('json')) return null;
+    return await res.json();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Polls the Space until Docker has built it. Returns its web address. With a version (an update in
+// place), it also waits until the worker itself answers with that version.
+async function waitForBuild(space, { version = null, token = null } = {}) {
   const started = Date.now();
   let errors = 0;
+  let building = false;
+  let kicked = false;
   while (Date.now() - started < 15 * 60 * 1000) {
     await sleep(6000);
     let rt;
@@ -522,20 +549,31 @@ async function waitForBuild(space) {
       continue;
     }
     const stage = rt.stage || '';
+    if (stage !== 'RUNNING') building = true;
     const mins = Math.floor((Date.now() - started) / 60000);
-    $('#steps [data-step="build"]').textContent = `Building it (${mins} min so far, 2–5 min, only once)`;
+    $('#steps [data-step="build"]').textContent = version
+      ? `Building the new version (${mins} min so far, 2–5 min)`
+      : `Building it (${mins} min so far, 2–5 min, only once)`;
     // Right after a rebuild the old stage can linger, so only a repeated error after a short wait counts.
     errors = /ERROR/.test(stage) && Date.now() - started > 45000 ? errors + 1 : 0;
     if (errors >= 2) {
-      throw new Error(`The worker failed to build (${stage}). Open huggingface.co/spaces/${space} to see why, then tap Set up again.`);
+      throw new Error(`The worker failed to build (${stage}). Open huggingface.co/spaces/${space} to see why, then tap ${version ? 'Update' : 'Set up'} again.`);
     }
     if (stage === 'RUNNING') {
       const domain = (rt.domains || []).find((d) => d.stage === 'READY') || (rt.domains || [])[0];
-      if (domain) return `https://${domain.domain}`;
-      return `https://${space.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase()}.hf.space`;
+      const url = domain ? `https://${domain.domain}` : `https://${space.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase()}.hf.space`;
+      if (!version) return url;
+      const health = await healthOf(url);
+      if (health && health.version === version) return url;
+      // Still the old worker. Hugging Face starts the new build by itself a few seconds after the files
+      // arrive; if it hasn't after 3 minutes, ask it to (once).
+      if (!building && !kicked && token && Date.now() - started > 3 * 60 * 1000) {
+        kicked = true;
+        await hf(`/api/spaces/${space}/restart?factory=true`, token, { method: 'POST' }).catch(() => {});
+      }
     }
   }
-  throw new Error('The worker is taking too long to build. Try Set up again later.');
+  throw new Error(`The worker is taking too long to build. Try ${version ? 'Update' : 'Set up'} again later.`);
 }
 
 async function waitForHealth() {
@@ -3422,11 +3460,11 @@ function renderPc() {
   pcState.textContent = pcOn ? `on · ${h.pc_name || 'PC'}` : 'off or not connected';
   pcState.classList.toggle('on', pcOn);
   $('#pcChip').hidden = !pcOn;
-  const keyBroken = Boolean(state.worker && h && h.token_ok === false);
+  const broken = keyBroken();
   const outdated = Boolean(state.worker && h && h.version !== WORKER_VERSION);
-  $('#updateNote').hidden = !(outdated || keyBroken);
-  $('#updateBanner').hidden = !(outdated || keyBroken);
-  $('#updateText').textContent = keyBroken
+  $('#updateNote').hidden = !(outdated || broken);
+  $('#updateBanner').hidden = !(outdated || broken);
+  $('#updateText').textContent = broken
     ? "Your worker's Hugging Face key stopped working, so videos can't be made. Paste a new Write key to fix it."
     : 'A new version of antics is ready, with more options.';
 }
@@ -3471,11 +3509,15 @@ function renderSettings() {
   $('#setupPane').hidden = ready;
   $('#optionsPane').hidden = !ready;
   $('#setupTitle').textContent = updating ? 'Update your worker' : 'One-time setup';
-  $('#setupIntro').textContent = updating
-    ? 'Paste a Hugging Face Write key. Your worker is rebuilt with the newest version and this key (2–5 min). Your videos and connections are kept.'
-    : 'Your videos are made on your own free Hugging Face worker, so it keeps going when your phone is locked.';
+  const rebuild = updating && keyBroken();
+  $('#setupIntro').textContent = rebuild
+    ? 'Paste a new Hugging Face Write key. Your worker is made again with this key and the newest version (2–5 min). Your videos and connections are kept.'
+    : updating
+      ? 'Paste a Hugging Face Write key. Your worker gets the newest version (2–5 min). Nothing is deleted: your videos and connections stay.'
+      : 'Your videos are made on your own free Hugging Face worker, so it keeps going when your phone is locked.';
   $('#setupBtn').textContent = updating ? 'Update my worker' : 'Set up my worker';
-  $('#steps [data-step="create"]').textContent = updating ? 'Rebuilding your worker' : 'Creating your worker';
+  $('#steps [data-step="create"]').textContent = rebuild ? 'Making your worker again'
+    : updating ? 'Sending the new version' : 'Creating your worker';
   $('#steps [data-step="build"]').textContent = 'Building it (2–5 min)';
   if (ready) {
     const link = $('#workerLink');
