@@ -26,11 +26,15 @@
 # its TikTok cut (the same video without the song: TikTok mutes songs baked into a file); TikTok's sound is added.
 # Together (together.py): 2-4 animals in one video: one AI picture of them all that moves, each one its own AI
 # moment cut on the beat, or a free look of the real clips (side by side, VS screen, grid, quick cuts) on the CPU.
+# The GPU guard (gpu.py): antics only ever uses the owner's FREE ZeroGPU time. Every ZeroGPU call goes through
+# gpu.gpu_call(), which checks the account's real quota before and after, one call at a time, and stops all AI work
+# if Hugging Face ever bills credits (PRO accounts go past the free time on pre-paid credits by themselves).
 
 import collections
 import copy
 import json
 import logging
+import math
 import os
 import queue
 import random
@@ -55,7 +59,9 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from PIL import Image, ImageDraw, ImageFont
 
 import beats
+import gpu
 import ideas
+from gpu import QuotaError
 
 try:  # meme edits (zoom punch-ins and sound effects); if their files are missing or broken, it runs without them
     import meme
@@ -126,25 +132,39 @@ VOICE_DUCK = 0.7  # the music (or the video's own sound) goes down to 30 % while
 VOICE_FX_DUCK = 0.5  # the sound effects to 50 %, so they don't cover a word
 
 # Free Wan image-to-video Spaces, tried in order. They all spend the same daily free GPU time.
+# What one call books of the owner's ZeroGPU time (the GPU guard needs it left, plus gpu.MARGIN) depends on the
+# picture: booking() works it out with each Space's own code (its app.py as it was on 2026-11-03) and the spaces
+# package's rule: the @spaces.GPU duration in whole seconds, x2 on 'xlarge' (x1.5 on 'large'). A Space that sets no
+# size is counted x2 too (Hugging Face moves a Space with a big model to xlarge), and seconds are rounded up.
+# Pictures keep their own shape (uploads, link thumbnails, the chained start frames), and both Wan 2.2 Spaces fit
+# them into 832x480 (resize_image): w x h = 640x640 if square; else 832 on the long side, the other side by the
+# aspect, both rounded to 16 and kept within 480..832 (cropped beyond 832:480). So nearly square ones book the most.
+#   frames = 1 + clip(round(seconds * 16), 8, 80 (160 for the backup)); f = (frames * w * h / (81*832*624)) ** 1.5
+#   Wan 2.2 (sha 1ff7432a, no size): duration = 10 + steps * 15 * f. At 6 steps, 5 s: 9:16 or 16:9 (480x832) 70.7 s
+#     -> 142; square 148; 3:4 or 4:3 (624x832) 200; 4:5 (672x832) 222; nearly square (832x832) 148.6 s -> 298.
+#   Wan 2.2 backup (sha 4e6a3327, size='xlarge'): duration = (15 + steps * 5 * f) x 1.3 (safe_mode is on by its API
+#     default; guidance 1 and frame_multiplier 16 add nothing). 9:16 45.8 s -> 92; 3:4 118; 4:5 128; worst 160.
+#   Wan 2.1 backup (sha d8ad2caa, no size): duration = 90 if steps > 4 and seconds > 2, 75 if one of them, else 60.
+#     At 4 steps and 3.4 s: 75 -> 150.
+# request: the worst case of any picture (used when the picture can't be read). If a Space ever books more, its
+# refusal ("Xs requested") or a measured spend raises it for the day (gpu.need()).
 ENGINES = [
-    {'id': 'zerogpu-aoti/wan2-2-fp8da-aoti-faster', 'name': 'Wan 2.2', 'max_sec': 5, 'extra': {'steps': 6}},
+    {'id': 'zerogpu-aoti/wan2-2-fp8da-aoti-faster', 'name': 'Wan 2.2', 'max_sec': 5, 'extra': {'steps': 6},
+     'booking': 'wan22', 'request': 298},
     {'id': 'r3gm/wan2-2-fp8da-aoti-preview', 'name': 'Wan 2.2 backup', 'max_sec': 5,
-     'extra': {'steps': 6, 'last_image': None}},
-    {'id': 'multimodalart/wan2-1-fast', 'name': 'Wan 2.1 backup', 'max_sec': 3.4, 'extra': {'steps': 4}, 'sized': True},
+     'extra': {'steps': 6, 'last_image': None}, 'booking': 'wan22_backup', 'request': 160},
+    {'id': 'multimodalart/wan2-1-fast', 'name': 'Wan 2.1 backup', 'max_sec': 3.4, 'extra': {'steps': 4}, 'sized': True,
+     'booking': 'wan21', 'request': 150},
 ]
 IMAGE_SPACE = 'black-forest-labs/FLUX.1-schnell'
+IMAGE_REQUEST = 120  # FLUX.1-schnell (sha 2569ee41): @spaces.GPU() = the 60 s default, no size -> x2 = 120
+SPACE_TIMEOUT = 900  # seconds a Space call may take (then it is cancelled: gpu.wait_job)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
 log = logging.getLogger('antics')
 
 
-class QuotaError(Exception):
-    """The daily free GPU time is used up."""
-
-    def __init__(self, message):
-        super().__init__(message)
-        wait = re.search(r'try again in (\d+):(\d+):(\d+)', message, re.I)
-        self.wait_seconds = (int(wait[1]) * 3600 + int(wait[2]) * 60 + int(wait[3])) if wait else 3600
+# QuotaError (gpu.py): no free GPU time for a call (out of today's free time, or the guard stopped AI work).
 
 
 class BusyError(Exception):
@@ -158,7 +178,7 @@ class Paused(Exception):
 
 
 def is_quota(msg):
-    return bool(re.search(r'quota|runs limit|gpu limit|exceeded your', msg, re.I))
+    return gpu.is_refusal(msg)
 
 
 def is_busy(msg):
@@ -223,6 +243,9 @@ def public(job):
     view['has_endcard'] = bool(job.get('has_endcard'))
     view['outro'] = bool(job.get('outro')) and view['has_endcard']
     view['voice'] = job.get('voice') if job.get('voice') in VOICES else 'off'  # the pet voice ('off' before v10)
+    # Waiting for the GPU guard (v12.1): 'quota' (out of free AI time until retry_at), 'stopped' (Hugging Face
+    # started charging credits: waits for the owner's Resume) or 'unreadable' (the free AI time can't be checked).
+    view['gpu_wait'] = job.get('gpu_wait') if job.get('status') == 'waiting' else None
     if job.get('kind') == 'together' and together:  # (Together) its animals, scene, look and picture check
         view.update(together.public(job))
     return view
@@ -277,6 +300,7 @@ def update(job, **fields):
 unread = {}  # its path in the dataset -> the function that loads its text
 unread_tried = {}  # its path -> when it was last tried
 unread_reading = set()  # being read again right now (one read of a file at a time)
+unread_maybe = set()  # not known to be in the dataset (it couldn't be listed): read once it is known to be absent
 unread_lock = threading.Lock()
 HUB_TRIES = 3  # reads of a file when the worker starts
 HUB_WAIT = 2.0  # seconds before the 2nd read (twice that before the 3rd)
@@ -301,12 +325,27 @@ def hub_text(name, tries=HUB_TRIES):
             time.sleep(wait)
 
 
+def not_in_dataset(e):
+    """The Hub answered that the file isn't there (404), not that it couldn't answer (offline, 5xx...)."""
+    names = [c.__name__ for c in type(e).__mro__]
+    return 'LocalEntryNotFoundError' not in names and any(n in ('EntryNotFoundError', 'RemoteEntryNotFoundError')
+                                                          for n in names)
+
+
 def read_hub(name, loader, tries=HUB_TRIES):
     """Loads a dataset file with loader(text). When it can't be read, it waits in `unread` to be tried again.
-    True when it was read (a file that was read but is broken counts: reading it again wouldn't help)."""
+    True when it was read (a file that was read but is broken counts: reading it again wouldn't help). A file in
+    `unread_maybe` (the dataset couldn't be listed, so it isn't known if it is there) counts as read when the Hub
+    says it isn't there."""
     try:
         text = hub_text(name, tries)
     except Exception as e:
+        if name in unread_maybe and not_in_dataset(e):
+            log.info('%s is not in the dataset', name)
+            with unread_lock:
+                unread.pop(name, None)
+                unread_maybe.discard(name)
+            return True
         log.warning('could not read %s from the Hub (%s); trying again in a minute', name, e)
         with unread_lock:
             unread[name] = loader
@@ -318,6 +357,7 @@ def read_hub(name, loader, tries=HUB_TRIES):
         log.warning('could not load %s: %s', name, e)
     with unread_lock:
         unread.pop(name, None)
+        unread_maybe.discard(name)
     return True
 
 
@@ -514,6 +554,46 @@ def save_plan():
             log.warning('saving the posting plan to the Hub failed: %s', e)
 
 
+# The GPU guard's state (gpu.py): a stop after Hugging Face billed credits, and the ledger used when the key can't
+# read the quota. Kept in gpu.json with the videos (the private dataset), so a restart or an update keeps a stop.
+gpu_saving = threading.Lock()
+
+
+def save_gpu(text, to_hub=True):
+    """gpu.json here and (to_hub) in the dataset. False when the Hub save failed (the guard tries again each minute;
+    a call whose in-flight note can't be saved doesn't go)."""
+    if is_unread('gpu.json'):  # (it would wipe a stop that couldn't be read; no GPU call is made meanwhile)
+        return not to_hub
+    with gpu_saving:  # one save at a time, each with the newest state
+        DATA.mkdir(parents=True, exist_ok=True)
+        path, part = DATA / 'gpu.json', DATA / 'gpu.json.part'
+        part.write_text(text)
+        os.replace(part, path)  # (never half a file)
+        store = hub
+        if store is None and DATASET and HF_TOKEN:  # (the dataset couldn't be listed at the start: gpu.json still goes)
+            from huggingface_hub import HfApi
+            store = HfApi(token=HF_TOKEN)
+        if not store or not to_hub:
+            return True
+        try:
+            store.upload_file(path_or_fileobj=str(path), path_in_repo='gpu.json', repo_id=DATASET,
+                              repo_type='dataset', commit_message='GPU guard')
+            return True
+        except Exception as e:
+            log.warning('saving the GPU guard to the Hub failed: %s', e)
+            return False
+
+
+def gpu_stopped():
+    """The owner hears it at once (also with antics closed): the guard stopped all AI work."""
+    ping(OWNER['id'], {'title': 'antics stopped all AI work',
+                       'body': 'Hugging Face started charging your credits. Open antics to check, then tap Resume.',
+                       'tag': 'antics-gpu', 'url': 'index.html'})
+
+
+gpu.setup(HF_TOKEN, save=save_gpu, pending=lambda: is_unread('gpu.json'), on_stop=lambda: gpu_stopped())
+
+
 def load_plan(text):
     try:
         got = posting.load(json.loads(text))
@@ -556,7 +636,12 @@ def load_jobs():
             # Keep running so the app can tell the user to paste a new key, instead of crashing.
             log.error('the Hugging Face key does not work (%s); saved videos are unavailable', e)
             token_ok, names = False, []
-        loaders = {'guests.json': load_guests, 'push.json': load_push, 'songs.json': load_songs}
+            # gpu.json may hold a stop (or a call in flight): no GPU call until it is read, or the Hub says it
+            # isn't there (tried again every minute)
+            with unread_lock:
+                unread_maybe.add('gpu.json')
+            read_hub('gpu.json', gpu.load, tries=1)
+        loaders = {'guests.json': load_guests, 'push.json': load_push, 'songs.json': load_songs, 'gpu.json': gpu.load}
         if posting:
             loaders['posting.json'] = load_plan
         for name in names:
@@ -576,6 +661,8 @@ def load_jobs():
             load_songs((DATA / 'songs.json').read_text())
         if (DATA / 'posting.json').exists() and posting:
             load_plan((DATA / 'posting.json').read_text())
+        if (DATA / 'gpu.json').exists():
+            gpu.load((DATA / 'gpu.json').read_text())
     have = set(names) if names is not None else None
     for job in jobs.values():  # (a TikTok cut that is gone, e.g. deleted after it was posted: cut again if needed)
         if job.get('tiktok_rev') is None:
@@ -927,10 +1014,16 @@ def surprise_picture(prompt, path):
     except requests.RequestException:
         pass
     from gradio_client import Client
-    try:
+
+    def paint():  # one ZeroGPU call: only through the GPU guard (wait_job never leaves it running)
         client = Client(IMAGE_SPACE, token=HF_TOKEN, verbose=False)
-        out = client.predict(prompt=prompt, seed=seed, randomize_seed=False, width=576, height=1024,
-                             num_inference_steps=4, api_name='/infer')
+        job = client.submit(prompt=prompt, seed=seed, randomize_seed=False, width=576, height=1024,
+                            num_inference_steps=4, api_name='/infer')
+        return gpu.wait_job(job, SPACE_TIMEOUT)
+    try:
+        out = gpu.gpu_call('FLUX.1-schnell', IMAGE_REQUEST, paint)
+    except QuotaError:
+        raise
     except Exception as e:
         if is_quota(str(e)):
             raise QuotaError(str(e))
@@ -948,6 +1041,45 @@ def wan21_size(picture):
     if w > h * 1.15:
         return {'height': 512, 'width': 896}
     return {'height': 640, 'width': 640}
+
+
+def wan22_size(w, h):
+    """The size both Wan 2.2 Spaces make a w x h picture (their resize_image): see ENGINES."""
+    if w == h:
+        return 640, 640
+    aspect = w / h
+    if aspect > 832 / 480:
+        tw, th = 832, 480
+    elif aspect < 480 / 832:
+        tw, th = 480, 832
+    elif w > h:
+        tw, th = 832, int(round(832 / aspect))
+    else:
+        tw, th = int(round(832 * aspect)), 832
+    fw, fh = round(tw / 16) * 16, round(th / 16) * 16
+    return max(480, min(832, fw)), max(480, min(832, fh))
+
+
+def booking(engine, picture, seconds):
+    """The ZeroGPU seconds one call to this engine books for this picture (see ENGINES); the engine's worst case
+    when the picture can't be read."""
+    try:
+        w, h = Image.open(picture).size
+    except Exception:
+        return engine['request']
+    kind = engine.get('booking')
+    s = min(seconds, engine['max_sec'])
+    steps = int(engine['extra'].get('steps', 4))
+    if kind in ('wan22', 'wan22_backup'):
+        rw, rh = wan22_size(w, h)
+        frames = 1 + min(max(int(round(s * 16)), 8), 80 if kind == 'wan22' else 160)
+        f = (frames * rw * rh / (81 * 832 * 624)) ** 1.5
+        duration = 10 + steps * 15 * f if kind == 'wan22' else (15 + steps * 5 * f) * 1.3
+    elif kind == 'wan21':
+        duration = 90 if steps > 4 and s > 2 else 75 if steps > 4 or s > 2 else 60
+    else:
+        return engine['request']
+    return 2 * math.ceil(duration)
 
 
 # ---------- Your own PC (the antics PC helper) ----------
@@ -987,34 +1119,48 @@ def pc_make_clip(picture, prompt, seconds, out):
 
 def make_clip(picture, prompt, seconds, out):
     """Animate one picture: on the user's PC when it is on, otherwise with the free online engines
-    (each tried in turn; stops early on quota or key problems)."""
+    (each tried in turn; stops early on quota or key problems). Every online call goes through the GPU guard, booked
+    at what the Space books for THIS picture: when there isn't enough free time for one engine, a cheaper one is
+    tried. A busy Space that fit: BusyError (tried again soon); none fit: QuotaError."""
     if pc_online() and pc_make_clip(picture, prompt, seconds, out):
         return 'your PC'
     from gradio_client import Client, handle_file
-    last, busy = None, False
+    last, busy, short = None, False, None
     for engine in ENGINES:
-        try:
+        def animate(engine=engine):  # one ZeroGPU call: only through the GPU guard (wait_job never leaves it running)
             client = Client(engine['id'], token=HF_TOKEN, verbose=False)
             args = {'input_image': handle_file(str(picture)), 'prompt': prompt,
                     'duration_seconds': min(seconds, engine['max_sec']), 'randomize_seed': True, **engine['extra']}
             if engine.get('sized'):
                 args.update(wan21_size(picture))
-            result = client.submit(api_name='/generate_video', **args).result(timeout=900)
+            return gpu.wait_job(client.submit(api_name='/generate_video', **args), SPACE_TIMEOUT)
+        try:
+            result = gpu.gpu_call(engine['name'], booking(engine, picture, seconds), animate)
             video = result[0]
             path = video.get('video') if isinstance(video, dict) else video
             shutil.copy(path, out)
             return engine['name']
+        except QuotaError as e:
+            if e.guard and e.reason == 'quota':  # not enough free time for this one: a cheaper engine may fit
+                log.info('%s', e)
+                short = short or e
+                continue
+            raise
+        except (gpu.NoKey, gpu.KeyRefused):
+            raise
         except Exception as e:
             msg = str(e) or type(e).__name__
             if is_quota(msg):
                 raise QuotaError(msg)
             if is_auth(msg):
-                raise RuntimeError('The Hugging Face key was refused. Set up the worker again with a new key.')
+                raise RuntimeError(gpu.KEY_REFUSED)
             busy = busy or is_busy(msg)
             log.warning('%s failed: %s', engine['id'], msg)
             last = msg
-    if busy:
+    if busy:  # (an engine that fit was busy: soon, not at the reset)
         raise BusyError(last)
+    if short:
+        raise short
     raise RuntimeError(f'The free video engines are offline right now ({last})')
 
 
@@ -2146,7 +2292,7 @@ def worker_loop(lane):
             if not job or job['status'] != 'queued':
                 continue
             job['status'] = 'working'
-        update(job, error='')
+        update(job, error='', gpu_wait=None)
         slow = needs_animation(job)  # new AI clips take minutes: a notification when it's done (re-cuts are watched)
         try:
             with render_lock(job_id):  # (its TikTok cut, if one is being cut right now, finishes first)
@@ -2155,10 +2301,19 @@ def worker_loop(lane):
         except Paused:  # (Together) the picture check: it carries on by itself, no notification
             continue
         except (QuotaError, BusyError) as e:
-            why = ('Out of free video time for today.' if isinstance(e, QuotaError)
-                   else 'The free GPUs are all busy right now.')
-            update(job, status='waiting', stage=f'{why} It will finish by itself.',
-                   retry_at=time.time() + e.wait_seconds + 60, progress=0)
+            reason = e.reason if isinstance(e, QuotaError) else 'busy'
+            stage = {'quota': 'Out of free AI time today. It will finish by itself.',
+                     'stopped': 'AI work is stopped: Hugging Face started charging credits. The owner can tap Resume '
+                                'in Settings.',
+                     'unreadable': "Your free AI time can't be checked right now, so no AI work is done. It will "
+                                   'finish by itself.',
+                     'loading': 'Your worker is still starting. It will finish by itself.',
+                     'saving': 'Hugging Face is busy right now. It will finish by itself.'}.get(
+                reason, 'The free GPUs are all busy right now. It will finish by itself.')
+            # (a QuotaError's wait already has its minute after the reset; the GPU guard's clock is the one to use)
+            update(job, status='waiting', stage=stage,
+                   gpu_wait=reason if reason in ('quota', 'stopped', 'unreadable') else None,
+                   retry_at=gpu.now() + e.wait_seconds + (0 if isinstance(e, QuotaError) else 60), progress=0)
             save(job)
             continue  # (no notification: it finishes by itself, and that one sends it)
         except Exception as e:
@@ -2188,8 +2343,8 @@ def friendly(e):
 
 
 def wake_waiting(now_anyway=False):
-    """Put waiting jobs back in line once their wait is over (or right away when the PC is on)."""
-    now = time.time()
+    """Put waiting jobs back in line once their wait is over (or right away when the PC is on, or on Resume)."""
+    now = gpu.now()
     for job in list(jobs.values()):
         if now_anyway and job.get('picture_check') and (job.get('retry_at') or 0) > now:
             continue  # (Together: the user is still looking at the picture)
@@ -2203,10 +2358,11 @@ SCHEDULER_EVERY = 60  # seconds between the scheduler's rounds
 
 def scheduler_loop():
     """Every minute: read the dataset files that couldn't be read at the start, wake jobs that were waiting for
-    the free GPU time to come back, and send the posting plan's reminders. None can stop the others, or the loop."""
+    the free GPU time to come back, send the posting plan's reminders, and save the GPU guard's state again if that
+    failed. None can stop the others, or the loop."""
     while True:
         time.sleep(SCHEDULER_EVERY)
-        for step in (read_again, wake_waiting, posting_tick):
+        for step in (read_again, wake_waiting, posting_tick, gpu.flush):
             try:
                 step()
             except Exception as e:
@@ -2270,6 +2426,7 @@ async def lifespan(_app):
     threading.Thread(target=cut_loop, daemon=True).start()
     threading.Thread(target=scheduler_loop, daemon=True).start()
     threads_up.set()
+    gpu.view()  # (reads the quota in the background, so /health has it)
     yield
 
 
@@ -2357,18 +2514,38 @@ def features():
     songs: My songs (/songs: the owner's saved songs, each starting at its meme part; music 'mysong' + song_id).
     plan: the Posting plan (/plan: the owner's queue of videos to post, reminders, hashtags; the TikTok cut of a
     video with a song: /jobs/{id}/video?cut=tiktok).
+    gpu: the GPU guard (/health "gpu": the free AI time left today and its reset, alert 'billed' when it stopped all
+    AI work because Hugging Face charged credits; POST /gpu/resume; a waiting video's gpu_wait).
     together: Together videos (mode 'together' of POST /jobs, /jobs/{id}/copy, the edit's scene/look/recompose/
     order/names). library: the free clip library (library.json, by id in a Together video's cast)."""
     return (['chain'] + (['meme'] if meme and sfx else []) + ['opening', 'outro']
             + (['voice'] if pet_voice and pet_voice.ready() else []) + (['push'] if webpush else []) + ['songs']
-            + (['plan'] if posting else [])
+            + (['plan'] if posting else []) + ['gpu']
             + (['together'] if together else []) + (['library'] if together and together.load_library() else []))
 
 
 @app.get('/health')
 def health():
-    return {'ok': True, 'version': VERSION, 'storage': bool(hub), 'token': bool(HF_TOKEN), 'token_ok': token_ok,
-            'pc': pc_online(), 'pc_name': pc['name'], 'features': features()}
+    # gpu: {readable, left, base (seconds), resets_at (unix or None), alert ('billed' or None), stopped, blind (why
+    # the quota can't be read: 'key' or 'down', else None), estimated (a free account's ledger), key_refused}; it
+    # never waits for Hugging Face (the quota is read in the background, at most every gpu.CACHE seconds).
+    g = gpu.view()  # (token_ok: also false once Hugging Face refuses the key for the quota and whoami: revoked)
+    return {'ok': True, 'version': VERSION, 'storage': bool(hub), 'token': bool(HF_TOKEN),
+            'token_ok': token_ok and not g['key_refused'], 'pc': pc_online(), 'pc_name': pc['name'],
+            'features': features(), 'gpu': g}
+
+
+@app.post('/gpu/resume')
+def gpu_resume(x_antics_key: str = Header(None)):
+    """Owner only: AI work goes on after the GPU guard stopped it (still only within the free time). The videos
+    that waited for it go back in line."""
+    check(x_antics_key)
+    view = gpu.resume()
+    for job in list(jobs.values()):
+        if job['status'] == 'waiting' and job.get('gpu_wait') == 'stopped':
+            update(job, status='queued', stage='In line…', gpu_wait=None, retry_at=None)
+            enqueue(job)
+    return {'ok': True, 'gpu': view}
 
 
 @app.get('/me')

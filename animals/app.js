@@ -6,7 +6,7 @@ const HF = 'https://huggingface.co';
 const SPACE_NAME = 'antics-worker';
 const DATASET_NAME = 'antics-videos';
 const WORKER_FILES = ['Dockerfile', 'README.md', 'requirements.txt', 'worker.py', 'ideas.py', 'beats.py', 'meme.py', 'sfx.py',
-  'voice.py', 'webpush.py', 'chorus.py', 'posting.py',
+  'voice.py', 'webpush.py', 'chorus.py', 'posting.py', 'gpu.py',
   'together.py', 'library.json']; // Together (v13): several animals in one video, and the free clips
 const WORKER_VERSION = '13'; // bump with VERSION in worker/worker.py
 const KEYS = {
@@ -304,6 +304,7 @@ function workerChanged() {
   renderJobs();
   renderRole();
   renderOptions();
+  renderGpu();
   renderWorkerDot(false);
   renderConnect();
   if ($('#settings').open) renderSettings();
@@ -422,6 +423,14 @@ async function setupWorker() {
   const msg = $('#setupNote');
   if (!/^hf_[A-Za-z0-9]{20,}$/.test(token)) {
     note(msg, "That doesn't look like a Hugging Face key. It starts with hf_", 'bad');
+    return;
+  }
+  // An update restarts the worker: a clip being made right now would be cut off and made again (its AI time used
+  // twice), so the first tap asks to wait for it.
+  if (updating && !state.updateAnyway && (state.jobs || []).some((j) => j.status === 'working' || j.status === 'queued')) {
+    state.updateAnyway = true;
+    note(msg, 'A video is being made right now. Update when it is done, or tap Update my worker again to update '
+      + 'anyway (it starts that video again).', 'bad');
     return;
   }
   note(msg, '');
@@ -1235,6 +1244,13 @@ function describe(job) {
   if (job.status === 'waiting') {
     const at = job.retry_at ? new Date(job.retry_at * 1000) : null;
     const when = at ? at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'later';
+    // Waiting for the worker's GPU guard (v12.1): out of today's free AI time, or stopped until the owner's Resume.
+    if (job.gpu_wait === 'quota') return `Out of free AI time today. It continues by itself ${at ? `at ${when}` : 'later'}.`;
+    if (job.gpu_wait === 'unreadable') return `Waiting to check the free AI time. It tries again by itself around ${when}.`;
+    if (job.gpu_wait === 'stopped') {
+      return isGuest() ? `Paused for now. It goes on once ${hostName()} checks their worker.`
+        : 'AI work is stopped: Hugging Face started charging your credits. Tap Resume to go on.';
+    }
     const why = (job.stage || 'Waiting for free time.').replace(/\s*It will finish by itself\.?/, '');
     return `${why} Tries again by itself around ${when}.`;
   }
@@ -1359,7 +1375,7 @@ function renderJobs() {
       add(job.status === 'waiting' ? '▶ Watch so far' : '▶ Last version', 'open', () => openPlayer(job));
     }
     if (!own && job.status === 'failed') add('Try again', '', () => retryJob(job));
-    if (!own && job.status === 'waiting') add('Try now', '', () => retryJob(job));
+    if (!own && job.status === 'waiting' && job.gpu_wait !== 'stopped') add('Try now', '', () => retryJob(job));
     if (!own && job.status !== 'working') add('Delete', 'del', () => deleteJob(job));
     if (job.kind === 'together' && window.Together) Together.decorate(card, job); // Together: tag, picture, note
     box.appendChild(card);
@@ -3181,6 +3197,7 @@ function showLinked(jobs) {
 
 function openUpdate() {
   state.setupMode = 'update';
+  state.updateAnyway = false;
   openSettings();
 }
 
@@ -4295,7 +4312,62 @@ async function refreshHealth() {
   syncPings();
 }
 
+// The GPU guard (workers with 'gpu', owner only): the free AI time left today in Settings, and a red banner with
+// Resume when the worker stopped all AI work because Hugging Face started charging credits.
+const gpuInfo = () => (state.worker && !isGuest() && canDo('gpu') && state.health.gpu) || null;
+
+// The quota can't be read: the worker makes no AI calls on an account that could be charged ('key': the key can't
+// read it; 'down': Hugging Face didn't answer); a free account goes on, estimated.
+const GPU_BLIND = {
+  key: "Your Hugging Face key can't read your free AI time, so antics makes no AI clips (it never risks your credits). "
+    + 'Make a new key with Write (step 2), then Update my worker with it.',
+  down: "Your free AI time can't be checked right now, so AI clips wait. They go on by themselves.",
+  estimated: "Your key can't read your free AI time, so antics only estimates it.",
+};
+
+function renderGpu() {
+  const g = gpuInfo();
+  const billed = Boolean(g && g.alert === 'billed');
+  $('#gpuBanner').hidden = !billed;
+  $('#gpuAlert').hidden = !billed;
+  const line = $('#gpuLine');
+  const numbers = Boolean(g && g.readable && Number.isFinite(g.left) && Number.isFinite(g.base) && g.base > 0);
+  const blind = Boolean(g && !g.readable && g.blind && !g.key_refused) ? (g.estimated ? 'estimated' : g.blind) : '';
+  line.classList.toggle('bad', Boolean(blind) && blind !== 'estimated');
+  line.hidden = !numbers && !GPU_BLIND[blind];
+  if (!numbers) {
+    line.textContent = GPU_BLIND[blind] || '';
+    return;
+  }
+  const left = Math.max(0, Math.floor(g.left / 60));
+  const base = Math.round(g.base / 60);
+  const resets = g.resets_at
+    ? `\u00a0· resets ${new Date(g.resets_at * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : '';
+  line.textContent = `Free AI time today: ${Math.min(left, base)} of ${base} min left${resets}`;
+}
+
+let resuming = false;
+async function resumeGpu() {
+  if (resuming) return;
+  resuming = true;
+  const buttons = [$('#gpuResume'), $('#gpuResumeMain')];
+  buttons.forEach((b) => { b.disabled = true; });
+  try {
+    const body = await api('/gpu/resume', { method: 'POST' });
+    if (state.health && body.gpu) state.health.gpu = body.gpu;
+    renderGpu();
+    toast('AI work is back on (only within your free time).');
+    refreshJobs();
+  } catch (e) {
+    toast(e.waking ? 'Your worker is waking up. Try again in a minute.' : e.message);
+  } finally {
+    resuming = false;
+    buttons.forEach((b) => { b.disabled = false; });
+  }
+}
+
 function renderPc() {
+  renderGpu();
   const h = state.health;
   if (isGuest()) {
     $('#pcChip').hidden = true;
@@ -4567,6 +4639,8 @@ function init() {
   $('#pairBtn').addEventListener('click', getPairCode);
   $('#updateBtn').addEventListener('click', openUpdate);
   $('#updateBtnMain').addEventListener('click', openUpdate);
+  $('#gpuResumeMain').addEventListener('click', resumeGpu);
+  $('#gpuResume').addEventListener('click', resumeGpu);
   onClosed($('#settings'), () => {
     state.setupMode = 'setup';
     $('#steps').hidden = true;

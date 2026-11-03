@@ -976,6 +976,34 @@ dialog::backdrop {
   gap: 10px;
 }
 
+/* The GPU guard stopped all AI work (Hugging Face started charging credits) */
+.banner.alert {
+  background: #ffb8aa;
+}
+
+.banner.alert a,
+.gpu-alert a {
+  overflow-wrap: anywhere;
+}
+
+.gpu-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-weight: 700;
+}
+
+.gpu-line {
+  margin: 6px 0 0;
+  font-weight: 700;
+}
+
+.gpu-line.bad {
+  color: #b3261e;
+}
+
 @media (min-width: 960px) {
   .banner-wrap {
     max-width: 1180px;

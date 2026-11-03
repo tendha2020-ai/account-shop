@@ -39,6 +39,12 @@
       <span id="updateText">A new version of antics is ready, with more options.</span>
       <button type="button" id="updateBtnMain" class="plain">Update my worker</button>
     </p>
+    <!-- The worker's GPU guard stopped all AI work because Hugging Face started charging credits (owner only) -->
+    <p id="gpuBanner" class="note banner alert" hidden>
+      <span>Hugging Face started charging your credits, so antics stopped all AI work. Check
+        <a href="https://huggingface.co/settings/billing" target="_blank" rel="noopener">huggingface.co/settings/billing</a>.</span>
+      <button type="button" id="gpuResumeMain" class="plain">Resume</button>
+    </p>
     <!-- The Home Screen app starts without a worker on an iPhone (it has its own storage): one link connects it -->
     <section id="connectBox" class="block connect" hidden>
       <h2 class="step-title">Connect this app</h2>
@@ -531,6 +537,13 @@
       <div id="optionsPane" hidden>
         <h2>Settings</h2>
         <p class="worker-line">Worker: <a id="workerLink" target="_blank" rel="noopener"></a> <span id="workerState"></span></p>
+        <!-- Workers with 'gpu': today's free AI time, and the stop when Hugging Face started charging credits -->
+        <p id="gpuLine" class="gpu-line" hidden></p>
+        <p id="gpuAlert" class="note bad gpu-alert" hidden>
+          <span>Hugging Face started charging your credits, so antics stopped all AI work. Check
+            <a href="https://huggingface.co/settings/billing" target="_blank" rel="noopener">huggingface.co/settings/billing</a>.</span>
+          <button type="button" id="gpuResume" class="plain">Resume</button>
+        </p>
         <p class="fine">Free Hugging Face time makes about 3–5 clips a day. When it runs out, unfinished videos wait and finish by themselves.</p>
         <p id="updateNote" class="note bad" hidden>A new version is ready. <button type="button" id="updateBtn" class="plain">Update my worker</button></p>
 

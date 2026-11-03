@@ -804,7 +804,9 @@
     }
     const list = job.free_copy ? [] : [[nowLabel(free), 'finish', () => freeCopy(job, free)]]; // (one free copy)
     if (job.has_video) list.push(['▶ Watch so far', 'open', () => openPlayer(job)]);
-    list.push(['Try now', '', () => retryJob(job)], ['Delete', 'del', () => deleteJob(job)]);
+    // (stopped by the GPU guard: no Try now, AI work waits for the owner's Resume; the free look still can be made)
+    if (job.gpu_wait !== 'stopped') list.push(['Try now', '', () => retryJob(job)]);
+    list.push(['Delete', 'del', () => deleteJob(job)]);
     return list;
   }
 
