@@ -561,6 +561,26 @@ def tell_apart(cast, pictures):
 # ---------- The composed picture ----------
 # Free multi-picture engines, tried in order. They spend the same daily free GPU time as the Wan clips, so a job
 # composes FIRST (while the day's free minutes are untouched) and animates after. Both read "the first image".
+# Every call goes through the worker's GPU guard (gpu.py, as w.gpu: one call at a time, the real quota read before
+# and after, all AI work stopped if Hugging Face ever bills credits), booked at what the Space books for THESE
+# pictures (compose_booking), from each Space's own code (its app.py as it was on 2026-11-03, read with the Hub API)
+# and the spaces package's rule (spaces 0.51, the RTX PRO 6000 Blackwell's factors): the @spaces.GPU duration in whole
+# seconds, x1.5 on the default size (half a GPU), x2 on 'xlarge'. A Space that sets no size may run on either (one
+# with a big model is moved to xlarge), so x2 is counted, as for the worker's ENGINES. Seconds are rounded up.
+#   FLUX 3 Image Klein (sha 24df884b, 2026-11-03): /generate runs infer(), whose GPU part is
+#     @spaces.GPU(duration=get_duration) with no size:
+#       tokens = width * height / 256 + 512 + the sum over the pictures sent of min(w * h, 1024 * 1024) / 256
+#       duration = int(min(max(15 + steps * passes * 0.5 * (tokens / 4608) ** 1.5, 20), 300))   (passes: 2 on Base)
+#     Its prompt upsampler runs first, outside @spaces.GPU, on the Space's own keys (no ZeroGPU time, nothing
+#     billed to the owner). An estimate of 300 or more runs its xlarge function instead (get_duration_xl, at most
+#     300 -> 600 booked): never at 720x1280. At 720x1280, 16 steps, with the pictures shrunk to 640 px: two 9:16
+#     ones 26 s -> 52; two square ones 30 s -> 60; four square ones 42 s -> 84. request: the worst case, four at
+#     its 1024x1024 cap: 90 s -> 180.
+#   FLUX.2 klein 4B (sha 0207e56c, 2026-02-09): /infer is @spaces.GPU(duration=85) with no size: 85 -> 170 for any
+#     pictures (the prompt upsampling is off).
+# If a Space ever books more, its refusal ("Xs requested") or a measured spend raises it for the day (gpu.need()).
+
+COMPOSE_TIMEOUT = 600  # seconds a composer call may take (then it is cancelled: w.gpu.wait_job)
 
 COMPOSE_ENGINES = [
     # FLUX 3 Image Klein (FLUX Kommunity License: outputs may be used commercially by people/companies under US$5M
@@ -568,12 +588,37 @@ COMPOSE_ENGINES = [
     # ~10 s of GPU with pictures shrunk to 640 px; up to 10 pictures. If TENDHA2 ever passes US$5M, swap the order.
     {'id': 'black-forest-labs/flux-3-image-klein', 'name': 'FLUX 3 Image Klein', 'api': '/generate',
      'args': {'mode_choice': 'Distilled (16 steps)', 'width': 720, 'height': 1280, 'num_inference_steps': 16,
-              'guidance_scale': 1.0, 'prompt_upsampling': True}},
+              'guidance_scale': 1.0, 'prompt_upsampling': True},
+     'booking': 'flux3', 'request': 180},
     # FLUX.2 klein 4B (Apache-2.0): up to 4 pictures (<= 1024 px), books a fixed 85 s of GPU time.
     {'id': 'black-forest-labs/FLUX.2-klein-4B', 'name': 'FLUX.2 klein', 'api': '/infer',
      'args': {'mode_choice': 'Distilled (4 steps)', 'width': 576, 'height': 1024, 'num_inference_steps': 4,
-              'guidance_scale': 1.0, 'prompt_upsampling': False}},
+              'guidance_scale': 1.0, 'prompt_upsampling': False},
+     'booking': 'fixed', 'duration': 85, 'request': 170},
 ]
+FLUX3_REF_PIXELS = 1024 * 1024  # (FLUX 3 Image Klein's MAX_REF_PIXELS: a picture counts at most this big)
+
+
+def compose_booking(engine, refs):
+    """The ZeroGPU seconds one call to this composer books for these pictures (see COMPOSE_ENGINES); the engine's
+    worst case when a picture can't be read."""
+    if engine.get('booking') == 'fixed':
+        return 2 * math.ceil(engine['duration'])
+    if engine.get('booking') != 'flux3':
+        return engine['request']
+    args = engine['args']
+    tokens = int(args['width']) * int(args['height']) / 256 + 512
+    for ref in refs:
+        try:
+            with Image.open(ref) as img:
+                pw, ph = img.size
+        except Exception:
+            return engine['request']
+        tokens += min(pw * ph, FLUX3_REF_PIXELS) / 256
+    passes = 2 if str(args.get('mode_choice') or '').startswith('Base') else 1
+    estimate = 15 + int(args['num_inference_steps']) * passes * 0.5 * (tokens / 4608) ** 1.5
+    duration = int(min(max(estimate, 20), 300))
+    return 600 if duration >= 300 else 2 * duration  # (300 or more: its xlarge function, at most 300 s, x2)
 
 
 def shrink_ref(src, out):
@@ -607,33 +652,49 @@ def compose_prompt(scene_id, cast, plain=False, story=''):
 def compose_picture(refs, prompt, out, w):
     """Puts the animals of 2-4 small pictures (shrink_ref) into ONE new start picture, saved as `out`, with the
     first composer that makes it. Returns {'engine', 'seed', 'rewrite'} (rewrite: the engine's own longer prompt,
-    when it writes one). Raises w.QuotaError (the day's free GPU time is used up) and w.BusyError (every free GPU
-    is taken), like make_clip, and ComposeError when every engine refused or is offline.
-    w: the worker (its key, error rules, save_picture and log)."""
+    when it writes one). Every call goes through the GPU guard (w.gpu.gpu_call, waited for by w.gpu.wait_job, which
+    cancels a call that takes too long), booked at compose_booking() for these pictures: when the free time left
+    isn't enough for one engine, the next is tried. Raises w.QuotaError (no free GPU time: the day's free time is
+    used up, or the guard stopped AI work) and w.BusyError (every free GPU is taken), like make_clip, and
+    ComposeError when every engine refused or is offline.
+    w: the worker (its key, GPU guard, error rules, save_picture and log)."""
     from gradio_client import Client, handle_file
     images = [{'image': handle_file(str(r)), 'caption': None} for r in refs]
-    last, busy = None, False
+    last, busy, short = None, False, None
     for engine in COMPOSE_ENGINES:
-        try:
+        def run(engine=engine):  # one ZeroGPU call: only through the GPU guard (wait_job never leaves it running)
             client = Client(engine['id'], token=w.HF_TOKEN, verbose=False)
-            result = client.submit(prompt=prompt, input_images=images, seed=0, randomize_seed=True,
-                                   api_name=engine['api'], **engine['args']).result(timeout=600)
+            return w.gpu.wait_job(client.submit(prompt=prompt, input_images=images, seed=0, randomize_seed=True,
+                                                api_name=engine['api'], **engine['args']),
+                                  min(COMPOSE_TIMEOUT, w.SPACE_TIMEOUT))
+        try:
+            result = w.gpu.gpu_call(engine['name'], compose_booking(engine, refs), run)
             picture = result[0]  # a file path (FLUX 3 Image Klein) or {'path': ...} (FLUX.2 klein)
             w.save_picture(Image.open(picture.get('path') if isinstance(picture, dict) else picture), out)
             seed = result[1] if len(result) > 1 and isinstance(result[1], (int, float)) else None
             rewrite = result[2] if len(result) > 2 and isinstance(result[2], str) else ''
             return {'engine': engine['name'], 'seed': None if seed is None else int(seed), 'rewrite': rewrite}
+        except w.QuotaError as e:
+            if getattr(e, 'guard', False) and getattr(e, 'reason', '') == 'quota':  # (not enough for this one)
+                w.log.info('%s', e)
+                short = short or e
+                continue
+            raise
+        except (w.gpu.NoKey, w.gpu.KeyRefused):
+            raise
         except Exception as e:
             msg = str(e) or type(e).__name__
             if w.is_quota(msg):
                 raise w.QuotaError(msg)
             if w.is_auth(msg):
-                raise RuntimeError('The Hugging Face key was refused. Set up the worker again with a new key.')
+                raise RuntimeError(w.gpu.KEY_REFUSED)
             busy = busy or w.is_busy(msg)
             w.log.warning('%s failed: %s', engine['id'], msg)
             last = msg
-    if busy:
+    if busy:  # (an engine that fit was busy: soon, not at the reset)
         raise w.BusyError(last)
+    if short:
+        raise short
     raise ComposeError(f'The free picture engines could not make it ({last})')
 
 

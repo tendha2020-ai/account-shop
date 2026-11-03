@@ -1665,9 +1665,9 @@ def finish_video(job, folder, parts, failed=None):
     os.replace(folder / 'thumb.new.jpg', folder / 'thumb.jpg')
     first_text = next((i['caption'] for i in job['ideas'] if i.get('caption')), '')
     caption = f"{first_text} {ideas.HASHTAGS}".strip() + (f'\n{credit}' if credit else '')
-    # What the posting plan says of this version (its text and the song's credit) is kept with it: while an edit
-    # is under way the job's own fields already describe the next version, but the plan still shares this one.
-    made_with = dict(cut['made_with'], text=first_text, credit=credit)
+    # What the posting plan says of this version (its name, its text and the song's credit) is kept with it: while
+    # an edit is under way the job's own fields already describe the next version, but the plan still shares this one.
+    made_with = dict(cut['made_with'], text=first_text, credit=credit, label=job.get('label') or '')
     if job.get('kind') == 'together' and together:  # (Together) its own tags, and the free clips' credits
         caption = together.tiktok_caption(job, first_text, credit)
         made_with.update(ai=together.uses_ai(job), clips=together.credit_lines(job))  # (the AI label, the credits)
@@ -3405,8 +3405,12 @@ def plan_body(body):
 
 
 def short_label(job):
-    """A video's name in the plan and its reminder."""
-    label = job.get('label') or ('Surprise' if job.get('kind') == 'surprise' else 'Your video')
+    """A video's name in the plan, its reminder and its history: the name of the version the plan shares (final.mp4,
+    as finish_video kept it in made_with), also while an edit is under way (another scene, new names) and the job's
+    own label already names the next one. Videos made before kept none: their label as it is now."""
+    made = job.get('made_with') or {}
+    label = ((made.get('label') if job.get('thumb') else None) or job.get('label')
+             or ('Surprise' if job.get('kind') == 'surprise' else 'Your video'))
     label = re.sub(r'\s+', ' ', str(label)).strip()
     return label if len(label) <= 60 else label[:59].rstrip() + '…'
 
