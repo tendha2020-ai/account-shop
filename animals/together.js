@@ -858,7 +858,10 @@
     unlockSound();
     await retryJob(job);
     state.watchAfter = { id: job.id, rev: job.rev || 0 };
-    toast(nb(`Animating it now (${clipTime()} a part). It opens when it's ready.`));
+    // (the GPU guard stopped all AI work: it waits for the owner's Resume, so the toast doesn't promise it now)
+    const g = typeof gpuInfo === 'function' ? gpuInfo() : null;
+    if (g && g.alert === 'billed') toast('AI work is stopped, so it animates once you tap Resume.');
+    else toast(nb(`Animating it now (${clipTime()} a part). It opens when it's ready.`));
   }
 
   async function editNow(job, fields, done) {
