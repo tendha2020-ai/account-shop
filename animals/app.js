@@ -2139,7 +2139,8 @@ function redosLeft(job) {
 // True when saving will animate something again (slower, and it uses free time).
 function willAnimate() {
   const job = edit.job;
-  if (window.Together && Together.editAnimates()) return true; // Together: a new scene, picture, order or look
+  const together = window.Together ? Together.editAnimates() : null; // Together: its own rules (null: these)
+  if (together !== null) return together;
   if ($('#editIdea').value.trim().replace(/\s+/g, ' ') !== (job.idea || '')) return true;
   if (edit.style !== (job.template || 'random')) return true;
   const animal = cleanAnimal($('#editAnimal').value);
@@ -2151,7 +2152,8 @@ function willAnimate() {
 // Whether saving throws away a clip that already moves (what a friend's redo limit counts).
 function losesAnimation() {
   const job = edit.job;
-  if (window.Together && Together.editLoses()) return true; // Together: these count as a new animation
+  const together = window.Together ? Together.editLoses() : null; // Together: its own rules (null: these)
+  if (together !== null) return together;
   if ($('#editIdea').value.trim().replace(/\s+/g, ' ') !== (job.idea || '')) return animatedClips(job) > 0;
   if (edit.style !== (job.template || 'random')) return animatedClips(job) > 0;
   const animal = cleanAnimal($('#editAnimal').value);
@@ -2300,7 +2302,8 @@ async function saveEdit() {
     if (key === 'voice') form.append('voice', on ? edit.voice : 'off');
     else form.append(key, String(on));
   }
-  const redo = [...edit.redo].filter((i) => i < edit.len);
+  const parts = window.Together ? Together.editParts() : edit.len; // (Together: one by one has a part per turn)
+  const redo = [...edit.redo].filter((i) => i < parts);
   if (redo.length) form.append('redo', redo.join(','));
   const animate = willAnimate();
   const btn = $('#editSave');

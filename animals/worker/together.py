@@ -40,6 +40,7 @@ CHECK_SECONDS = 120  # the picture check: it starts moving by itself after this 
 COMPOSE_SIDE = 640  # each animal's picture shrinks to this long side for the composer (enough for the look)
 OUT_W, OUT_H, FPS = 720, 1280, 30
 STILL_ZOOM = 0.12  # a photo (or a painted animal) in a free look slowly zooms in this much
+NAME_TAG = (int(OUT_H * 0.62), 64)  # the creator's name tag in the worker's join (its top, about how tall), at x 24
 HOOK_SECONDS = 2.0  # the Real -> AI opening's real seconds (the join keeps 1.2-2 s of it, ending on a beat)
 TURN_SECONDS = (2.5, 5.0)  # one by one: each animal's part lasts this long (at least, at most)
 FONT = os.environ.get('ANTICS_FONT', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf')
@@ -954,7 +955,8 @@ def render_layout(look, panels, seconds, out, labels=(), cuts=()):
                          f"[lay][vb]overlay=x='(W-w)/2':y='(H-h)/2':enable='gte(t,0.15)':eval=frame[vsd]")
             k, last = k + 1, 'vsd'
             hits.append((0.15 / seconds, 'hit'))
-            spots = [(24, H // 2 - 200, 400), (24, H // 2 + 146, 400)]  # just above and below the badge
+            # just above the badge, and below it under the creator's name tag (which sits right under the badge)
+            spots = [(24, H // 2 - 200, 400), (24, sum(NAME_TAG) + 10, 400)]
         else:
             spots = [(24, H // 2 - 78, 330), (24, H // 2 + 24, 330)]
         pills += [(i, *spots[i], 0.0, None) for i in range(2)]
@@ -1689,7 +1691,8 @@ def public(job):
             'made_as': job.get('made_as'), 'picture_check': bool(job.get('picture_check')),
             'has_picture': has_picture(job), 'compose_engine': (job.get('compose') or {}).get('engine'),
             'free_look': free_look(job.get('scene'), len(cast)), 'note': job.get('note') or '',
-            'length': job.get('length'), 'uses_ai': uses_ai(job), 'editable': True}
+            'length': job.get('length'), 'part_seconds': job.get('part_seconds') or 5, 'uses_ai': uses_ai(job),
+            'editable': True}
 
 
 def _json_list(text, w, what):
@@ -1753,6 +1756,8 @@ def edit(w, job, who, f):
         made = bool(job.get('clips_done'))
         lost = made and (new_parts or other_ai or (look == now != 'free' and bool(redo & set(range(job['wanted'])))))
         repaint = has_picture(job) and new_picture
+        if look == 'free':  # (a free look is made on the CPU: it never uses one of a friend's new animations)
+            lost = repaint = False
         if who is not w.OWNER and (repaint or lost) and job.get('redos', 0) >= w.GUEST_REDOS:
             raise w.HTTPException(403, f'This video used its {w.GUEST_REDOS} new animations. Change its text or '
                                        'music, or make a new video.')

@@ -301,7 +301,7 @@
     $('#libFilters').hidden = groups.length < 2;
     const grid = $('#libGrid');
     grid.innerHTML = '';
-    for (const c of clips.filter((x) => T.libFilter === 'all' || x.group === T.libFilter)) grid.appendChild(clipCard(c));
+    for (const c of clips.filter((x) => (T.libFilter === 'all' || x.group === T.libFilter) && clipUrl(x))) grid.appendChild(clipCard(c));
     $('#libCount').textContent = `${T.cast.length} of 4 animals`;
   }
 
@@ -339,16 +339,13 @@
     redraw();
   }
 
-  // The clip's address for this browser: its WebM, or the H.264 copy Commons also makes where WebM can't
-  // play (iPhones before iOS 17.4).
+  // The clip's address for this browser: its WebM, or the H.264 copy (mov) Commons also makes where WebM can't
+  // play (iPhones before iOS 17.4). '' when this phone can play neither: that clip isn't offered here.
+  let webm = null;
   function clipUrl(c) {
-    const vp9 = document.createElement('video').canPlayType('video/webm; codecs="vp9"') !== '';
-    if (vp9 || !/\.webm$/i.test(c.url)) return c.url;
-    if (c.mov) return c.mov;
-    const transcoded = c.url.match(/^(.*\/transcoded\/.+\/([^/]+?))\.\d+p\.vp9\.webm$/i);
-    if (transcoded) return `${transcoded[1]}.360p.mpeg4.mov`;
-    const original = c.url.match(/^(https:\/\/upload\.wikimedia\.org\/wikipedia\/commons)\/(\w\/\w\w\/([^/]+))$/i);
-    return original ? `${original[1]}/transcoded/${original[2]}/${original[3]}.360p.mpeg4.mov` : c.url;
+    if (webm === null) webm = document.createElement('video').canPlayType('video/webm; codecs="vp9"') !== '';
+    if (webm || !/\.webm$/i.test(c.url)) return c.url;
+    return c.mov || '';
   }
 
   async function addLibrary(c) {
@@ -972,11 +969,15 @@
   // order: the animals' new order as their numbers now ([1, 0] = swapped); names: one per animal, in the new
   // order. Scene, ↻ New picture and ⇄ Swap make a new picture and animate it again.
 
-  const ed = { on: false, scene: 'normal', look: 'ai', recompose: false, order: [], names: [] };
+  const ed = { on: false, scene: 'normal', look: 'ai', recompose: false, order: [], names: [], len0: 1 };
   let editPlaceholder = null;
   const orderChanged = () => ed.order.some((v, i) => v !== i);
   // The look the video has now (current_look() in worker/together.py): the edit's look is compared with it.
   const lookNow = (job) => (madeFree(job) ? 'free' : LOOKS.includes(job.made_as) ? job.made_as : LOOKS.includes(job.look) ? job.look : 'ai');
+  // The video's length in the Length buttons' 5 s steps. (One by one has a part per animal's turn and a free look
+  // one part, so the number of parts doesn't say how long it is.)
+  const lengthSteps = (job) => Math.max(1, Math.round((job.length || 5 * (job.wanted || 1)) / (job.part_seconds || 5)));
+  const ideaChanged = (job) => $('#editIdea').value.trim().replace(/\s+/g, ' ') !== (job.idea || '');
 
   function editorOpen(job) {
     ed.on = job.kind === 'together';
@@ -993,6 +994,8 @@
     ed.recompose = false;
     ed.order = cast.map((_, i) => i);
     ed.names = cast.map((c) => c.name || '');
+    edit.len = lengthSteps(job); // (app.js set it to the number of parts)
+    ed.len0 = edit.len;
     buildEditCast();
   }
 
@@ -1041,21 +1044,51 @@
     else if (orderChanged()) help = 'New places: a new picture (the first one is the star), then new animation.';
     else if (ed.look === 'free' && lookNow(job) !== 'free') help = 'The free look is made from the real clips in about a minute. No AI time.';
     $('#editTogetherHelp').textContent = help;
+    const now = lookNow(job);
+    if (now === 'ai') return;
+    // One by one: a line (and ↻) per animal's turn. A free look: its one line, and no ↻ (nothing to animate).
+    document.querySelectorAll('#editTexts .edit-text').forEach((row) => {
+      row.hidden = now === 'free' && Number(row.dataset.i) > 0;
+      $('.redo', row).hidden = now === 'free';
+    });
+    const left = redosLeft(job);
+    $('#editRedoHelp').textContent = (now === 'free' ? 'The text on the video. Changing it is quick.'
+      : '↻ = a new AI moment for that animal (and the turns after it).')
+      + (now !== 'free' && left < Infinity ? ` New animations left for this video: ${left}.` : '');
   }
 
+  // How many of the editor's lines can be made again with ↻ (app.js keeps only those): One scene one per 5 s,
+  // One by one one per turn, a free look none.
+  function editParts() {
+    if (!ed.on || !edit.job) return edit.len;
+    const now = lookNow(edit.job);
+    return now === 'free' ? 0 : now === 'turns' ? (edit.job.texts || []).length : edit.len;
+  }
+
+  // Whether saving animates again (true / false), or null: app.js's usual rules (One scene: a new idea, ↻ on a
+  // part, longer than made). A free look is always a cut on the worker's CPU, whatever else changes.
   function editAnimates() {
-    if (!ed.on || !edit.job) return false;
+    if (!ed.on || !edit.job) return null;
     const job = edit.job;
-    if (ed.scene !== sceneOr(job.scene).id || ed.recompose || orderChanged()) return true;
-    return ed.look !== lookNow(job) && ed.look !== 'free';
+    const now = lookNow(job);
+    if (ed.look === 'free') return false;
+    if (ed.scene !== sceneOr(job.scene).id || ed.recompose || orderChanged() || ed.look !== now) return true;
+    if (now === 'turns') return edit.len !== ed.len0 || edit.redo.size > 0 || ideaChanged(job); // (every turn's length)
+    return null;
   }
 
-  // What counts as one of a friend's new animations: a new scene, picture or order, or a new AI look.
+  // What counts as one of a friend's new animations (together.edit in the worker): a new picture of a video that
+  // had one, or animated parts lost to a change; null: app.js's usual rules. Never for a free look (no AI time).
   function editLoses() {
-    if (!ed.on || !edit.job) return false;
+    if (!ed.on || !edit.job) return null;
     const job = edit.job;
-    if (ed.scene !== sceneOr(job.scene).id || ed.recompose || orderChanged()) return true;
-    return ed.look !== lookNow(job) && ed.look !== 'free';
+    if (ed.look === 'free') return false;
+    const now = lookNow(job);
+    const made = now !== 'free' && animatedClips(job) > 0;
+    if (ed.scene !== sceneOr(job.scene).id || ed.recompose || orderChanged()) return Boolean(job.has_picture) || made;
+    if (ed.look !== now) return made;
+    if (now === 'turns') return made && (edit.redo.size > 0 || ideaChanged(job));
+    return null;
   }
 
   // The edit fields of POST /jobs/{id}/edit for a Together video (the old template and animal are not sent).
@@ -1533,7 +1566,7 @@
     on, noRealVideo: () => !T.cast.some((s) => s.real), noPreview: () => on() && T.look !== 'ai',
     render, renderMake: renderStep4, make, addCast, sent,
     actions, decorate, playerReset, tip,
-    editorOpen, editorRender, editAnimates, editLoses, editFields,
+    editorOpen, editorRender, editAnimates, editLoses, editFields, editParts,
     spoken, understand: understandScene, labels, applyOrders: applySpoken,
     // (for tests and the browser console)
     peek: () => ({ mode: T.mode, on: on(), scene: T.scene, look: T.look, scenePicked: T.scenePicked, recipe: T.recipe && T.recipe.id,
