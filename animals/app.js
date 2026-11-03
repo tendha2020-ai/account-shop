@@ -6,8 +6,9 @@ const HF = 'https://huggingface.co';
 const SPACE_NAME = 'antics-worker';
 const DATASET_NAME = 'antics-videos';
 const WORKER_FILES = ['Dockerfile', 'README.md', 'requirements.txt', 'worker.py', 'ideas.py', 'beats.py', 'meme.py', 'sfx.py',
-  'voice.py', 'webpush.py', 'chorus.py'];
-const WORKER_VERSION = '11'; // bump with VERSION in worker/worker.py
+  'voice.py', 'webpush.py', 'chorus.py',
+  'together.py', 'library.json']; // Together (v13): several animals in one video, and the free clips
+const WORKER_VERSION = '13'; // bump with VERSION in worker/worker.py
 const KEYS = {
   worker: 'antics.worker', clips: 'antics.clips', captions: 'antics.captions', style: 'antics.style', music: 'antics.music',
   track: 'antics.track', part: 'antics.part', seconds: 'antics.seconds', speed: 'antics.speed', animal: 'antics.animal',
@@ -624,6 +625,10 @@ function setSurprise(on) {
 
 async function onMake(e) {
   e.preventDefault();
+  if (window.Together && Together.on()) { // Together: several animals (together.js checks them, then calls submit)
+    Together.make();
+    return;
+  }
   if (state.surprise) {
     submit({ kind: 'surprise' });
     return;
@@ -678,7 +683,7 @@ async function submit(what) {
     form.append('draft', String(draft));
     form.append('clips', String(state.clips));
     form.append('captions', String(state.captions));
-    form.append('template', state.style);
+    if (what.kind !== 'together') form.append('template', state.style); // Together: the scene is the style
     // A surprise scene has no sound of its own, so it gets a meme song instead.
     form.append('music', what.kind === 'surprise' && music === 'mine' ? 'funny' : music);
     if (music === 'mysong') form.append('song_id', state.songId); // (from its meme part, whatever the length)
@@ -689,7 +694,7 @@ async function submit(what) {
     form.append('seconds', String(state.seconds));
     form.append('speed', state.speed);
     form.append('idea', $('#idea').value.trim());
-    form.append('animal', $('#animalOpt').value.trim());
+    if (what.kind !== 'together') form.append('animal', $('#animalOpt').value.trim()); // Together: each has its own
     if (music === 'upload') form.append('song', state.songFile);
     for (const x of EXTRAS) if (canDo(x.key)) form.append(x.key, extraValue(x.key));
     const missing = []; // never let the name tag or the Follow me card stop a video
@@ -708,6 +713,7 @@ async function submit(what) {
         if (extraOn('outro')) missing.push('the Follow me ending');
       }
     }
+    if (what.kind === 'together') await Together.addCast(form, btn); // Together: mode, scene, look, cast, cast_files
     if (what.kind === 'link') form.append('url', what.url);
     if (what.kind === 'surprise') form.append('surprise', 'true');
     if (what.kind === 'file') {
@@ -748,6 +754,7 @@ async function submit(what) {
     state.surprise = false;
     setFile(null);
     renderOptions();
+    if (what.kind === 'together') Together.sent(); // Together: the animals stay for the next scene
     const kind = draft && made[0].draft ? 'preview' : 'video';
     const got = made.length > 1 ? `${made.length} ${kind}s on the way` : `Your ${kind} is on the way`;
     toast(`${got}${missing.length ? ` (without ${missing.join(' and ')} this time)` : ''}. You can close the app, it keeps working.`);
@@ -773,7 +780,8 @@ function makeCount() {
 }
 
 // A 5 s video is one clip, so its "preview" would already be the whole video: no preview then.
-const isDraft = () => state.preview && state.clips > 1;
+// (Together: One by one and the free looks are made in full.)
+const isDraft = () => state.preview && state.clips > 1 && !(window.Together && Together.noPreview());
 
 // Step 4 (length, how many, quick preview) and the Make button.
 function renderMake() {
@@ -806,6 +814,7 @@ function renderMake() {
   $('#surpriseBtn').disabled = Boolean(out);
   if (out) note($('#note'), `You've used all your videos. Ask ${hostName()} for more.`);
   else if ($('#note').textContent.startsWith("You've used all")) note($('#note'), '');
+  if (window.Together) Together.renderMake(); // Together: the Look and its cost line
 }
 
 async function sendJob(form) {
@@ -1035,8 +1044,12 @@ async function picturesFromFile(file, count, variants = 1, opts = {}) {
     // With the opening, the moments are picked after the first seconds (up to OPENING_LEAD, at most half
     // the clip), so each video has real footage to start with.
     const opening = Boolean(opts.opening && opts.perVideo && canGrabOpening());
-    const lead = opening && dur >= 2 * OPENING_MIN ? Math.min(OPENING_LEAD, dur / 2) : 0;
-    const span = dur - lead;
+    let lead = opening && dur >= 2 * OPENING_MIN ? Math.min(OPENING_LEAD, dur / 2) : 0;
+    let span = dur - lead;
+    if (opts.range && dur > 1) { // Together: a free clip's good part, [from, to] seconds
+      lead = Math.max(0, Math.min(opts.range[0], dur - 0.5));
+      span = Math.max(0.5, Math.min(opts.range[1], dur) - lead);
+    }
     const samples = dur > 1 ? Math.min(24, Math.max(12, count * variants + 4)) : 1;
     const frames = [];
     for (let i = 0; i < samples; i++) {
@@ -1078,7 +1091,7 @@ async function picturesFromFile(file, count, variants = 1, opts = {}) {
         if (got) pictures[k] = got.picture; // the frame right after the opening's last one
       }
     }
-    return { pictures, openings };
+    return { pictures, openings, times: chosen.map((f) => f.t) }; // Together: each picture's moment (s)
   } finally {
     URL.revokeObjectURL(url);
   }
@@ -1312,7 +1325,10 @@ function renderJobs() {
       hint.textContent = nb(previewLine(job));
       hint.hidden = false;
     }
-    if (job.status === 'done') {
+    // Together: the picture check and the out-of-time card have their own buttons (together.js)
+    const own = job.kind === 'together' && window.Together ? Together.actions(job) : null;
+    if (own) own.forEach(([label, cls, fn]) => add(label, cls, fn));
+    else if (job.status === 'done') {
       add(job.draft ? '▶ Watch' : '▶ Watch & save', 'open', () => openPlayer(job));
       if (job.draft) add('Finish video', 'finish', () => finishJob(job));
       else if (job.editable && job.made < job.wanted) add('Make the rest', 'finish', () => finishJob(job));
@@ -1321,9 +1337,10 @@ function renderJobs() {
     } else if (job.has_video) {
       add(job.status === 'waiting' ? '▶ Watch so far' : '▶ Last version', 'open', () => openPlayer(job));
     }
-    if (job.status === 'failed') add('Try again', '', () => retryJob(job));
-    if (job.status === 'waiting') add('Try now', '', () => retryJob(job));
-    if (job.status !== 'working') add('Delete', 'del', () => deleteJob(job));
+    if (!own && job.status === 'failed') add('Try again', '', () => retryJob(job));
+    if (!own && job.status === 'waiting') add('Try now', '', () => retryJob(job));
+    if (!own && job.status !== 'working') add('Delete', 'del', () => deleteJob(job));
+    if (job.kind === 'together' && window.Together) Together.decorate(card, job); // Together: tag, picture, note
     box.appendChild(card);
   }
   const drafts = state.jobs.filter(finishable);
@@ -1487,6 +1504,8 @@ function renderPlayerTip(job) {
   }
   else if (job.music_used === 'mine') line(["Your video's sound is already in."]);
   else line(['No music: add '], [job.sound || 'a trending sound', true], [' in TikTok.']);
+  // Together: clip credits, and no AI label for a free look of real videos (together.js)
+  if (job.kind === 'together' && window.Together && Together.tip(job, line)) return;
   line(['Before posting, turn on '], ['AI-generated content', true], [' in TikTok.']);
 }
 
@@ -1575,7 +1594,9 @@ const mySong = (id) => (state.songs || []).find((s) => s.id === id) || null;
 const defaultSong = () => (state.songs || []).find((s) => s.default) || null;
 const songAudioUrl = (id) => `${state.worker.url}/songs/${id}/audio?key=${encodeURIComponent(state.worker.key)}`;
 // The music the next video gets: a saved song only while it is there (an older worker: the meme song).
-const musicNow = () => (state.music === 'mysong' && !(songsOn() && mySong(state.songId)) ? 'funny' : state.music);
+// (Together: several videos have several sounds, so "Video's own sound" becomes the meme song.)
+const musicNow = () => (state.music === 'mysong' && !(songsOn() && mySong(state.songId)) ? 'funny'
+  : state.music === 'mine' && window.Together && Together.on() ? 'funny' : state.music);
 // Seconds of video (and so of song) the next video has.
 const videoSeconds = () => (state.clips * state.seconds) / ({ slow: 0.8, normal: 1, fast: 1.25 }[state.speed] || 1);
 
@@ -1881,12 +1902,15 @@ function renderOptions() {
   setSeg('friendUsesSeg', state.friendUses);
   renderExtras();
   renderMake();
+  if (window.Together) Together.render(); // Together: the switch, the animals, scene cards, Look, Ideas to try
 }
 
 const canDo = (key) => Boolean(state.health && (state.health.features || []).includes(key));
 
 // The Real → AI opening needs real video: a link or an uploaded video, not a surprise or a photo.
-const noRealVideo = () => state.surprise || Boolean(state.file && !isVideoFile(state.file));
+// (Together: at least one animal with a real video.)
+const noRealVideo = () => (window.Together && Together.on() ? Together.noRealVideo()
+  : state.surprise || Boolean(state.file && !isVideoFile(state.file)));
 
 // Whether an extra is on for the next video: the worker makes it, it is switched on, and it fits.
 function extraOn(key) {
@@ -1912,11 +1936,12 @@ function renderExtras() {
   if (state.brand && !isGuest()) on.push(`@${BRAND.name}`);
   if (state.speed !== 'normal') on.push(state.speed === 'slow' ? 'Slow-mo' : 'Fast');
   const animal = $('#animalOpt').value.trim();
-  if (animal) on.push(animal);
+  if (animal && !(window.Together && Together.on())) on.push(animal); // Together: each animal has its own
   $('#extrasSum').textContent = on.length ? on.join(' · ') : 'All off';
 }
 
 function openPlayer(job) {
+  if (window.Together) Together.playerReset(); // Together: the video again (not the picture check's picture)
   state.playing = job;
   state.playingBlob = null;
   const video = $('#playerVideo');
@@ -2097,6 +2122,7 @@ function openEditor(job) {
     box.appendChild(row);
   });
   note($('#editNote'), '');
+  if (window.Together) Together.editorOpen(job); // Together: "Scene and look" in place of style and Animal
   renderEditor();
   openDialog($('#editor'));
   loadEditSongDuration();
@@ -2113,6 +2139,8 @@ function redosLeft(job) {
 // True when saving will animate something again (slower, and it uses free time).
 function willAnimate() {
   const job = edit.job;
+  const together = window.Together ? Together.editAnimates() : null; // Together: its own rules (null: these)
+  if (together !== null) return together;
   if ($('#editIdea').value.trim().replace(/\s+/g, ' ') !== (job.idea || '')) return true;
   if (edit.style !== (job.template || 'random')) return true;
   const animal = cleanAnimal($('#editAnimal').value);
@@ -2124,6 +2152,8 @@ function willAnimate() {
 // Whether saving throws away a clip that already moves (what a friend's redo limit counts).
 function losesAnimation() {
   const job = edit.job;
+  const together = window.Together ? Together.editLoses() : null; // Together: its own rules (null: these)
+  if (together !== null) return together;
   if ($('#editIdea').value.trim().replace(/\s+/g, ' ') !== (job.idea || '')) return animatedClips(job) > 0;
   if (edit.style !== (job.template || 'random')) return animatedClips(job) > 0;
   const animal = cleanAnimal($('#editAnimal').value);
@@ -2219,6 +2249,7 @@ function renderEditor() {
   // Which voice: shown while this video's Pet voice is on.
   $('#editVoicePick').hidden = $('#editVoiceLine').hidden || !$('#editVoice').checked;
   renderVoices($('#editVoiceSeg'), edit.voice);
+  if (window.Together) Together.editorRender(); // Together: the Scene and look box
   const animate = willAnimate();
   const blocked = left <= 0 && losesAnimation();
   $('#editSave').disabled = blocked;
@@ -2236,8 +2267,11 @@ async function saveEdit() {
   const form = new FormData();
   form.append('texts', JSON.stringify([...document.querySelectorAll('#editTexts input')].map((i) => i.value.trim())));
   form.append('idea', $('#editIdea').value.trim());
-  form.append('template', edit.style);
-  if (job.kind !== 'surprise') form.append('animal', $('#editAnimal').value.trim());
+  if (job.kind === 'together' && window.Together) Together.editFields(form); // Together: scene, look, names...
+  else {
+    form.append('template', edit.style);
+    if (job.kind !== 'surprise') form.append('animal', $('#editAnimal').value.trim());
+  }
   form.append('clips', String(edit.len));
   const sel = $('#editMusic').value;
   if (sel === 'upload-new') {
@@ -2268,7 +2302,8 @@ async function saveEdit() {
     if (key === 'voice') form.append('voice', on ? edit.voice : 'off');
     else form.append(key, String(on));
   }
-  const redo = [...edit.redo].filter((i) => i < edit.len);
+  const parts = window.Together ? Together.editParts() : edit.len; // (Together: one by one has a part per turn)
+  const redo = [...edit.redo].filter((i) => i < parts);
   if (redo.length) form.append('redo', redo.join(','));
   const animate = willAnimate();
   const btn = $('#editSave');
@@ -2548,7 +2583,8 @@ function styleFromName(name) {
 }
 
 // Reads orders out of what was said. Returns { text: the tidied description, orders, labels }.
-function understand(said, currentStyle) {
+// together: Together is on there, so scene and look words count too (together.js).
+function understand(said, currentStyle, together = false) {
   let text = ` ${said} `;
   const orders = {};
   const take = (pattern, fn) => {
@@ -2616,6 +2652,8 @@ function understand(said, currentStyle) {
     orders.style = style;
     return true;
   });
+  // Together: "make them dance together", "VS screen", "free version", "one by one" (scene and look)
+  if (together && window.Together) Together.understand(take, orders, said);
 
   // Tidy what's left: chit-chat and filler words go, the description stays.
   text = text
@@ -2640,7 +2678,7 @@ function understand(said, currentStyle) {
   }
   if (text) text = text[0].toUpperCase() + text.slice(1);
 
-  if (!orders.style && (currentStyle || 'random') === 'random') {
+  if (!together && !orders.style && (currentStyle || 'random') === 'random') { // (Together: no styles)
     const found = STYLE_WORDS.find(([, re]) => re.test(text));
     if (found) orders.style = found[0];
   }
@@ -2757,9 +2795,11 @@ function applyOrders(o, target) {
 // After speaking: apply the orders, tidy the words, and say what was understood (with Undo).
 function heard(box, before, said) {
   const target = box.id === 'editIdea' ? 'edit' : 'main';
-  const { text, orders } = understand(said, target === 'edit' ? edit.style : state.style);
-  const labels = orderLabels(orders, target);
+  const together = Boolean(window.Together && Together.spoken(target)); // Together: scene and look words
+  const { text, orders } = understand(said, target === 'edit' ? edit.style : state.style, together);
+  const labels = [...(together ? Together.labels(orders, target) : []), ...orderLabels(orders, target)];
   const undoOptions = applyOrders(orders, target);
+  const undoTogether = together ? Together.applyOrders(orders, target) : () => {};
   const piece = before.trim() && text ? text[0].toLowerCase() + text.slice(1) : text; // adding to what's there
   typed(box, piece ? joinText(before, piece, box.maxLength) : before);
   const line = document.getElementById(`${box.id}Heard`);
@@ -2768,6 +2808,7 @@ function heard(box, before, said) {
   $('.heard-text', line).textContent = `Got it: ${labels.join(' · ')}`;
   $('.heard-undo', line).onclick = () => {
     undoOptions();
+    undoTogether();
     typed(box, joinText(before, said, box.maxLength));
     line.hidden = true;
   };
@@ -3703,6 +3744,7 @@ function init() {
   $('#pasteBtn').addEventListener('click', async () => {
     try {
       $('#link').value = (await navigator.clipboard.readText()).trim();
+      $('#link').dispatchEvent(new Event('input')); // (Together: 2 or more links switch to Together)
     } catch {
       $('#link').focus();
       toast('Long-press the box and tap Paste');
