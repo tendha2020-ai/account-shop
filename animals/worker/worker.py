@@ -17,6 +17,8 @@
 # The pet voice (voice.py) has the animal say each caption in a funny voice, over the music; it is offered only
 # when its packages and model are installed, and switching it or changing the voice also just re-cuts.
 # For browsers that can't turn speech into text themselves, the worker writes it down (Whisper).
+# When a video that needed the AI is ready (or couldn't be made), the phones of whoever made it get a
+# notification (Web Push, webpush.py), also when antics is closed.
 
 import collections
 import json
@@ -34,10 +36,11 @@ import time
 from contextlib import asynccontextmanager
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import numpy as np
 import requests
-from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import Body, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from PIL import Image, ImageDraw, ImageFont
@@ -56,6 +59,11 @@ try:  # the pet voice: its packages are imported only when needed, and pet_voice
 except Exception as e:
     logging.getLogger('antics').warning('no pet voice: %s', e)
     pet_voice = None
+try:  # "your video is ready" notifications: they need the cryptography package (else the page doesn't offer them)
+    import webpush
+except Exception as e:
+    logging.getLogger('antics').warning('no notifications: %s', e)
+    webpush = None
 
 VERSION = '10'
 HF_TOKEN = os.environ.get('HF_TOKEN') or None
@@ -248,6 +256,37 @@ def save_guests():
             log.warning('saving friends to the Hub failed: %s', e)
 
 
+# The worker's own push key (VAPID, made once) and the phones to notify: 'me' or a friend id -> [subscriptions].
+# Kept in push.json with the videos (the private dataset), so they survive restarts and updates.
+push = {'vapid': '', 'subs': {}}
+push_lock = threading.Lock()
+push_saving = threading.Lock()
+
+
+def save_push():
+    """Who gets a notification when a video is ready, and the key they were set up with."""
+    with push_saving:  # one save at a time, each with the newest list
+        with push_lock:
+            data = json.dumps(push)
+        path = DATA / 'push.json'
+        path.write_text(data)
+        if not hub:
+            return
+        try:
+            hub.upload_file(path_or_fileobj=str(path), path_in_repo='push.json', repo_id=DATASET,
+                            repo_type='dataset', commit_message='notifications')
+        except Exception as e:
+            log.warning('saving notifications to the Hub failed: %s', e)
+
+
+def load_push(text):
+    try:
+        got = json.loads(text)
+        push.update(vapid=str(got.get('vapid') or ''), subs=dict(got.get('subs') or {}))
+    except Exception as e:  # (no notifications is better than no worker)
+        log.warning('could not load notifications: %s', e)
+
+
 def load_jobs():
     """Bring back jobs after a restart and put unfinished ones back in line."""
     global hub, token_ok
@@ -269,6 +308,11 @@ def load_jobs():
                                                                   token=HF_TOKEN)).read_text()))
                 except Exception as e:
                     log.warning('could not load friends: %s', e)
+            if name == 'push.json':
+                try:
+                    load_push(Path(hf_hub_download(DATASET, name, repo_type='dataset', token=HF_TOKEN)).read_text())
+                except Exception as e:
+                    log.warning('could not load notifications: %s', e)
             if name.endswith('/job.json'):
                 try:
                     job = json.loads(Path(hf_hub_download(DATASET, name, repo_type='dataset', token=HF_TOKEN)).read_text())
@@ -281,6 +325,8 @@ def load_jobs():
             jobs[job['id']] = job
         if (DATA / 'guests.json').exists():
             guests.update(json.loads((DATA / 'guests.json').read_text()))
+        if (DATA / 'push.json').exists():
+            load_push((DATA / 'push.json').read_text())
     for job in sorted(jobs.values(), key=lambda j: (j['created'], j.get('index', 0))):  # oldest first
         if job['status'] in ('queued', 'working'):
             job['status'] = 'queued'
@@ -1485,6 +1531,93 @@ def needs_animation(job):
     return any(f'clip_{i}.mp4' not in job['clips_done'] for i in range(limit))
 
 
+# ---------- "Your video is ready" notifications ----------
+# The page subscribes a phone (Web Push). When a video that needed the AI is done (or fails), the worker
+# sends an end-to-end encrypted message to the push service of each phone of whoever made it.
+
+PUSH_HOSTS = ('fcm.googleapis.com', 'jmt17.google.com', 'android.googleapis.com', 'updates.push.services.mozilla.com',
+              'web.push.apple.com', '.push.apple.com', '.notify.windows.com')  # Chrome, Firefox, Safari, Edge
+# A plain https address: no user@ part, no other port, no backslash (requests reads 'https://a\@b' as host a).
+PUSH_URL = re.compile(r'https://([a-z0-9-]+(?:\.[a-z0-9-]+)+)(?::443)?/[!-\[\]-~]*', re.I)
+PUSH_SUBJECT = 'https://huggingface.co/spaces/' + os.environ.get('SPACE_ID', 'antics')  # contact, no email
+MAX_PHONES = 5  # per person; the oldest is dropped
+
+
+def push_ok(endpoint):
+    """Only real browser push services: the worker never POSTs to an address someone made up."""
+    url = urlsplit(endpoint)
+    if f'{url.scheme}://{url.netloc}' in os.environ.get('ANTICS_PUSH_TEST', '').split(','):  # local tests only
+        return True
+    plain = PUSH_URL.fullmatch(endpoint)
+    host = plain[1].lower() if plain else ''
+    return any(host == h or (h[0] == '.' and host.endswith(h)) for h in PUSH_HOSTS)
+
+
+def vapid():
+    """The worker's own push key: made once, kept with the videos."""
+    with push_lock:
+        made = not push['vapid']
+        if made:
+            push['vapid'] = webpush.new_vapid_key()
+    if made:
+        save_push()
+    return push['vapid']
+
+
+def ping(who_id, message, wait=False):
+    """Notify every phone of 'me' or a friend, once each. Phones that turned notifications off are forgotten.
+    Returns how many took it (wait=True) or how many it is sent to (in the background)."""
+    with push_lock:
+        phones, key = list(push['subs'].get(who_id) or []), push['vapid']
+    if not webpush or not phones or not key:
+        return 0
+
+    def run():
+        sent, gone = 0, []
+        for phone in phones:
+            try:
+                res = webpush.send(phone, message, key, PUSH_SUBJECT, topic=message.get('job', ''))
+                if res.status_code in (404, 410):
+                    gone.append(phone['endpoint'])
+                elif 200 <= res.status_code < 300:
+                    sent += 1
+                else:
+                    log.warning('notification to %s: %s %s', urlsplit(phone['endpoint']).hostname, res.status_code,
+                                res.text[:200])
+            except Exception as e:  # a notification must never cost a video
+                log.warning('notification failed: %s', e)
+        if gone:
+            with push_lock:
+                if who_id in push['subs']:  # (not a friend who was removed meanwhile)
+                    push['subs'][who_id] = [p for p in push['subs'][who_id] or [] if p['endpoint'] not in gone]
+            save_push()
+        return sent
+
+    if wait:
+        return run()
+    threading.Thread(target=run, daemon=True).start()
+    return len(phones)
+
+
+def ping_done(job, failed=False):
+    """'Your video is ready' (or 'couldn't be made') on the phones of whoever made it. Never raises."""
+    try:
+        label = (job.get('label') or ('Surprise' if job.get('kind') == 'surprise' else 'Your video')).strip()
+        part = f" ({job.get('index', 0) + 1} of {job['batch']})" if (job.get('batch') or 1) > 1 else ''
+        if failed:
+            title, body = f"A video couldn't be made{part}", job.get('error') or 'Open antics to try again.'
+        elif job.get('draft'):
+            title, body = f'Your preview is ready{part}', f'{label}. Watch it, then tap Finish.'
+        else:
+            secs = f" · {round(job['seconds_long'])} sec" if job.get('seconds_long') else ''
+            title, body = f'Your video is ready{part}', f'{label}{secs}. Tap to watch and save.'
+        message = {'title': title, 'body': body[:180], 'tag': f"antics-{job.get('group') or job['id']}",
+                   'url': f"index.html#video={job['id']}", 'job': job['id']}
+        ping(job.get('owner', 'me'), message)
+    except Exception as e:
+        log.warning('%s: no notification (%s)', job.get('id'), e)
+
+
 def enqueue(job):
     (work_queue if needs_animation(job) else quick_queue).put(job['id'])
 
@@ -1498,6 +1631,7 @@ def worker_loop(lane):
                 continue
             job['status'] = 'working'
         update(job, error='')
+        slow = needs_animation(job)  # new AI clips take minutes: a notification when it's done (re-cuts are watched)
         try:
             process(job)
             log.info('%s done', job_id)
@@ -1507,11 +1641,17 @@ def worker_loop(lane):
             update(job, status='waiting', stage=f'{why} It will finish by itself.',
                    retry_at=time.time() + e.wait_seconds + 60, progress=0)
             save(job)
+            continue  # (no notification: it finishes by itself, and that one sends it)
         except Exception as e:
             log.exception('%s failed', job_id)
             update(job, status='failed', error=friendly(e), stage='')
             refund(job)
             save(job)
+            if slow:
+                ping_done(job, failed=True)
+            continue
+        if slow:
+            ping_done(job)
 
 
 def friendly(e):
@@ -1642,9 +1782,10 @@ def features():
     opening: the Real -> AI opening (the opening field; the hooks + hook_fps an upload sends).
     outro: the Follow me ending (the outro field; the owner's endcard).
     voice: the pet voice (the voice field), only when its packages import and its model is on disk (checked
-    in the background when the worker starts, so it shows up a few seconds after)."""
+    in the background when the worker starts, so it shows up a few seconds after).
+    push: "your video is ready" notifications (/push/...), only when the cryptography package imports."""
     return (['chain'] + (['meme'] if meme and sfx else []) + ['opening', 'outro']
-            + (['voice'] if pet_voice and pet_voice.ready() else []))
+            + (['voice'] if pet_voice and pet_voice.ready() else []) + (['push'] if webpush else []))
 
 
 @app.get('/health')
@@ -2133,7 +2274,87 @@ def remove_guest(guest_id: str, x_antics_key: str = Header(None)):
     with guests_lock:
         guests.pop(guest_id, None)
     save_guests()
+    with push_lock:  # their phones get no more notifications
+        dropped = push['subs'].pop(guest_id, None)
+    if dropped is not None:
+        save_push()
     return {'ok': True}
+
+
+# ---------- Notifications ----------
+# The owner and each friend turn them on for their own phones (at most MAX_PHONES each) and get them for
+# their own videos only.
+
+def can_push():
+    if not webpush:
+        raise HTTPException(503, "This worker can't send notifications yet. Update it in Settings.")
+
+
+@app.get('/push/key')
+def push_key(x_antics_key: str = Header(None)):
+    """The key the page subscribes the phone with (the public half of the worker's push key)."""
+    caller(x_antics_key)
+    can_push()
+    return {'key': webpush.public_key(vapid())}
+
+
+def clean_phone(body):
+    """The parts of a browser's PushSubscription the worker keeps, or 400 when it doesn't look right."""
+    try:
+        phone = {'endpoint': str(body['endpoint']),
+                 'keys': {'p256dh': str(body['keys']['p256dh']), 'auth': str(body['keys']['auth'])}}
+        ok = len(phone['endpoint']) <= 1024 and push_ok(phone['endpoint'])
+        if ok:
+            webpush.check_keys(phone['keys']['p256dh'], phone['keys']['auth'])
+    except (KeyError, TypeError, ValueError):
+        ok = False
+    if not ok:
+        raise HTTPException(400, "This browser's notification address doesn't look right")
+    return phone
+
+
+@app.post('/push/subscribe')
+def push_subscribe(body: dict = Body(...), x_antics_key: str = Header(None)):
+    who = caller(x_antics_key)
+    can_push()
+    phone = clean_phone(body)
+    with push_lock:
+        subs = push['subs']
+        kept = [(whose, p['keys']) for whose, mine in subs.items() for p in mine or []
+                if p['endpoint'] == phone['endpoint']]
+        known = kept == [(who['id'], phone['keys'])]  # the page checks in with every visit: then nothing changes
+        if not known:
+            # A browser has one subscription, used by one person here at a time: it moves to whoever set it up last.
+            for whose in list(subs):
+                subs[whose] = [p for p in subs[whose] or [] if p['endpoint'] != phone['endpoint']]
+            subs[who['id']] = ((subs.get(who['id']) or []) + [dict(phone, added=time.time())])[-MAX_PHONES:]
+        phones = len(subs.get(who['id']) or [])
+    if not known:  # (saved with the videos only when something changed)
+        save_push()
+    return {'ok': True, 'phones': phones}
+
+
+@app.post('/push/unsubscribe')
+def push_unsubscribe(body: dict = Body(...), x_antics_key: str = Header(None)):
+    who = caller(x_antics_key)
+    endpoint = str(body.get('endpoint', ''))
+    with push_lock:
+        mine = push['subs'].get(who['id']) or []
+        left = [p for p in mine if p['endpoint'] != endpoint]
+        if len(left) < len(mine):
+            push['subs'][who['id']] = left
+    if len(left) < len(mine):
+        save_push()
+    return {'ok': True}
+
+
+@app.post('/push/test')
+def push_test(x_antics_key: str = Header(None)):
+    who = caller(x_antics_key)
+    can_push()
+    sent = ping(who['id'], {'title': 'Notifications are on', 'body': "You'll get one like this when a video is ready.",
+                            'tag': 'antics-test', 'url': 'index.html'}, wait=True)
+    return {'sent': sent}
 
 
 # ---------- PC helper API ----------

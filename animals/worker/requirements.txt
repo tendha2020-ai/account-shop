@@ -8,3 +8,4 @@ gradio_client
 huggingface_hub
 yt-dlp
 faster-whisper
+cryptography
