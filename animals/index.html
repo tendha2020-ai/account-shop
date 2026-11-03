@@ -16,6 +16,8 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&display=swap">
   <link rel="stylesheet" href="style.css">
   <script defer src="app.js"></script>
+  <!-- Together: several animals in one video (loaded after app.js; app.js calls it through window.Together) -->
+  <script defer src="together.js"></script>
 </head>
 <body>
   <header class="bar">
@@ -57,8 +59,21 @@
 
     <form id="makeForm" class="maker" autocomplete="off">
       <div class="maker-a">
+        <!-- Together: "Ideas to try" (together.js): tap one and it sets everything; Undo puts it all back -->
+        <section class="ideas-box" id="ideasBox" aria-labelledby="ideasTitle" hidden>
+          <h2 class="ideas-title" id="ideasTitle">Ideas to try</h2>
+          <div class="idea-cards" id="ideaCards"></div>
+          <p class="heard recipe-line" id="recipeLine" hidden><span class="heard-text" id="recipeText"></span> <button type="button" class="link-btn" id="recipeUndo">Undo</button></p>
+        </section>
+
         <section class="block step" id="step1">
-          <h2 class="step-title"><span class="step-num" aria-hidden="true">1</span>Your video</h2>
+          <h2 class="step-title"><span class="step-num" aria-hidden="true">1</span><span id="step1Title">Your video</span></h2>
+          <!-- Together: One animal | Together (together.js) -->
+          <div class="mode-seg" id="modeSeg" role="group" aria-label="How many animals" hidden>
+            <button type="button" data-v="one">One animal</button>
+            <button type="button" data-v="together">Together<small id="modeNeed" hidden>Update needed</small></button>
+          </div>
+          <div id="oneBox">
           <div class="field" id="linkField">
             <input type="url" id="link" inputmode="url" placeholder="Paste a video link" aria-label="Video link">
             <button type="button" id="pasteBtn" class="mini">Paste</button>
@@ -70,7 +85,7 @@
           <p class="or" aria-hidden="true">or</p>
           <div class="alt">
             <label class="tile">
-              <input type="file" id="file" accept="video/*,image/*">
+              <input type="file" id="file" accept="video/*,image/*" multiple>
               <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M12 15V4m0 0L7.5 8.5M12 4l4.5 4.5M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
               <span>Upload a video<small>or a photo</small></span>
             </label>
@@ -79,18 +94,57 @@
               <span>Surprise me<small>no video needed</small></span>
             </button>
           </div>
+          </div>
+          <!-- Together: 2-4 animals in order, the first one is the star (together.js) -->
+          <div id="castBox" hidden>
+            <p class="note bad cast-update" id="castUpdate" hidden><span>Your worker needs an update for Together videos (2–5 min, once).</span> <button type="button" id="castUpdateBtn" class="plain">Update my worker</button></p>
+            <div class="cast" id="castRow"></div>
+            <div class="cast-tools" id="castTools" hidden>
+              <button type="button" id="castSwap" class="plain">⇄ Swap places</button>
+              <span class="fine" id="castCount"></span>
+            </div>
+            <div class="alt cast-add">
+              <label class="tile" id="castFileTile">
+                <input type="file" id="castFile" accept="video/*,image/*" multiple>
+                <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M12 15V4m0 0L7.5 8.5M12 4l4.5 4.5M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+                <span>Upload videos<small>pick several</small></span>
+              </label>
+              <button type="button" class="tile" id="castLinkBtn">
+                <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>
+                <span>Paste a link<small>TikTok, YouTube…</small></span>
+              </button>
+              <button type="button" class="tile lib" id="castLibBtn">
+                <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round" d="M4 5h16v14H4zM10 9.5v5l4.5-2.5z"/></svg>
+                <span>Free clips<small>free to use</small></span>
+              </button>
+              <button type="button" class="tile surprise" id="castSurpriseBtn">
+                <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path fill="currentColor" d="M10 2.5l2 5.6 5.6 2-5.6 2-2 5.6-2-5.6-5.6-2 5.6-2zM18.5 14l1 2.7 2.7 1-2.7 1-1 2.7-1-2.7-2.7-1 2.7-1z"/></svg>
+                <span>Surprise animal<small>no video needed</small></span>
+              </button>
+            </div>
+            <div class="field cast-link" id="castLinkField" hidden>
+              <input type="url" id="castLink" inputmode="url" placeholder="Paste a video link" aria-label="Animal video link" autocomplete="off">
+              <button type="button" id="castLinkAdd" class="mini">Add</button>
+            </div>
+            <p class="fine cast-rule">Use your own videos or the free clips. Other people's videos need their OK.</p>
+          </div>
         </section>
 
         <section class="block step" id="step2">
-          <h2 class="step-title"><span class="step-num" aria-hidden="true">2</span>What happens <span class="tag-opt">optional</span></h2>
+          <h2 class="step-title"><span class="step-num" aria-hidden="true">2</span>What happens <span class="tag-opt" id="step2Opt">optional</span></h2>
+          <!-- Together: what the animals do together, one big card each (together.js) -->
+          <div id="sceneBox" hidden>
+            <div class="scene-cards" id="sceneCards" role="group" aria-label="What they do together"></div>
+            <p class="fine scene-note" id="sceneNote" hidden></p>
+          </div>
           <div class="idea-wrap">
             <textarea id="idea" class="idea" rows="3" maxlength="160"
                       placeholder="e.g. The cat plays the drums like a rock star, then falls off the chair"></textarea>
             <button type="button" class="mic" data-for="idea">🎤 Speak</button>
           </div>
           <p class="heard" id="ideaHeard" hidden><span class="heard-text"></span> <button type="button" class="link-btn heard-undo">Undo</button></p>
-          <p class="fine">Empty? antics picks a funny idea. You can also say the song and length.</p>
-          <h3 class="sub-label">Style</h3>
+          <p class="fine" id="ideaFine">Empty? antics picks a funny idea. You can also say the song and length.</p>
+          <h3 class="sub-label" id="styleLabel">Style</h3>
           <div class="chips-wrap" id="styleRow"></div>
         </section>
       </div>
@@ -188,6 +242,11 @@
 
         <section class="block step" id="step4">
           <h2 class="step-title"><span class="step-num" aria-hidden="true">4</span>Make it</h2>
+          <!-- Together: how the animals are shown, and what it costs (the line under step 4) (together.js) -->
+          <div class="look-line" id="lookLine" hidden>
+            <span class="look-label">Look</span>
+            <div class="look-seg" id="lookSeg" role="group" aria-label="Look"></div>
+          </div>
           <div class="opt-line">
             <span>Length</span>
             <div class="seg" id="videoSeg">
@@ -239,14 +298,17 @@
   <dialog id="player" class="player">
     <div class="player-body">
       <video id="playerVideo" playsinline controls loop></video>
+      <!-- Together: the picture check shows the AI picture of all the animals before it moves (together.js) -->
+      <img id="playerPicture" class="player-picture" alt="The animals together in one picture" hidden>
       <div class="player-info">
         <p id="playerKind" class="player-kind" hidden></p>
+        <div class="row player-check" id="playerCheck" hidden></div>
         <div class="row player-acts">
           <button type="button" id="finishBtn" class="go small" hidden>Finish video</button>
           <button type="button" id="saveBtn" class="go small">Save video</button>
           <button type="button" id="editBtn" class="plain" hidden>Edit</button>
         </div>
-        <div class="cap-box">
+        <div class="cap-box" id="capBox">
           <div class="cap-head"><span>Caption for TikTok</span><button type="button" id="copyBtn" class="mini">Copy</button></div>
           <p id="playerCaption" class="caption-text"></p>
         </div>
@@ -343,7 +405,7 @@
         </label>
       </div>
 
-      <h3 class="edit-label">Story and style <span class="kind slow">new animation</span></h3>
+      <h3 class="edit-label"><span id="editStoryTitle">Story and style</span> <span class="kind slow">new animation</span></h3>
       <div class="idea-wrap">
         <textarea id="editIdea" class="idea" rows="2" maxlength="160"
                   placeholder="e.g. The dog dances on the table, then slips"></textarea>
@@ -351,6 +413,19 @@
       </div>
       <p class="heard" id="editIdeaHeard" hidden><span class="heard-text"></span> <button type="button" class="link-btn heard-undo">Undo</button></p>
       <div class="chips-wrap edit-style" id="editStyle"></div>
+      <!-- Together: the "Scene and look" box in place of the style chips and Animal (together.js) -->
+      <div id="editTogether" class="edit-together" hidden>
+        <div class="chips-wrap edit-scenes" id="editScenes" role="group" aria-label="Scene"></div>
+        <p class="sub-label edit-look-label">Look</p>
+        <div class="look-seg" id="editLookSeg" role="group" aria-label="Look"></div>
+        <div class="row edit-cast-tools">
+          <button type="button" id="editRecompose" class="plain" aria-pressed="false">↻ New picture</button>
+          <button type="button" id="editSwap" class="plain">⇄ Swap places</button>
+        </div>
+        <p class="sub-label">Names <span class="kind fast">fast</span></p>
+        <div class="edit-cast" id="editCast"></div>
+        <p class="fine" id="editTogetherHelp"></p>
+      </div>
       <label class="opt-line" id="editAnimalLine">
         <span>Animal</span>
         <input type="text" id="editAnimal" class="small-input" maxlength="30" placeholder="e.g. cat">
@@ -366,6 +441,21 @@
     </div>
   </dialog>
 
+
+  <!-- Together: free clips anyone may use (worker/library.json), fetched by this page like an upload (together.js) -->
+  <dialog id="library" class="sheet library">
+    <div class="sheet-body">
+      <h2>Free clips</h2>
+      <p class="fine">Free to use, also on TikTok. Tap a clip to add it, tap it again to take it out. The credit goes into the caption by itself.</p>
+      <div class="chips-wrap lib-filters" id="libFilters" role="group" aria-label="Which animals"></div>
+      <p id="libNote" class="note" hidden></p>
+      <div class="lib-grid" id="libGrid"></div>
+      <div class="lib-foot">
+        <span class="fine" id="libCount"></span>
+        <button type="button" id="libDone" class="go small">Done</button>
+      </div>
+    </div>
+  </dialog>
 
   <!-- Setup / settings -->
   <dialog id="settings" class="sheet">

@@ -21,3 +21,9 @@ Whisper "base" model the worker already has for speech; every video with that so
 
 "Your video is ready" notifications use Web Push (webpush.py, with the cryptography package, Apache-2.0/BSD).
 The worker's push key and the phones to notify are kept in `push.json` in the same private dataset.
+
+Together videos (together.py): 2-4 animals in one video. Their pictures are put into one start picture by a free
+composer Space (FLUX 3 Image Klein, FLUX Kommunity License: free for creators under US$5M revenue when each picture
+is checked before posting and the video is labelled as AI; else FLUX.2 klein 4B, Apache-2.0), then animated as usual.
+The free looks (side by side, VS screen, grid, quick cuts) are made on this Space's CPU from the real clips. The free
+clip library (library.json) lists only CC0, public domain and CC BY clips; their credit lines go in the caption.
