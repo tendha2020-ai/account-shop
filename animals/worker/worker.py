@@ -14,6 +14,8 @@
 # The Real -> AI opening plays the real video's last seconds before the start picture, then switches to
 # the AI with a soft flash and a whoosh; the Follow me ending holds the last frame, blurred, under the
 # owner's follow card (drawn by the page). Both are switched on and off by just re-cutting the video.
+# The pet voice (voice.py) has the animal say each caption in a funny voice, over the music; it is offered only
+# when its packages and model are installed, and switching it or changing the voice also just re-cuts.
 # For browsers that can't turn speech into text themselves, the worker writes it down (Whisper).
 
 import collections
@@ -49,6 +51,11 @@ try:  # meme edits (zoom punch-ins and sound effects); if their files are missin
 except Exception as e:
     logging.getLogger('antics').warning('no meme edits: %s', e)
     meme = sfx = None
+try:  # the pet voice: its packages are imported only when needed, and pet_voice.ready() says if it works here
+    import voice as pet_voice
+except Exception as e:
+    logging.getLogger('antics').warning('no pet voice: %s', e)
+    pet_voice = None
 
 VERSION = '10'
 HF_TOKEN = os.environ.get('HF_TOKEN') or None
@@ -73,6 +80,13 @@ DUCK = 0.45  # the music's volume under the real seconds (full from the switch o
 WHOOSH_PEAK = 0.27  # seconds from the start of sfx's whoosh to its loudest moment (put on the switch)
 # The Follow me ending: the last frame held, blurred and darkened, under the owner's follow card.
 OUTRO_SECONDS = 1.5
+# The pet voice: each caption said once, when it shows.
+VOICES = ('off', 'auto', 'squeaky', 'deep', 'narrator')  # auto: a voice that suits the animal
+VOICE_AT = 0.25  # the pet starts talking this long after its caption shows
+VOICE_AFTER_SWITCH = 0.35  # with the opening: this long after the switch to the AI (the whoosh is over by then)
+VOICE_GAP = 0.15  # done talking this long before the next caption, or the end of the animated part
+VOICE_DUCK = 0.7  # the music (or the video's own sound) goes down to 30 % while the pet talks
+VOICE_FX_DUCK = 0.5  # the sound effects to 50 %, so they don't cover a word
 
 # Free Wan image-to-video Spaces, tried in order. They all spend the same daily free GPU time.
 ENGINES = [
@@ -167,6 +181,7 @@ def public(job):
     view['opening'] = bool(job.get('opening')) and view['has_hook']
     view['has_endcard'] = bool(job.get('has_endcard'))
     view['outro'] = bool(job.get('outro')) and view['has_endcard']
+    view['voice'] = job.get('voice') if job.get('voice') in VOICES else 'off'  # the pet voice ('off' before v10)
     return view
 
 
@@ -860,7 +875,7 @@ def out_frames(seconds):
 
 
 def join_clips(clips, captions, out, spans=None, speed=1.0, audio=None, audio_start=0.0, badge=None,
-               zooms=None, sounds=None, sounds_gain=1.0, opening=None, outro=None):
+               zooms=None, sounds=None, sounds_gain=1.0, opening=None, outro=None, voice=None):
     """Each clip fills a 720x1280 frame (cropped if close to vertical, else on a blurred copy), plays its
     frames spans[i] (see clip_spans) at `speed`, and the clips join into one video. Captions go on after
     the join (an overlay on each clip would drop that clip's last frame, a visible skip at each join).
@@ -876,7 +891,10 @@ def join_clips(clips, captions, out, spans=None, speed=1.0, audio=None, audio_st
     switch a soft flash and the AI label (the sound effects bring the whoosh).
     outro = {'card': the follow card, a 720x1280 PNG}: the Follow me ending. The last frame is held for
     OUTRO_SECONDS, blurred and darkened, the card slides in and the name tag goes (the card has the name);
-    the music plays on and fades out. Zooms and sounds are on the whole video's timeline. Returns the length."""
+    the music plays on and fades out. Zooms and sounds are on the whole video's timeline.
+    voice = {'track': a WAV as long as the video, 'lines': [{'at', 'end'}, ...] (seconds)}: the pet voice
+    (pet_voice.track). It is mixed over the music, which goes down to 30 % while the pet talks (the sound
+    effects to 50 %). Returns the length."""
     cmd = ['ffmpeg', '-v', 'error', '-y']
     parts, lengths, segs = [], [], []
     n = len(clips)
@@ -975,6 +993,10 @@ def join_clips(clips, captions, out, spans=None, speed=1.0, audio=None, audio_st
     music = f'[{k}:a]aresample=44100,afade=t=in:d=0.1,afade=t=out:st={max(0.0, total - fade):.2f}:d={fade}'
     if opening and opening.get('duck'):  # quieter under the real video, full from the switch on
         music += f",volume='if(lt(t,{lead:.4f}),{DUCK},1)':eval=frame"
+    if voice:  # down while the pet talks
+        music += ',' + pet_voice.duck_filter(voice['lines'], VOICE_DUCK)
+    k += 1
+    over = []  # what is mixed over the music
     if sounds:
         cmd += ['-i', str(sounds)]
         # The music dips 2-6 dB under each effect so it cuts through; the limiter keeps the sum under -1 dBFS
@@ -982,9 +1004,21 @@ def join_clips(clips, captions, out, spans=None, speed=1.0, audio=None, audio_st
         # with silence: sidechaincompress stops when its key ends, and on ffmpeg 7 that dropped up to 1.3 s
         # of the music still on its way (the sound then ended before the picture). -t ends it all instead.
         parts.append(f'{music},aformat=channel_layouts=stereo[mus]')
-        parts.append(f'[{k + 1}:a]aresample=44100,aformat=channel_layouts=stereo,asplit[key0][fx];[key0]apad[key]')
+        parts.append(f'[{k}:a]aresample=44100,aformat=channel_layouts=stereo,asplit[key0][fx];[key0]apad[key]')
         parts.append(f'[mus][key]sidechaincompress=threshold={0.05 * sounds_gain:.4f}:ratio=2:attack=5:release=250[duck]')
-        parts.append(f'[duck][fx]amix=inputs=2:duration=first:normalize=0,'
+        if voice:  # an effect doesn't cover the pet's words
+            parts.append(f"[fx]{pet_voice.duck_filter(voice['lines'], VOICE_FX_DUCK)}[fxv]")
+        over.append('[fxv]' if voice else '[fx]')
+        k += 1
+    elif voice:
+        parts.append(f'{music},aformat=channel_layouts=stereo[duck]')
+    if voice:
+        cmd += ['-i', str(voice['track'])]
+        parts.append(f'[{k}:a]aresample=44100,aformat=channel_layouts=stereo[said]')
+        over.append('[said]')
+        k += 1
+    if over:
+        parts.append(f"[duck]{''.join(over)}amix=inputs={1 + len(over)}:duration=first:normalize=0,"
                      f'alimiter=limit=0.89:attack=3:release=60:level=0:latency=1,'
                      f'afade=t=out:st={max(0.0, total - 0.15):.2f}:d=0.15[aout]')
     else:
@@ -1142,7 +1176,8 @@ def process(job):
         captions.append(path)
     spans = clip_spans(job, [i for i, _ in parts])
     speed = SPEEDS.get(job.get('speed'), 1.0)
-    length = sum(span_seconds(c, s, speed)[2] for c, s in zip(clips, spans))  # the animated parts' seconds
+    shown = [span_seconds(c, s, speed)[2] for c, s in zip(clips, spans)]
+    length = sum(shown)  # the animated parts' seconds
     if failed and job.get('thumb') and length < (job.get('ai_seconds') or job.get('seconds_long') or 0) - 0.5:
         # Stopped early (e.g. a part made again ran out of free time), and the video so far is shorter than
         # the one the user already has: that one stays until the rest is made.
@@ -1195,20 +1230,28 @@ def process(job):
     # The whoosh into the switch, when the video has sound (with no music the user adds a TikTok sound).
     whoosh = [(round(lead - WHOOSH_PEAK, 4), 'whoosh')] if opening and (used != 'none' or job.get('meme')) else []
     zooms, sounds, gain = meme_edit(job, folder, parts, spans, speed, audio, info, start, used, lead, total, whoosh)
+    voice = voice_edit(job, folder, parts, shown, lead, total)
     # Written next to the old version and swapped in, so the old one plays until the new one is ready. The
-    # extras must never cost a video: if the join fails, it is made again without the meme edit, then
-    # without the opening and the ending too.
-    tries = [(zooms, sounds, gain, opening, outro)]
+    # extras must never cost a video: if the join fails, it is made again without the meme edit, then without
+    # the pet voice (with the meme edit back), then without both, then without the opening and the ending too.
+    full = (zooms, sounds, gain, voice, opening, outro)
+    tries = [full]
     if zooms or sounds:
-        tries.append((None, None, 1.0, opening, outro))
+        tries.append((None, None, 1.0, voice, opening, outro))
+    if voice:
+        tries.append((zooms, sounds, gain, None, opening, outro))
+        if zooms or sounds:
+            tries.append((None, None, 1.0, None, opening, outro))
     if opening or outro:
-        tries.append((None, None, 1.0, None, None))
-    effects = 'the meme edit' if job.get('meme') else 'the sound effects'
+        tries.append((None, None, 1.0, None, None, None))
+    extras = (('the meme edit' if job.get('meme') else 'the sound effects', lambda t: t[0] or t[1]),
+              ('the pet voice', lambda t: t[3]), ('the opening', lambda t: t[4]), ('the ending', lambda t: t[5]))
     try:
-        for n, (z, s, g, o, e) in enumerate(tries):
+        for n, now in enumerate(tries):
             try:
+                z, s, g, v, o, e = now
                 join_clips(clips, captions, folder / 'final.new.mp4', spans, speed, audio, start, badge, z, s, g,
-                           o, e)
+                           o, e, v)
                 opening, outro = o, e
                 break
             except Exception as err:
@@ -1217,15 +1260,19 @@ def process(job):
                 why = getattr(err, 'stderr', None)  # ffmpeg's first line names the filter, its last what failed
                 lines = why.decode(errors='replace').strip().splitlines() if isinstance(why, bytes) else []
                 why = ' / '.join(dict.fromkeys(line[:200] for line in (lines[:1] + lines[-1:]))) if lines else repr(err)
-                had = [x for x, on in ((effects, z or s), ('the opening', o), ('the ending', e)) if on]
-                drop = [effects] if z or s else had
+                had = [name for name, on in extras if on(now)]
+                drop = [name for name, on in extras if on(full) and not on(tries[n + 1])]
                 log.warning('%s: the video did not join with %s (%s); made again without %s', job['id'],
                             ' and '.join(had), why, ' and '.join(drop))
-                if z or s:
-                    (folder / 'meme.json').unlink(missing_ok=True)
+        if not (now[0] or now[1]):  # (the plans of what isn't in the video)
+            (folder / 'meme.json').unlink(missing_ok=True)
+        if not now[3]:
+            (folder / 'voice.json').unlink(missing_ok=True)
     finally:
         if sounds:
             sounds.unlink(missing_ok=True)
+        if voice:
+            voice['track'].unlink(missing_ok=True)
     lead = lead if opening else 0.0
     os.replace(folder / 'final.new.mp4', folder / 'final.mp4')
     at = lead + 1  # the thumbnail shows the AI part
@@ -1340,6 +1387,48 @@ def meme_edit(job, folder, parts, spans, speed, audio, info, start, used, lead=0
         log.warning('%s: meme effects skipped (%s)', job['id'], e)
         sounds.unlink(missing_ok=True)
         return None, None, 1.0
+
+
+def voice_edit(job, folder, parts, shown, lead, total):
+    """The pet voice for this cut, when it is on and works here: {'track', 'lines'} for join_clips, else None.
+    Each caption is said once, when it shows (a part without its own text keeps the one before, as on the
+    video; also when the captions are hidden), by the voice chosen or one that suits the animal. The first
+    line waits for the switch when the video opens with the real seconds. shown: each part's seconds. None
+    also when anything goes wrong: the voice must never cost a video. The lines go to voice.json (local only)."""
+    (folder / 'voice.json').unlink(missing_ok=True)
+    choice = job.get('voice') if job.get('voice') in VOICES else 'off'
+    if choice == 'off' or not pet_voice:
+        return None
+    if not pet_voice.ready(wait=60):  # (the check runs when the worker starts: a few seconds)
+        log.warning('%s: no pet voice on this worker (%s)', job['id'], pet_voice.why())
+        return None
+    path = folder / 'voice.wav'
+    try:
+        windows, said, t = [], '', 0.0  # [spoken words, start, end] on the animated parts' timeline
+        for (i, _), seconds in zip(parts, shown):
+            said = job['ideas'][i].get('caption') or said
+            if windows and pet_voice.speakable(windows[-1][0]) == pet_voice.speakable(said):
+                windows[-1][2] = t + seconds
+            else:
+                windows.append([said, t, t + seconds])
+            t += seconds
+        lines = [(text, lead + t0 + (VOICE_AFTER_SWITCH if lead and not n else VOICE_AT), lead + t1 - VOICE_GAP)
+                 for n, (text, t0, t1) in enumerate(windows)]
+        style = pet_voice.style_for(choice, job.get('animal'))
+        placed = pet_voice.track(lines, style, folder, total, path,
+                                 busy=lambda: update(job, stage='Giving your pet a voice…', progress=0.92))
+        if not placed:
+            return None
+        (folder / 'voice.json').write_text(json.dumps({'voice': choice, 'style': style, 'lines': placed}))
+        log.info('%s: pet voice (%s): %s', job['id'], style, [ln['text'] for ln in placed])
+        return {'track': path, 'lines': placed}
+    except Exception as e:
+        log.warning('%s: no pet voice this time (%s)', job['id'], e)
+        path.unlink(missing_ok=True)
+        return None
+    finally:
+        if job.get('stage') == 'Giving your pet a voice…':
+            update(job, stage='Putting your video together…', progress=0.95)
 
 
 def drop_clips(job, start):
@@ -1468,6 +1557,8 @@ def update_downloader():
 async def lifespan(_app):
     DATA.mkdir(parents=True, exist_ok=True)
     threading.Thread(target=update_downloader, daemon=True).start()
+    if pet_voice:
+        pet_voice.start_check()  # (in the background: the worker doesn't wait for it)
     load_jobs()
     threading.Thread(target=worker_loop, args=(work_queue,), daemon=True).start()
     threading.Thread(target=worker_loop, args=(quick_queue,), daemon=True).start()
@@ -1549,8 +1640,11 @@ def features():
     chain: a video is one continuous shot, and a preview is just its first part.
     meme: zoom punch-ins and sound effects at the funny moments (the meme field of a video).
     opening: the Real -> AI opening (the opening field; the hooks + hook_fps an upload sends).
-    outro: the Follow me ending (the outro field; the owner's endcard)."""
-    return ['chain'] + (['meme'] if meme and sfx else []) + ['opening', 'outro']
+    outro: the Follow me ending (the outro field; the owner's endcard).
+    voice: the pet voice (the voice field), only when its packages import and its model is on disk (checked
+    in the background when the worker starts, so it shows up a few seconds after)."""
+    return (['chain'] + (['meme'] if meme and sfx else []) + ['opening', 'outro']
+            + (['voice'] if pet_voice and pet_voice.ready() else []))
 
 
 @app.get('/health')
@@ -1594,6 +1688,7 @@ def create_job(
     meme_on: bool = Form(True, alias='meme'),  # (not named meme: that is the module)
     opening: bool = Form(False),
     outro: bool = Form(False),
+    voice: str = Form('off'),
     hook_fps: float = Form(30),
     images: list[UploadFile] = File(None),
     source: UploadFile = File(None),
@@ -1629,6 +1724,7 @@ def create_job(
         # The Real -> AI opening (needs real video: a link or the frames the page sends with an upload) and the
         # Follow me ending (needs the owner's follow card). Both can be switched on and off later.
         'opening': opening, 'outro': outro,
+        'voice': voice if voice in VOICES else 'off',  # the pet voice (CPU only; used when this worker has it)
     }
     try:
         made = build_jobs(who, count, wanted, settings, url, surprise, images, source, song, badge, endcard, hooks,
@@ -1768,11 +1864,12 @@ def edit_job(
     meme_on: bool = Form(None, alias='meme'),
     opening: bool = Form(None),
     outro: bool = Form(None),
+    voice: str = Form(None),
     redo: str = Form(''),
     song: UploadFile = File(None),
 ):
-    """Change a video. Text, music, speed, length, meme effects, the opening and the ending re-cut it in
-    seconds. A new description, style or animal, or redo (clip numbers), animates the clips concerned again."""
+    """Change a video. Text, music, speed, length, meme effects, the pet voice, the opening and the ending re-cut
+    it in seconds. A new description, style or animal, or redo (clip numbers), animates the clips concerned again."""
     who = caller(x_antics_key)
     job = own_job(who, job_id)
     try:
@@ -1847,6 +1944,8 @@ def edit_job(
             job['opening'] = opening
         if outro is not None:
             job['outro'] = outro
+        if voice in VOICES:  # the pet voice on, off or another voice: just a re-cut too
+            job['voice'] = voice
         word = job.get('animal') or 'animal'
         if repaint:  # a surprise with a new description gets a new picture first, then new ideas
             job.update(inputs=None, scene=None, ideas=[], clips_done=[], chain={},
