@@ -6,15 +6,18 @@
 # 3 MB, plain numpy). No GPL code, so the public Space image stays clean.
 #
 # The worker runs fine without any of this: the packages and the model are installed by Dockerfile steps that
-# may fail without failing the build, they are imported only when needed, and check() says whether the voice
-# really works here (the page offers it only then). The model loads on first use (~5 s, ~550 MB RAM).
+# may fail without failing the build, they are imported only when needed, and check() tries the voice in a
+# Python of its own when the worker starts (the page offers it only when that worked). The model loads on first
+# use (~3 s, ~500 MB RAM).
 import hashlib
 import importlib
 import json
 import logging
+import math
 import os
 import re
 import subprocess
+import sys
 import threading
 import wave
 from pathlib import Path
@@ -91,26 +94,40 @@ def _files(download=False):
 
 
 def check(download=True):
-    """Whether the pet voice works here: its packages import, spaCy's English model is installed (misaki would
-    try to download it otherwise) and the voice model is on disk (baked into the image; fetched now if that
-    step failed and downloads are allowed). Never raises; the answer is kept for ready()."""
+    """Whether the pet voice really works here, tried in a Python of its own (so not even a broken install can
+    take the worker down): its packages import, spaCy's English model is installed (misaki would try to download
+    it otherwise), the voice model is on disk (baked into the image; fetched now if that step failed and
+    downloads are allowed) and it says a word. Never raises; the answer is kept for ready()."""
+    code = 'import sys; sys.path.insert(0, sys.argv[1]); import voice; voice._selftest(sys.argv[2] == "1")'
     try:
-        for name in ('onnxruntime', 'misaki.en'):  # (misaki.en brings spaCy and num2words)
-            importlib.import_module(name)
-        import spacy.util
-        if not spacy.util.is_package(SPACY_MODEL):
-            raise RuntimeError(f'{SPACY_MODEL} is not installed')
-        _files(download)
-        ok, why = True, ''
-    except Exception as e:  # (also a broken install: ImportError, OSError, ...)
-        ok, why = False, f'{type(e).__name__}: {e}'[:300]
-    _state.update(ready=ok, why=why)
+        here = str(Path(__file__).resolve().parent)
+        out = subprocess.run([sys.executable, '-c', code, here, '1' if download else '0'], capture_output=True,
+                             text=True, timeout=600)
+        said = (out.stderr or '').strip().splitlines()
+        ok, why = out.returncode == 0, '' if out.returncode == 0 else (said[-1] if said else f'exit {out.returncode}')
+    except Exception as e:  # (e.g. it took too long)
+        ok, why = False, f'{type(e).__name__}: {e}'
+    _state.update(ready=ok, why=why[:300])
     _checked.set()
     if ok:
         log.info('pet voice: ready')
     else:
         log.warning('pet voice: not available (%s)', why)
     return ok
+
+
+def _selftest(download):
+    """(Run by check(), in its own Python.) Raises unless the voice can say a word here."""
+    import tempfile
+    for name in ('onnxruntime', 'misaki.en'):  # (misaki.en brings spaCy and num2words)
+        importlib.import_module(name)
+    import spacy.util
+    if not spacy.util.is_package(SPACY_MODEL):
+        raise RuntimeError(f'{SPACY_MODEL} is not installed')
+    _files(download)
+    with tempfile.TemporaryDirectory() as folder:
+        if not _speak('Hi', 'squeaky', Path(folder) / 'hi.wav'):
+            raise RuntimeError('the voice model said nothing')
 
 
 def start_check():
@@ -272,9 +289,9 @@ def _seconds(path):
 
 def line(text, style, room, folder, busy=None):
     """The pet's line for one caption, fitted to `room` seconds: (WAV, seconds, rush, the WAV as said), or None
-    when there is nothing to say. Lines are kept in the job's folder (voice_<key>.wav), so a re-cut says them again only
-    when the words or the voice changed. A line longer than `room` is sped up, at most MAX_RUSH times.
-    busy() is called before the model has to speak (the first time takes a few seconds)."""
+    when there is nothing to say. Lines are kept in the job's folder (voice_<key>.wav), so a re-cut says them
+    again only when the words or the voice changed. A line longer than `room` is sped up, at most MAX_RUSH
+    times. busy() is called before the model has to speak (the first time takes a few seconds)."""
     text = speakable(text)
     if not re.search(r'[A-Za-z0-9]', text):
         return None
@@ -289,14 +306,14 @@ def line(text, style, room, folder, busy=None):
             return None
         os.replace(part, natural)
     secs = _seconds(natural)
-    rush = min(MAX_RUSH, max(1.0, secs / max(room, 1e-3)))
+    rush = min(MAX_RUSH, math.ceil(max(1.0, secs / max(room, 1e-3)) * 100) / 100)  # (rounded up: it fits)
     if rush < 1.01:
         return natural, secs, 1.0, natural
     rushed = natural.with_name(f'voice_{key}_x{rush:.2f}.wav')
     if not rushed.exists():
         part = rushed.with_name(f'{rushed.stem}.part.wav')
-        subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', str(natural), '-af', f'atempo={rush:.2f}',
-                        '-ar', str(OUT_SR), '-c:a', 'pcm_s16le', str(part)], check=True, capture_output=True, timeout=60)
+        subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', str(natural), '-af', f'atempo={rush:.2f}', '-ar',
+                        str(OUT_SR), '-c:a', 'pcm_s16le', str(part)], check=True, capture_output=True, timeout=60)
         os.replace(part, rushed)
     return rushed, _seconds(rushed), rush, natural
 
@@ -319,10 +336,10 @@ def track(windows, style, folder, seconds, path, busy=None):
         keep |= {wav.name, said.name}
         data = _read(wav)
         n = min(len(data), int(room * OUT_SR))
-        cut = n < len(data)
-        data = data[:n].copy()
-        if cut:  # a short fade instead of a click
-            f = min(n, int(0.1 * OUT_SR))
+        cut = len(data) - n > 0.02 * OUT_SR  # (a few samples over is only the line's quiet end)
+        if n < len(data):  # a short fade instead of a click
+            data = data[:n].copy()
+            f = min(n, int((0.1 if cut else 0.01) * OUT_SR))
             data[n - f:] *= np.linspace(1, 0, f, dtype=np.float32)
         at = int(round(start * OUT_SR))
         pieces.append((at, data))
