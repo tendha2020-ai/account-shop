@@ -1977,3 +1977,96 @@ dialog {
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+/* My songs: in Music, the saved songs come first as tiles (the name picks it, ▶ hears its meme part) */
+.my-songs {
+  margin-bottom: 10px;
+}
+
+.song-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.add-song-link {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: 0.95rem;
+}
+
+/* Settings: My songs (the box looks like Friends) */
+.add-song-btn {
+  position: relative;
+  display: inline-block;
+}
+
+.add-song-btn input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.songs-box .row {
+  margin-top: 12px;
+}
+
+.song-add {
+  margin-top: 12px;
+  padding: 12px;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: var(--paper);
+}
+
+.song-add-head {
+  margin: 0 0 4px;
+  font-weight: 800;
+}
+
+.song-add .part-pick {
+  background: var(--card);
+}
+
+.song-cands {
+  margin-top: 8px;
+}
+
+.song-cands button {
+  font-size: 0.8rem;
+  padding: 5px 10px;
+}
+
+.song-add .opt-line .small-input {
+  flex: 1 1 160px;
+}
+
+.song-add .row {
+  margin-top: 8px;
+}
+
+.song-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border: 2px solid var(--ink);
+  border-radius: 99px;
+  background: var(--lime);
+  font-size: 0.75rem;
+  font-weight: 800;
+  vertical-align: 1px;
+}
+
+.song-row > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* (inside the add panel the slider needs no frame of its own: more room on a phone) */
+.song-add .part-pick {
+  margin-top: 4px;
+  padding: 4px 0 0;
+  border: 0;
+  background: none;
+}
