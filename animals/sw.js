@@ -4,9 +4,10 @@
 // If this ever misbehaves: publish a sw.js that deletes the caches and calls self.registration.unregister()
 // on activate. Browsers check sw.js again on every open.
 
-const CACHE = 'antics-shell-1'; // change it only when SHELL changes
+const CACHE = 'antics-shell-2'; // change it only when SHELL changes
 const SHELL = ['index.html', 'app.js', 'style.css', 'manifest.json', 'brand/tendha2.png', 'brand/favicon-64.png',
-  'brand/icon-192.png', 'brand/badge-96.png'];
+  'brand/icon-192.png', 'brand/badge-96.png',
+  'together.js']; // Together (v13): several animals in one video
 const BASE = new URL('./', self.location).pathname; // this folder, e.g. /account-shop/animals/
 
 self.addEventListener('install', (event) => {

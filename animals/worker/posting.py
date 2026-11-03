@@ -42,6 +42,8 @@ ANIMAL_TAGS = {
     'hippo': '#hippo', 'elephant': '#elephant', 'penguin': '#penguin', 'otter': '#otter', 'seal': '#seal',
     'kangaroo': '#kangaroo', 'llama': '#llama', 'sloth': '#sloth', 'crocodile': '#crocodile',
 }
+AI_TAG = '#aivideo'  # (only on videos that AI made any of: TikTok asks for AI content to be labelled)
+CAT, DOG, BOTH_TAG = ANIMAL_TAGS['cat'], ANIMAL_TAGS['dog'], '#catsanddogs'  # (a Together video with both)
 TIME = re.compile(r'([01]\d|2[0-3]):[0-5]\d')
 KEY = re.compile(r'\d{4}-\d\d-\d\d \d\d:\d\d')  # a fired time: its local day and time
 ITEM_ID = re.compile(r'p_[0-9a-f]{8}')
@@ -180,15 +182,20 @@ def animal_tag(animal):
     return ANIMAL_TAGS.get(name if name in ANIMAL_TAGS else ideas.guess_animal(name))
 
 
-def pick_tags(plan, job, posted_count):
+def pick_tags(plan, job, posted_count, animals=None, ai=True):
     """A video's hashtags: the plan's first `fixed` always, then the animal's own (from the job's animal), then
     the others taking turns, one step on with every post (so two posts in a row don't carry the same ones), each
-    once, at most per_post (5)."""
+    once, at most per_post (5). A Together video: animals = each of its animals (their own tags, and #catsanddogs
+    when it has both); ai=False (nothing in it made by AI): no #aivideo."""
     own = clean_tags(plan.get('tags'))
+    if not ai:
+        own = [t for t in own if t.casefold() != AI_TAG]
     want = max(0, min(MAX_PER_POST, int(plan.get('per_post') or 0)))
     fixed = own[:max(0, int(plan.get('fixed') or 0))]
-    extra = animal_tag((job or {}).get('animal'))
-    first = clean_tags(fixed + ([extra] if extra else []))
+    extras = [animal_tag(a) for a in (animals if animals is not None else [(job or {}).get('animal')])]
+    if {CAT, DOG} <= set(extras):
+        extras.append(BOTH_TAG)
+    first = clean_tags(fixed + [e for e in extras if e])
     seen = {t.casefold() for t in first}
     rest = [t for t in own[len(fixed):] if t.casefold() not in seen]
     k = int(posted_count or 0) % len(rest) if rest else 0

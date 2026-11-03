@@ -26,6 +26,9 @@ KINDS = {
     'exit': {'zoom': 0.08, 'shake': 0, 'sfx': [[(-0.2, 'whoosh')]]},
     'land': {'zoom': 0.12, 'shake': 0, 'sfx': [[(0.0, 'ding')]]},
     'idea': {'zoom': 0.12, 'shake': 0, 'sfx': [[(0.0, 'ding')]]},
+    # (Together) a small, quick punch-in on a cut, silent or with a whoosh (quick cuts, one by one)
+    'cut': {'zoom': 0.07, 'shake': 0, 'sfx': [[]], 'punch': {'a': 0.06, 'h': 0.08, 'r': 0.25}},
+    'swish': {'zoom': 0.07, 'shake': 0, 'sfx': [[(-0.2, 'whoosh')]], 'punch': {'a': 0.06, 'h': 0.08, 'r': 0.25}},
 }
 
 # A twist (ideas.TWISTS / ideas.FAIL_TWISTS, only ever on a video's last part) is the punchline: (pattern,
@@ -88,10 +91,14 @@ def _at(where, part):
 
 def moments(idea, part):
     """The funny moments in one part: [(seconds into the part, kind)], at most two, the twist (punchline)
-    first. part: as in plan()."""
+    first. part: as in plan(). (Together) A scene's parts name their own moments, idea['moments'] = [(kind,
+    fraction of the clip)]; a free look or a cut adds the ones it made itself, idea['hits'] (the same, kept as
+    they are, all of them: the VS slam, a punch on each cut)."""
+    hits = [(where * part['full'] - part['skip'], kind) for where, kind in idea.get('hits') or ()]
+    hits = [(float(t), kind) for t, kind in hits if 0 <= t < part['shown']]
     if part['shown'] < 1.0:  # too short for a moment to land
-        return []
-    found = []  # (time, kind, priority)
+        return hits
+    found = [(_at(where, part), kind, -1) for kind, where in idea.get('moments') or ()]  # (time, kind, priority)
     twist = idea.get('twist') or ''
     for pattern, kind, where in TWIST_RULES:
         if re.search(pattern, twist, re.I):
@@ -113,7 +120,7 @@ def moments(idea, part):
     for t, kind, _ in sorted(found, key=lambda f: f[2]):
         if len(keep) < 2 and all(abs(t - k[0]) >= 0.9 for k in keep):  # two moments need room between them
             keep.append((t, kind))
-    return sorted(keep)
+    return sorted(keep + hits)
 
 
 def motion_peak(clip, lo, hi):
@@ -200,7 +207,7 @@ def plan(parts, info=None, start=0.0, use_beats=True, speed=1.0, motion=False):
                 if peak is not None:
                     t = float(min(max(peak / speed - part['skip'], 0.3), shown - 0.35))
             k = KINDS[kind]
-            add(n, {'t0': max(0.0, at + t - LEAD), 'z': k['zoom'], 's': k['shake'], **FUNNY_PUNCH})
+            add(n, {'t0': max(0.0, at + t - LEAD), 'z': k['zoom'], 's': k['shake'], **k.get('punch', FUNNY_PUNCH)})
             if kind == 'stare' and idea.get('title') in REACTIONS and (n == len(parts) - 1 or cut_after(n)):
                 # A reaction that ends the video (or its shot): the camera slowly pushes in on the face. In the
                 # middle of one shot it would have to jump back, so there it gets just the punch.

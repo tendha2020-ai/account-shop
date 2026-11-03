@@ -24,6 +24,8 @@
 # The Posting plan (posting.py): the owner queues finished videos and gets a reminder at 1-3 times a day, with the
 # caption and its hashtags ready, and posts with Share to TikTok. A video with the owner's own song is shared as
 # its TikTok cut (the same video without the song: TikTok mutes songs baked into a file); TikTok's sound is added.
+# Together (together.py): 2-4 animals in one video: one AI picture of them all that moves, each one its own AI
+# moment cut on the beat, or a free look of the real clips (side by side, VS screen, grid, quick cuts) on the CPU.
 
 import collections
 import copy
@@ -82,7 +84,14 @@ except Exception as e:
     logging.getLogger('antics').warning('no posting plan: %s', e)
     posting = None
 
-VERSION = '12'
+try:  # Together videos (2-4 animals in one); if its file is missing or broken, the worker runs without them
+    import together
+except Exception as e:
+    logging.getLogger('antics').warning('no Together videos: %s', e)
+    together = None
+THIS = sys.modules[__name__]  # (Together) this worker, for together.py: its storage, engines and video join
+
+VERSION = '13'
 HF_TOKEN = os.environ.get('HF_TOKEN') or None
 ANTICS_KEY = os.environ.get('ANTICS_KEY', '')
 DATASET = os.environ.get('ANTICS_DATASET', '')
@@ -142,6 +151,10 @@ class BusyError(Exception):
     """Every free GPU is taken right now; worth trying again in a few minutes."""
 
     wait_seconds = 600
+
+
+class Paused(Exception):
+    """(Together) The job stopped on purpose and waits (its status is set): the picture check."""
 
 
 def is_quota(msg):
@@ -210,6 +223,8 @@ def public(job):
     view['has_endcard'] = bool(job.get('has_endcard'))
     view['outro'] = bool(job.get('outro')) and view['has_endcard']
     view['voice'] = job.get('voice') if job.get('voice') in VOICES else 'off'  # the pet voice ('off' before v10)
+    if job.get('kind') == 'together' and together:  # (Together) its animals, scene, look and picture check
+        view.update(together.public(job))
     return view
 
 
@@ -1463,17 +1478,19 @@ def process(job):
         what = 'the preview' if job.get('draft') else f'part {i + 1} of {wanted}'
         update(job, stage=f'{where} {what}… ({each})', progress=0.15 + 0.7 * i / limit)
         try:
-            if i == 0:
-                picture = local_file(job, job['inputs'][0])
+            if i == 0 or idea.get('picture'):  # (Together, one by one: each part starts from its animal's picture)
+                picture = local_file(job, idea.get('picture') or job['inputs'][0])
             else:  # carries straight on from the clip before
                 picture = folder / f'start_{i}.png'
                 handed = chain_frame(parts[-1][1], picture)
-            make_clip(picture, ideas.video_prompt(idea, animal, follow=i > 0), job['seconds'], out)
+            # (Together parts bring their own prompts)
+            prompt = idea.get('prompt_follow' if i else 'prompt') or ideas.video_prompt(idea, animal, follow=i > 0)
+            make_clip(picture, prompt, job['seconds'], out)
         except Exception as e:
             log.exception('%s: clip %d failed', job['id'], i + 1)
             failed = e
             break  # the clips after it need its last frame
-        if i:
+        if i and not idea.get('picture'):
             job['chain'][str(i)] = handed
         parts.append((i, out))
         job['clips_done'].append(name)
@@ -1481,6 +1498,15 @@ def process(job):
         save(job, [name])
     if not parts:
         raise failed or RuntimeError('No clips could be made')
+    finish_video(job, folder, parts, failed)
+
+
+def finish_video(job, folder, parts, failed=None):
+    """Cuts final.mp4 from the animated parts [(clip number, file)] and finishes the job: thumbnail, TikTok caption,
+    note, status done, saved. failed: why the parts stopped early (a QuotaError or BusyError is raised again once
+    the shorter video is saved). Keeps what it was made with (made_with: the TikTok cut makes the same) and the
+    saved song's name. (Together: its free looks come here too, with their one layout clip.)"""
+    wanted = job['wanted']
     made = len(parts)
 
     update(job, stage='Putting your video together…', progress=0.9)
@@ -1493,6 +1519,8 @@ def process(job):
     os.replace(folder / 'thumb.new.jpg', folder / 'thumb.jpg')
     first_text = next((i['caption'] for i in job['ideas'] if i.get('caption')), '')
     caption = f"{first_text} {ideas.HASHTAGS}".strip() + (f'\n{credit}' if credit else '')
+    if job.get('kind') == 'together' and together:  # (Together) its own tags, and the free clips' credits
+        caption = together.tiktok_caption(job, first_text, credit)
     _, _, seconds_long = probe(folder / 'final.mp4')
     full = round(job['seconds'] * wanted)
     if job.get('draft'):  # (in the animated seconds: the opening and the ending come on top)
@@ -1522,7 +1550,8 @@ def cut_video(job, folder, parts, out, failed=None, song=True):
     edit, the pet voice, the opening and the ending, each dropped if the join fails with it). Returns what it was
     made with. song=False is the TikTok cut: the same plan and the same graph, with silence in place of the song
     (the video's own sound, the voice and the effects stay), and the same song start and extras as final.mp4 (if
-    it can't have them now, it fails instead). It never changes the job then (`job` is a copy)."""
+    it can't have them now, it fails instead). It never changes the job then (`job` is a copy). (Together
+    videos come here too: a free look's one layout clip, or the AI parts.)"""
     clips, captions, text = [], [], ''
     for n, (i, clip) in enumerate(parts):
         if job.get('captions', True):
@@ -1581,6 +1610,9 @@ def cut_video(job, folder, parts, out, failed=None, song=True):
                 start = beats.pick_start(info, lead + length + tail, part)
             if hook and used != 'mine':  # the switch from the real video to the AI lands on a beat
                 lead = hook_length(info, start, have)
+            if job.get('made_as') == 'turns' and together:  # (Together, one by one) each cut lands on a beat
+                spans, shown = together.snap_turns(clips, spans, shown, speed, info, start + lead, clip_info)
+                length = sum(shown)
             # No cutting clips onto the beat any more: the parts join without a cut, and trimming one would
             # make the picture jump at the join.
         except Exception as e:  # the beat finder must never cost a video
@@ -1670,6 +1702,8 @@ def opening_for(job, parts):
     picture were kept, and clip 1 (where the real video turns into the AI) is in the video (also in a
     preview). Finds how the engine framed clip 1's picture; a clip that did not start from its picture gets
     no opening (the switch would jump)."""
+    if job.get('kind') == 'together' and together:  # (Together) the real clips side by side, then the AI scene
+        return together.opening(job, parts, THIS)
     if not (job.get('opening') and job.get('hook_frames') and parts and parts[0][0] == 0):
         return None
     try:
@@ -1780,7 +1814,8 @@ def voice_edit(job, folder, parts, shown, lead, total, quiet=False):
             t += seconds
         lines = [(text, lead + t0 + (VOICE_AFTER_SWITCH if lead and not n else VOICE_AT), lead + t1 - VOICE_GAP)
                  for n, (text, t0, t1) in enumerate(windows)]
-        style = pet_voice.style_for(choice, job.get('animal'))
+        style = pet_voice.style_for('narrator' if choice == 'auto' and job.get('kind') == 'together' else choice,
+                                    job.get('animal'))  # (Together: Auto is the narrator, one voice for the story)
         busy = None if quiet else (lambda: update(job, stage='Giving your pet a voice…', progress=0.92))
         placed = pet_voice.track(lines, style, folder, total, path, busy=busy)
         if not placed:
@@ -1832,11 +1867,13 @@ def new_ideas(job, animal, count):
 
 
 def refund(job):
-    """A friend's video that never got made (it failed, or was deleted before any clip) gives the use back."""
+    """A friend's video that never got made (it failed, or was deleted before any clip or AI picture) gives the use
+    back."""
     with guests_lock:
         guest = guests.get(job.get('owner', 'me'))
-        if not guest or job.get('refunded') or job.get('made') or job.get('thumb'):
-            return
+        if not guest or job.get('refunded') or job.get('made') or job.get('thumb') or job.get('unpaid') \
+                or job.get('gpu_spent'):
+            return  # (Together: unpaid: a free copy used no video; gpu_spent: the AI made its picture)
         guest['uses_left'] += 1
         guest['used'] = max(0, guest['used'] - 1)
         job['refunded'] = True
@@ -1845,6 +1882,8 @@ def refund(job):
 
 def needs_animation(job):
     """True when the job still needs the AI (a picture or a clip), not just a re-cut."""
+    if job.get('kind') == 'together' and together:  # (Together) a free look is a cut on the CPU
+        return together.needs_animation(job)
     if not job.get('inputs') or job.get('clips_done') is None:
         return True
     limit = 1 if job.get('draft') else job['wanted']
@@ -1934,7 +1973,10 @@ def cut_loop():
 
 def made_parts(job):
     """The animated parts the video has now, from the clips kept (the first ones, in order, as in final.mp4).
-    Raises when one can't be had: the TikTok cut never asks the AI for anything."""
+    Raises when one can't be had: the TikTok cut never asks the AI for anything. (Together: a free look's one
+    layout clip, or its AI parts, from together.made_parts.)"""
+    if job.get('kind') == 'together' and together:
+        return together.made_parts(job, THIS)
     parts = []
     for i in range(1 if job.get('draft') else job['wanted']):
         name = f'clip_{i}.mp4'
@@ -2083,6 +2125,15 @@ def enqueue(job):
     (work_queue if needs_animation(job) else quick_queue).put(job['id'])
 
 
+def make_video(job):
+    """(Together) Makes the video: a Together video by together.process (it gets the animals and the picture first,
+    then calls process() for its AI parts, or cuts a free look), any other by process(). worker_loop calls this
+    inside the video's render_lock, so its TikTok cut is never made at the same time.)"""
+    if job.get('kind') == 'together' and together:
+        return together.process(job, THIS)
+    return process(job)
+
+
 def worker_loop(lane):
     while True:
         job_id = lane.get()
@@ -2095,8 +2146,10 @@ def worker_loop(lane):
         slow = needs_animation(job)  # new AI clips take minutes: a notification when it's done (re-cuts are watched)
         try:
             with render_lock(job_id):  # (its TikTok cut, if one is being cut right now, finishes first)
-                process(job)
+                make_video(job)  # (Together: a Together video goes to together.process)
             log.info('%s done', job_id)
+        except Paused:  # (Together) the picture check: it carries on by itself, no notification
+            continue
         except (QuotaError, BusyError) as e:
             why = ('Out of free video time for today.' if isinstance(e, QuotaError)
                    else 'The free GPUs are all busy right now.')
@@ -2134,6 +2187,8 @@ def wake_waiting(now_anyway=False):
     """Put waiting jobs back in line once their wait is over (or right away when the PC is on)."""
     now = time.time()
     for job in list(jobs.values()):
+        if now_anyway and job.get('picture_check') and (job.get('retry_at') or 0) > now:
+            continue  # (Together: the user is still looking at the picture)
         if job['status'] == 'waiting' and (now_anyway or (job.get('retry_at') or 0) <= now):
             update(job, status='queued', stage='In line…')
             enqueue(job)
@@ -2297,10 +2352,13 @@ def features():
     push: "your video is ready" notifications (/push/...), only when the cryptography package imports.
     songs: My songs (/songs: the owner's saved songs, each starting at its meme part; music 'mysong' + song_id).
     plan: the Posting plan (/plan: the owner's queue of videos to post, reminders, hashtags; the TikTok cut of a
-    video with a song: /jobs/{id}/video?cut=tiktok)."""
+    video with a song: /jobs/{id}/video?cut=tiktok).
+    together: Together videos (mode 'together' of POST /jobs, /jobs/{id}/copy, the edit's scene/look/recompose/
+    order/names). library: the free clip library (library.json, by id in a Together video's cast)."""
     return (['chain'] + (['meme'] if meme and sfx else []) + ['opening', 'outro']
             + (['voice'] if pet_voice and pet_voice.ready() else []) + (['push'] if webpush else []) + ['songs']
-            + (['plan'] if posting else []))
+            + (['plan'] if posting else [])
+            + (['together'] if together else []) + (['library'] if together and together.load_library() else []))
 
 
 @app.get('/health')
@@ -2353,12 +2411,21 @@ def create_job(
     badge: UploadFile = File(None),
     endcard: UploadFile = File(None),
     hooks: list[UploadFile] = File(None),
+    mode: str = Form(''),  # (Together) 'together': 2-4 animals in one video (see together.build_jobs)
+    scene: str = Form(''),
+    look: str = Form('ai'),
+    cast: str = Form(''),
+    real_fps: float = Form(30),
+    cast_files: list[UploadFile] = File(None),
 ):
     who = caller(x_antics_key)
     if music == 'mysong':
         need_read('songs.json', 'Your songs are')
     url = url.strip()
-    if not (images or surprise or re.match(r'^https?://\S+$', url)):
+    pack = mode == 'together' and together  # (Together)
+    if mode == 'together' and not together:
+        raise HTTPException(400, "This worker can't make Together videos. Update it in Settings.")
+    if not (pack or images or surprise or re.match(r'^https?://\S+$', url)):
         raise HTTPException(400, 'Paste a video link, upload a video, or tap Surprise me')
     count = max(1, min(MAX_VIDEOS, count))
     if who is not OWNER:  # a friend's videos are counted, and given back if they can't be made
@@ -2390,8 +2457,13 @@ def create_job(
         'voice': voice if voice in VOICES else 'off',  # the pet voice (CPU only; used when this worker has it)
     }
     try:
-        made = build_jobs(who, count, wanted, settings, url, surprise, images, source, song, badge, endcard, hooks,
-                          max(10.0, min(60.0, hook_fps)))
+        if pack:  # (Together) the animals, their files, the scene and the look
+            made = together.build_jobs(THIS, who, count, settings, {
+                'scene': scene, 'look': look, 'cast': cast, 'cast_files': cast_files, 'real_fps': real_fps,
+                'clips': clips, 'song': song, 'badge': badge, 'endcard': endcard})
+        else:
+            made = build_jobs(who, count, wanted, settings, url, surprise, images, source, song, badge, endcard, hooks,
+                              max(10.0, min(60.0, hook_fps)))
     except Exception:
         if who is not OWNER:
             with guests_lock:
@@ -2405,6 +2477,40 @@ def create_job(
     return {'jobs': [public(j) for j in made], 'me': me_view(who)}
 
 
+def shared_files(who, folder, settings, song, badge, endcard):
+    """The files every video of a batch gets a copy of: the creator's name tag, the owner's follow card and an
+    uploaded song, kept in `folder`. Returns their names and the flags they set (Together videos use it too)."""
+    shared, flags = [], {}
+    if badge:  # the creator's name tag, drawn by the page
+        try:
+            tag = Image.open(badge.file).convert('RGBA')
+            tag.thumbnail((OUT_W - 48, 200))
+            tag.save(folder / 'badge.png')
+            shared.append('badge.png')
+            flags['has_badge'] = True
+        except Exception:
+            log.warning('%s: the name tag could not be read', folder.name)
+    if endcard and who is OWNER:  # the owner's follow card for the ending, drawn by the page (720x1280)
+        try:
+            card = Image.open(endcard.file).convert('RGBA')
+            if card.size != (OUT_W, OUT_H):
+                card = card.resize((OUT_W, OUT_H), Image.LANCZOS)
+            card.save(folder / 'endcard.png')
+            shared.append('endcard.png')
+            flags['has_endcard'] = True
+        except Exception:
+            log.warning('%s: the follow card could not be read', folder.name)
+    if song and settings['music'] == 'upload':
+        original = folder / 'song_original'
+        with open(original, 'wb') as f:
+            shutil.copyfileobj(song.file, f)
+        if extract_sound(original, folder / 'song.m4a'):
+            shared.append('song.m4a')
+            flags.update(has_song=True, upload_name=upload_name(song))
+        original.unlink(missing_ok=True)
+    return shared, flags
+
+
 def build_jobs(who, count, wanted, settings, url, surprise, images, source, song, badge, endcard=None, hooks=None,
                hook_fps=30.0):
     """`count` new videos from the same input. Files the user sent are read once and copied to each."""
@@ -2415,34 +2521,7 @@ def build_jobs(who, count, wanted, settings, url, surprise, images, source, song
                  owner_name='' if who is OWNER else who['name'])
             for k in range(count)]
     folder = job_dir(made[0]['id'])
-    shared, flags = [], {}
-    if badge:  # the creator's name tag, drawn by the page
-        try:
-            tag = Image.open(badge.file).convert('RGBA')
-            tag.thumbnail((OUT_W - 48, 200))
-            tag.save(folder / 'badge.png')
-            shared.append('badge.png')
-            flags['has_badge'] = True
-        except Exception:
-            log.warning('%s: the name tag could not be read', made[0]['id'])
-    if endcard and who is OWNER:  # the owner's follow card for the ending, drawn by the page (720x1280)
-        try:
-            card = Image.open(endcard.file).convert('RGBA')
-            if card.size != (OUT_W, OUT_H):
-                card = card.resize((OUT_W, OUT_H), Image.LANCZOS)
-            card.save(folder / 'endcard.png')
-            shared.append('endcard.png')
-            flags['has_endcard'] = True
-        except Exception:
-            log.warning('%s: the follow card could not be read', made[0]['id'])
-    if song and settings['music'] == 'upload':
-        original = folder / 'song_original'
-        with open(original, 'wb') as f:
-            shutil.copyfileobj(song.file, f)
-        if extract_sound(original, folder / 'song.m4a'):
-            shared.append('song.m4a')
-            flags.update(has_song=True, upload_name=upload_name(song))
-        original.unlink(missing_ok=True)
+    shared, flags = shared_files(who, folder, settings, song, badge, endcard)
     if images:
         pictures = []
         for upload in images[:MAX_CLIPS * MAX_VIDEOS]:
@@ -2531,6 +2610,11 @@ def edit_job(
     redo: str = Form(''),
     song: UploadFile = File(None),
     song_id: str = Form(None),
+    scene: str = Form(None),  # (Together) another scene card, look, ↻ New picture, ⇄ Swap places, names
+    look: str = Form(None),
+    recompose: bool = Form(None),
+    order: str = Form(None),
+    names: str = Form(None),
 ):
     """Change a video. Text, music, speed, length, meme effects, the pet voice, the opening and the ending re-cut
     it in seconds. A new description, style or animal, or redo (clip numbers), animates the clips concerned again."""
@@ -2555,6 +2639,13 @@ def edit_job(
         original.unlink(missing_ok=True)
         if not ok:
             raise HTTPException(400, "That song file couldn't be read. Try an MP3 or M4A.")
+    if job.get('kind') == 'together' and together:  # (Together) its own edit: scene, look, picture, order, names
+        return together.edit(THIS, job, who, {
+            'texts': texts, 'idea': idea, 'clips': clips, 'music': music, 'track': track, 'song_part': song_part,
+            'song_start': song_start, 'speed': speed, 'captions': captions, 'brand': brand, 'meme': meme_on,
+            'opening': opening, 'outro': outro, 'voice': voice, 'redo': redo, 'new_song': new_song,
+            'new_song_id': new_song_id, 'scene': scene, 'look': look, 'recompose': recompose, 'order': order,
+            'names': names, 'upload_name': upload_name(song) if new_song else None})
     with jobs_lock:
         if job['status'] == 'working':
             raise HTTPException(409, 'Still working on this one. Edit it when it is ready.')
@@ -2643,6 +2734,19 @@ def edit_job(
     return {**public(job), 'animating': needs_animation(job)}
 
 
+@app.post('/jobs/{job_id}/copy')
+def copy_job(job_id: str, look: str = Form('free'), x_antics_key: str = Header(None)):
+    """(Together) The same animals and scene in another look, as a new video right away: "Make the VS screen now ·
+    free" while the AI one waits for free time. look: 'free' | 'turns' | 'ai'."""
+    who = caller(x_antics_key)
+    job = own_job(who, job_id)
+    if job.get('kind') != 'together' or not together:
+        raise HTTPException(400, 'Only Together videos can be made in another look')
+    made = together.copy(THIS, job, who, look)
+    enqueue(made)
+    return {'jobs': [public(made)], 'me': me_view(who)}
+
+
 @app.post('/jobs/{job_id}/finish')
 def finish_job(job_id: str, x_antics_key: str = Header(None)):
     """From a preview (or a video that came out short) to the full video: animates only what is missing."""
@@ -2688,6 +2792,8 @@ def job_video(job_id: str, key: str = Query(None), cut: str = Query(None), x_ant
 def job_thumb(job_id: str, key: str = Query(None), x_antics_key: str = Header(None)):
     job = own_job(caller(x_antics_key, key), job_id)
     name = 'thumb.jpg' if job.get('thumb') else (job.get('inputs') or [None])[0]
+    if job.get('picture_check') and job.get('inputs'):  # (Together) the new picture, while it is being checked
+        name = job['inputs'][0]
     if not name:
         raise HTTPException(404, 'No picture yet')
     return FileResponse(local_file(job, name), media_type='image/jpeg')
@@ -3145,12 +3251,21 @@ def plan_song(item, job):
 def plan_caption(item, job, state):
     """(the caption, whether it is the owner's own, its hashtags). Automatic: the video's first caption, the
     hashtags for this post and, for a Kevin MacLeod song left in the video, its CC BY credit (an own caption
-    gets that credit too)."""
+    gets that credit too). A Together video also credits each free library clip in it (on its own line, also in
+    the TikTok cut: the clips are still in it), gets each of its animals' own tags, and #aivideo only when AI made
+    any of it."""
     credit = (ideas.MUSIC_CREDIT.format(track=job['track'])
               if item['audio'] == 'as_made' and job.get('music_used') == 'funny' and job.get('track') else '')
-    if item.get('caption'):  # (the owner's own words; the credit is added when they left it out)
-        return posting.with_credit(item['caption'], credit), True, posting.tags_in(item['caption'])
-    tags = posting.pick_tags(state['plan'], job, state['posted_count'])
+    animals, ai = None, True
+    if job.get('kind') == 'together' and together:
+        credit = together.caption_credit(job, credit)
+        animals, ai = [c.get('animal') for c in job.get('cast') or []], together.uses_ai(job)
+    if item.get('caption'):  # (the owner's own words; each credit line is added when they left it out)
+        text = item['caption']
+        for line in credit.split('\n') if credit else []:
+            text = posting.with_credit(text, line)
+        return text, True, posting.tags_in(item['caption'])
+    tags = posting.pick_tags(state['plan'], job, state['posted_count'], animals=animals, ai=ai)
     return posting.compose(first_caption(job), tags, credit), False, tags
 
 
@@ -3197,6 +3312,8 @@ def postable(job):
     """Why a video can't go in the plan ('' when it can)."""
     if job.get('draft'):
         return "That's a preview. Tap Finish first, then add the whole video."
+    if job.get('picture_check'):  # (Together: its new picture is being checked, the video isn't made yet)
+        return "Check its picture first. Add the video when it's made."
     if job.get('status') != 'done':
         return "That video isn't finished yet. Add it when it's ready."
     if not job.get('thumb'):
