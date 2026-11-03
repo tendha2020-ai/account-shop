@@ -574,7 +574,7 @@ dialog::backdrop {
   border: 0;
   border-left: 2px solid var(--ink);
   background: var(--card);
-  padding: 6px 14px;
+  padding: 6px 11px;
   font-weight: 800;
   cursor: pointer;
 }
@@ -646,6 +646,45 @@ dialog::backdrop {
 .toast.show {
   transform: translate(-50%, 0);
   visibility: visible;
+}
+
+/* "Get a notification when it's ready?" under Your videos */
+.ping-nudge {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin: 0 0 12px;
+}
+
+.ping-nudge span {
+  flex: 1 1 100%;
+}
+
+/* The Home Screen app with no worker yet: one box to paste the antics link */
+.connect {
+  margin: 12px 0 0;
+}
+
+.connect .go {
+  margin-top: 12px;
+}
+
+.connect.nudge {
+  animation: nudge 0.5s ease 2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .connect.nudge {
+    animation: none;
+    outline: 3px solid var(--tomato);
+  }
+}
+
+@media (min-width: 960px) {
+  .connect {
+    max-width: 560px;
+  }
 }
 
 /* Use my PC */
@@ -940,12 +979,6 @@ dialog::backdrop {
 @media (min-width: 960px) {
   .banner-wrap {
     max-width: 1180px;
-  }
-}
-
-@media (max-width: 480px) {
-  .alt-dot {
-    display: none;
   }
 }
 
@@ -1250,4 +1283,697 @@ dialog::backdrop {
 .heard .link-btn {
   padding: 0 2px;
   font-size: 0.9rem;
+}
+
+/* ===================== Simple main screen (v10): 4 numbered steps ===================== */
+
+/* Phone: jump to your videos (they sit below the form) */
+.jump {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 8px 0 0;
+  padding: 7px 12px;
+  font-size: 0.92rem;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: var(--lime);
+  color: var(--ink);
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.jump::after {
+  content: "↓";
+}
+
+/* The wrappers only matter on a wide PC screen (two form columns) */
+.maker-a,
+.maker-b {
+  display: contents;
+}
+
+.step-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin: 0 0 12px;
+  font-size: 1.2rem;
+  letter-spacing: -0.015em;
+}
+
+.step-num {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background: var(--grape);
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+/* Step 1 done (link, file or surprise chosen): its number turns into a tick */
+.step.done .step-num {
+  background: var(--lime);
+  color: var(--ink);
+  font-size: 0;
+}
+
+.step.done .step-num::after {
+  content: "✓";
+  font-size: 1rem;
+}
+
+.step.nudge {
+  animation: nudge 0.5s ease 2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .step.nudge {
+    animation: none;
+    outline: 3px solid var(--tomato);
+  }
+}
+
+@keyframes nudge {
+  25% { transform: translateX(-5px); }
+  75% { transform: translateX(5px); }
+}
+
+.sub-label {
+  margin: 14px 0 8px;
+  font-size: 0.95rem;
+}
+
+/* Step 1: link, or one of two big tiles */
+.or {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+  color: var(--soft);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.or::before,
+.or::after {
+  content: "";
+  flex: 1;
+  border-top: 2px dashed rgba(22, 19, 16, 0.18);
+}
+
+.step .alt {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 0;
+  color: var(--ink);
+}
+
+.tile {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 62px;
+  padding: 10px 12px;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: var(--sky);
+  color: var(--ink);
+  font-weight: 800;
+  line-height: 1.15;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tile.surprise {
+  background: #e7dcff;
+}
+
+.tile svg {
+  flex: 0 0 auto;
+}
+
+.tile small {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  opacity: 0.75;
+}
+
+.tile input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.tile:focus-within,
+.tile:focus-visible {
+  outline: 3px solid var(--grape);
+  outline-offset: 2px;
+}
+
+.tile:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* A file or a surprise is chosen: only its chip (with ✕) shows */
+#fileChip:not([hidden]) ~ .or,
+#fileChip:not([hidden]) ~ .alt {
+  display: none;
+}
+
+/* On/off switches (a real checkbox underneath) */
+.switch-line {
+  position: relative;
+  cursor: pointer;
+  flex-wrap: nowrap;
+}
+
+.switch-line > span:first-child {
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.switch-line small {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--soft);
+}
+
+.sw-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+}
+
+.sw {
+  flex: 0 0 auto;
+  position: relative;
+  width: 46px;
+  height: 28px;
+  border: 2px solid var(--ink);
+  border-radius: 99px;
+  background: #eadfce;
+  transition: background-color 0.15s ease;
+}
+
+.sw::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  box-sizing: border-box;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background: var(--card);
+  transition: transform 0.15s ease;
+}
+
+.sw-input:checked + .sw {
+  background: var(--lime);
+}
+
+.sw-input:checked + .sw::after {
+  transform: translateX(18px);
+}
+
+.sw-input:focus-visible + .sw {
+  outline: 3px solid var(--grape);
+  outline-offset: 2px;
+}
+
+.sw-input:disabled + .sw {
+  opacity: 0.4;
+}
+
+.switch-line:has(.sw-input:disabled) {
+  color: var(--soft);
+  cursor: not-allowed;
+}
+
+.toggles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+  column-gap: 20px;
+}
+
+.toggles .opt-line,
+.toggles .opt-line:last-child {
+  padding: 9px 0;
+  border-bottom: 2px dashed rgba(22, 19, 16, 0.15);
+}
+
+/* Pet voice: which voice (shown while the switch is on), each with ▶ to hear it. It takes a whole row of
+   switches; the switches after it fill the row it leaves (dense). */
+.toggles {
+  grid-auto-flow: row dense;
+}
+
+.voice-pick {
+  grid-column: 1 / -1;
+  padding: 2px 0 10px;
+  border-bottom: 2px dashed rgba(22, 19, 16, 0.15);
+}
+
+.voices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.voice {
+  display: flex;
+  min-width: 0;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--card);
+}
+
+.voice.on {
+  background: var(--lime);
+  box-shadow: 2px 2px 0 var(--ink);
+}
+
+.voice-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 40px;
+  border: 0;
+  background: none;
+  padding: 6px 10px;
+  font-size: 0.92rem;
+  font-weight: 800;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.voice .hear {
+  flex: 0 0 40px;
+  border: 0;
+  border-left: 2px solid var(--ink);
+  background: var(--sky);
+  padding: 0;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.voice button:focus-visible {
+  outline: 3px solid var(--grape);
+  outline-offset: -3px;
+}
+
+.voice-pick .fine {
+  margin: 8px 0 0;
+  font-size: 0.8rem;
+}
+
+/* Small phones: room for the whole name next to ▶ */
+@media (max-width: 360px) {
+  .voice-name {
+    padding: 6px 7px;
+  }
+
+  .voice .hear {
+    flex-basis: 34px;
+  }
+}
+
+/* Extras: optional, clearly secondary. Folded on a phone (with a summary), open on a PC. */
+.extras {
+  padding: 0;
+  background: rgba(255, 255, 255, 0.6);
+  border-style: dashed;
+  box-shadow: none;
+}
+
+.extras > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.extras > summary::-webkit-details-marker {
+  display: none;
+}
+
+.extras > summary::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  margin: -5px 4px 0 0;
+  border-right: 2.5px solid var(--ink);
+  border-bottom: 2.5px solid var(--ink);
+  transform: rotate(45deg);
+}
+
+.extras[open] > summary::after {
+  margin-top: 5px;
+  transform: rotate(-135deg);
+}
+
+.extras-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.05rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.extras-sum {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--soft);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.extras[open] .extras-sum {
+  visibility: hidden;
+}
+
+.extras-body {
+  padding: 0 14px 12px;
+}
+
+/* Step 4 */
+#exportHelp:empty {
+  display: none;
+}
+
+/* The Make button stays in reach while you scroll the steps */
+.make-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  margin: -6px -18px 0;
+  padding: 16px 18px calc(12px + env(safe-area-inset-bottom));
+  background: linear-gradient(to bottom, rgba(255, 243, 220, 0), var(--paper) 16px);
+}
+
+.make-bar .note {
+  margin: 0 0 10px;
+}
+
+/* Job cards */
+.job-hint {
+  margin: 2px 0 0;
+  font-size: 0.86rem;
+  line-height: 1.3;
+}
+
+.job-actions .del {
+  margin-left: auto;
+  padding: 7px 2px;
+  border: 0;
+  background: none;
+  color: #b3261e;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+/* Player */
+.player-kind {
+  margin: 0 0 12px;
+  padding: 9px 11px;
+  border: 2px dashed var(--ink);
+  border-radius: 12px;
+  background: #fff6e0;
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.player-acts {
+  margin-top: 0;
+}
+
+.player-acts .go {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+.cap-box {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.cap-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+  color: var(--soft);
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+
+.cap-head .mini {
+  padding: 5px 12px;
+}
+
+.cap-box .caption-text {
+  font-size: 0.92rem;
+  font-weight: 600;
+  white-space: pre-line;
+}
+
+ul.tip {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+ul.tip li {
+  position: relative;
+  padding-left: 18px;
+}
+
+ul.tip li::before {
+  content: "";
+  position: absolute;
+  top: 0.5em;
+  left: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--grape);
+}
+
+/* Chrome caps modal dialogs at 100% - 2em - 6px (350px on a 390px phone): use the width set above */
+dialog {
+  max-width: calc(100vw - 24px);
+}
+
+/* Edit dialog: "fast" changes vs "new animation" */
+.kind {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 7px;
+  border: 1.5px solid var(--ink);
+  border-radius: 99px;
+  color: var(--ink);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  vertical-align: 2px;
+}
+
+.kind.fast {
+  background: var(--lime);
+}
+
+.kind.slow {
+  background: #e7dcff;
+}
+
+.edit-legend .kind {
+  margin: 0 4px 0 0;
+}
+
+.edit-legend .lg {
+  display: inline-block;
+  margin-right: 12px;
+  white-space: nowrap;
+}
+
+.edit-style {
+  margin-top: 10px;
+}
+
+.edit-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin: 8px -18px -18px;
+  padding: 16px 18px 18px;
+  background: linear-gradient(to bottom, rgba(255, 243, 220, 0), var(--paper) 16px);
+}
+
+.edit-foot .note {
+  margin: 0 0 4px;
+}
+
+.edit-foot .row {
+  flex-wrap: nowrap;
+  margin-top: 6px;
+}
+
+.edit-foot .go {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+/* PC */
+@media (min-width: 960px) {
+  .jump {
+    display: none !important;
+  }
+
+  .make-bar {
+    margin: -6px 0 0;
+    padding: 16px 0 14px;
+  }
+
+  /* Your videos scroll on their own, so the newest stay next to the form */
+  main.layout .list {
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    padding: 0 8px 8px 0;
+  }
+}
+
+/* Wide PC: the four steps in two columns, your videos on the right */
+@media (min-width: 1240px) {
+  .bar,
+  main.layout,
+  .banner-wrap {
+    max-width: 1400px;
+  }
+
+  main.layout {
+    grid-template-columns: minmax(0, 2.2fr) minmax(320px, 1fr);
+    gap: 28px;
+  }
+
+  /* Steps 1–2 on the left; 3, 4 and Make it on the right; Extras across the bottom */
+  .maker {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      "a s3"
+      "a s4"
+      "a mk"
+      "ex ex";
+    column-gap: 20px;
+    align-items: start;
+  }
+
+  .maker-a {
+    display: block;
+    grid-area: a;
+  }
+
+  #step3 {
+    grid-area: s3;
+  }
+
+  #step4 {
+    grid-area: s4;
+  }
+
+  .make-bar {
+    grid-area: mk;
+    margin: -6px 0 18px;
+    padding: 0;
+    background: none;
+  }
+
+  .extras {
+    grid-area: ex;
+  }
+
+  .extras .toggles {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .extras .voices {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .extras-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 20px;
+  }
+
+  .extras-body .toggles {
+    grid-column: 1 / -1;
+  }
+
+  .extras-body > .opt-line {
+    border-bottom: 0;
+  }
+
+  /* The song list scrolls inside step 3, so Make it stays on the first screen */
+  .song-list {
+    max-height: 220px;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+}
+
+/* Narrow phones: the two tiles stack icon over text */
+@media (max-width: 520px) {
+  .tile {
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
+    min-height: 84px;
+    text-align: center;
+  }
+}
+
+.chips-wrap button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }

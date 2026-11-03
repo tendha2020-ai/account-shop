@@ -5,12 +5,14 @@
 const HF = 'https://huggingface.co';
 const SPACE_NAME = 'antics-worker';
 const DATASET_NAME = 'antics-videos';
-const WORKER_FILES = ['Dockerfile', 'README.md', 'requirements.txt', 'worker.py', 'ideas.py', 'beats.py'];
-const WORKER_VERSION = '9'; // bump with VERSION in worker/worker.py
+const WORKER_FILES = ['Dockerfile', 'README.md', 'requirements.txt', 'worker.py', 'ideas.py', 'beats.py', 'meme.py', 'sfx.py',
+  'voice.py', 'webpush.py'];
+const WORKER_VERSION = '10'; // bump with VERSION in worker/worker.py
 const KEYS = {
   worker: 'antics.worker', clips: 'antics.clips', captions: 'antics.captions', style: 'antics.style', music: 'antics.music',
   track: 'antics.track', part: 'antics.part', seconds: 'antics.seconds', speed: 'antics.speed', animal: 'antics.animal',
   idea: 'antics.idea', brand: 'antics.brand', count: 'antics.count', preview: 'antics.preview', ownerBackup: 'antics.owner',
+  extras: 'antics.extras', pingAsked: 'antics.pingAsked',
 };
 // The creator's name and picture, shown in the header and stamped on every video.
 const BRAND = { name: 'TENDHA2', avatar: 'brand/tendha2.png' };
@@ -27,12 +29,32 @@ const STYLES = [
   { key: 'honest', label: 'Moment of honesty' },
 ];
 const MUSIC = [
-  { key: 'funny', label: 'Meme song for the style' },
-  { key: 'track', label: 'Pick a song' },
-  { key: 'upload', label: 'Upload my song' },
-  { key: 'mine', label: "My video's sound" },
-  { key: 'none', label: "None (I'll add a TikTok sound)" },
+  { key: 'funny', label: 'Auto meme song' },
+  { key: 'track', label: 'Choose a song' },
+  { key: 'upload', label: 'Upload a song' },
+  { key: 'mine', label: "Video's own sound" },
+  { key: 'none', label: 'No music' },
 ];
+const MUSIC_HINT = {
+  funny: 'A meme song that fits the style.',
+  track: 'Tap ▶ to listen, tap a name to pick it.',
+  none: 'Add a trending TikTok sound when you post. Good for reach.',
+};
+// Extras the worker makes on its free CPU. Each shows once the worker lists it in /health "features".
+const EXTRAS = [
+  { key: 'voice', id: 'voiceOpt', line: 'voiceLine', label: 'Pet voice' },
+  { key: 'meme', id: 'memeOpt', line: 'memeLine', label: 'Meme effects' },
+  { key: 'opening', id: 'openingOpt', line: 'openingLine', label: 'Real start' },
+  { key: 'outro', id: 'outroOpt', line: 'outroLine', label: 'Follow me' },
+];
+// Pet voices the worker knows; 'auto' picks one that suits the animal. Each other one has a short
+// sample in voices/ (tap ▶ to hear it).
+const VOICES = ['off', 'auto', 'squeaky', 'deep', 'narrator'];
+const VOICE_PICKS = VOICES.slice(1);
+const VOICE_LABELS = { auto: 'Auto', squeaky: 'Squeaky', deep: 'Deep', narrator: 'Narrator' };
+const voiceUrl = (v) => `voices/${v}.mp3`;
+// voice: what the next video gets ('off' or a voice); voicePick: the voice the switch turns on.
+const EXTRAS_DEFAULT = { voice: 'off', voicePick: 'auto', meme: true, opening: false, outro: true };
 // Free meme classics by Kevin MacLeod (CC BY 4.0). Names match MUSIC in worker/ideas.py.
 const SONGS = [
   'Monkeys Spinning Monkeys', 'Sneaky Snitch', 'Fluffing a Duck', 'Scheming Weasel faster', 'Pixel Peeker Polka - faster',
@@ -72,6 +94,9 @@ const state = {
   guests: null, // the owner's friends
   friendUses: 5,
   watchAfter: null, // { id, rev }: open this video when its new version is ready
+  surprise: false, // step 1 is "Surprise me": a painted scene, no video
+  extras: { ...EXTRAS_DEFAULT },
+  openVideo: null, // a video to open once the list is loaded (from a notification)
 };
 
 function load(key, fallback) {
@@ -107,7 +132,7 @@ function note(el, text, kind = '') {
   el.hidden = !text;
 }
 
-async function copyText(text) {
+async function copyText(text, done = 'Copied') {
   try {
     await navigator.clipboard.writeText(text);
   } catch {
@@ -118,7 +143,7 @@ async function copyText(text) {
     document.execCommand('copy');
     ta.remove();
   }
-  toast('Copied');
+  toast(done);
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -131,6 +156,14 @@ function openDialog(dlg) {
 function closeDialog(dlg) {
   if (dlg.close) dlg.close();
   else dlg.removeAttribute('open');
+}
+
+// A dialog's "close" event comes a moment after it closed. If it was opened again in between (Save,
+// then straight back into Edit), that event belongs to the time before and must not undo the new one.
+function onClosed(dlg, fn) {
+  dlg.addEventListener('close', () => {
+    if (!dlg.open) fn();
+  });
 }
 
 // ---------- Talking to the worker ----------
@@ -175,38 +208,134 @@ function inviteLink(guest) {
   return `${location.origin}${location.pathname}#join=${toB64url(JSON.stringify(data))}`;
 }
 
-function readInvite() {
-  const m = location.hash.match(/^#join=([A-Za-z0-9_-]+)$/);
-  if (!m) return;
-  history.replaceState(null, '', location.pathname + location.search);
+// The owner's own link, for the Home Screen app or another device: this page plus #app=<the worker's
+// address, the owner key and the Space's name>. It opens the owner's antics, so it stays private.
+function appLink() {
+  const w = state.worker;
+  return `${location.origin}${location.pathname}#app=${toB64url(JSON.stringify({ w: w.url, k: w.key, s: w.space }))}`;
+}
+
+// A friend's own invite link again, for the Home Screen app or another phone.
+function myInviteLink() {
+  const w = state.worker;
+  const data = { w: w.url, k: w.key, n: (state.me && state.me.name) || w.name || '', h: hostName() };
+  return `${location.origin}${location.pathname}#join=${toB64url(JSON.stringify(data))}`;
+}
+
+// What an antics link holds: { kind: 'join' | 'app', worker }, with worker null when the link is broken.
+// null when the text has no antics link in it at all. The link can sit inside other text.
+function parseLink(text) {
+  const m = String(text || '').match(/#(join|app)=([A-Za-z0-9_-]+)/);
+  if (!m) return null;
+  const kind = m[1];
   let data = null;
   try {
-    data = JSON.parse(fromB64url(m[1]));
+    data = JSON.parse(fromB64url(m[2]));
   } catch {
     // broken link
   }
-  if (!data || !/^https:\/\/[a-z0-9-]+\.hf\.space$/.test(data.w || '') || !/^[a-f0-9]{16,64}$/.test(data.k || '')) {
-    setTimeout(() => toast('That invite link is broken. Ask for a new one.'), 300);
+  const url = data && /^https:\/\/[a-z0-9-]+\.hf\.space$/.test(data.w || '') ? data.w : null;
+  if (kind === 'join') {
+    const ok = url && /^[a-f0-9]{16,64}$/.test(data.k || '');
+    return { kind, worker: ok ? { url, key: data.k, guest: true, name: data.n || '', host: data.h || '' } : null };
+  }
+  const ok = url && /^[\w-]{6,200}$/.test(data.k || '') && /^[\w.-]+\/[\w.-]+$/.test(data.s || '');
+  return { kind, worker: ok ? { space: data.s, url, key: data.k } : null };
+}
+
+// Puts a link's worker on this device. Returns true when it changed the worker.
+function useLink({ kind, worker }, ask) {
+  const now = state.worker;
+  if (now && now.url === worker.url && now.key === worker.key) return false; // already this one
+  if (kind === 'join' && now && !now.guest) {
+    const ok = !ask || confirm(`This is ${worker.name || 'a friend'}'s invite. Open it on this device? Your own worker stays saved: Settings, Leave this invite brings it back.`);
+    if (!ok) return false;
+    save(KEYS.ownerBackup, now);
+  }
+  if (kind === 'app') {
+    if (now && ask && !confirm('Open this antics link on this device? It takes the place of the one connected here now.')) return false;
+    save(KEYS.ownerBackup, null);
+  }
+  state.worker = worker;
+  save(KEYS.worker, worker);
+  return true;
+}
+
+// A link opened on this device: a friend's invite (#join=...) or the owner's app link (#app=...).
+// Returns true when it changed the worker.
+function readInvite() {
+  const m = location.hash.match(/^#(join|app)=([A-Za-z0-9_-]+)$/);
+  if (!m) return false;
+  history.replaceState(null, '', location.pathname + location.search);
+  const link = parseLink(m[0]);
+  if (!link.worker) {
+    setTimeout(() => toast(link.kind === 'join' ? 'That invite link is broken. Ask for a new one.' : 'That app link is broken. Copy it again.'), 300);
+    return false;
+  }
+  return useLink(link, true);
+}
+
+// A link put another worker on this device: start fresh with it.
+function workerChanged() {
+  state.jobs = [];
+  state.me = null;
+  state.health = null;
+  state.guests = null;
+  resetPings();
+  renderJobs();
+  renderRole();
+  renderOptions();
+  renderWorkerDot(false);
+  renderConnect();
+  if ($('#settings').open) renderSettings();
+  if (state.worker) refreshJobs();
+}
+
+// The Home Screen app keeps its own storage, so on an iPhone it starts with no worker. Then one box takes
+// the owner's app link or a friend's invite link: no codes, no setup again.
+function renderConnect() {
+  const show = standalone() && !state.worker;
+  $('#connectBox').hidden = !show;
+  if (!show) note($('#connectNote'), '');
+}
+
+// quiet: typing or pasting into the box connects as soon as a whole link is in; only Connect explains.
+function connectWith(text, quiet = false) {
+  const link = parseLink(text);
+  if (!link || !link.worker) {
+    if (!quiet) {
+      note($('#connectNote'), link ? 'That link is broken. Copy it again.'
+        : "That isn't an antics link. In your browser: open antics, tap ⚙, then Copy app link.", 'bad');
+    }
     return;
   }
-  if (state.worker && !state.worker.guest) {
-    if (state.worker.key === data.k) return;
-    const ok = confirm(`This is ${data.n || 'a friend'}'s invite. Open it on this device? Your own worker stays saved: Settings, Leave this invite brings it back.`);
-    if (!ok) return;
-    save(KEYS.ownerBackup, state.worker);
-  }
-  state.worker = { url: data.w, key: data.k, guest: true, name: data.n || '', host: data.h || '' };
-  save(KEYS.worker, state.worker);
+  if (!useLink(link, Boolean(state.worker))) return;
+  $('#connectLink').value = '';
+  workerChanged();
+  toast(link.kind === 'join' ? `Connected. You're using ${link.worker.host || BRAND.name}'s antics.` : 'Connected. Your videos are here.');
+}
+
+// The Home Screen app, no worker yet, Make it: the link comes first.
+function askForLink() {
+  const box = $('#connectBox');
+  note($('#connectNote'), 'First connect this app: paste your antics link here.', 'bad');
+  box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  box.classList.remove('nudge');
+  void box.offsetWidth; // restart the shake
+  box.classList.add('nudge');
 }
 
 function leaveInvite() {
   if (!confirm('Leave this invite? Your videos stay. Open the invite link again to come back.')) return;
+  if (pings.on) turnOffPings(state.worker); // this phone stops getting that worker's notifications
   const backup = load(KEYS.ownerBackup, null);
   state.worker = backup;
   save(KEYS.worker, backup);
   save(KEYS.ownerBackup, null);
   state.jobs = [];
   state.me = null;
+  resetPings();
+  renderConnect();
   closeDialog($('#settings'));
   renderJobs();
   renderRole();
@@ -226,6 +355,7 @@ function renderRole() {
   }
   $('#subLine').textContent = sub;
   $('#brandLine').hidden = guest;
+  renderExtras();
 }
 
 // ---------- One-time setup: create the user's worker Space ----------
@@ -343,8 +473,11 @@ async function setupWorker() {
     step('build', 'active');
     $('#token').value = '';
     const url = await waitForBuild(space);
+    const changed = !state.worker || state.worker.url !== url || state.worker.key !== key;
     state.worker = { space, url, key };
     save(KEYS.worker, state.worker);
+    if (changed) resetPings(); // a new worker: its own notifications
+    renderConnect();
     await waitForHealth();
     refreshHealth();
     step('build', 'done');
@@ -419,33 +552,68 @@ function renderWorkerDot(on) {
   $('#workerDot').classList.toggle('on', Boolean(on));
 }
 
+// Step 1: a link, a file, or a surprise. A chosen file or the surprise shows as a chip with ✕.
+function renderSource() {
+  const chip = Boolean(state.file || state.surprise);
+  $('#fileChip').hidden = !chip;
+  $('#linkField').hidden = chip;
+  $('#fileName').textContent = state.file ? state.file.name || 'Your video'
+    : state.surprise ? 'Surprise: no video needed' : '';
+  $('#step1').classList.toggle('done', chip || /^https?:\/\/\S+$/i.test($('#link').value.trim()));
+}
+
 function setFile(file) {
   state.file = file;
-  $('#fileChip').hidden = !file;
-  $('#linkField').hidden = Boolean(file);
-  $('#fileName').textContent = file ? file.name || 'Your video' : '';
+  if (file) state.surprise = false;
   if (!file) $('#file').value = '';
+  renderSource();
+  renderExtras(); // a photo can't have the Real → AI opening
+}
+
+// Surprise me picks the surprise; ✕ (on = false) clears a surprise or a chosen file.
+function setSurprise(on) {
+  state.surprise = on;
+  state.file = null;
+  $('#file').value = '';
+  renderSource();
+  renderOptions();
 }
 
 async function onMake(e) {
   e.preventDefault();
-  const note1 = $('#note');
+  if (state.surprise) {
+    submit({ kind: 'surprise' });
+    return;
+  }
   if (state.file) {
     submit({ kind: 'file', file: state.file });
     return;
   }
   const link = $('#link').value.trim();
   if (!/^https?:\/\/\S+$/i.test(link)) {
-    note(note1, 'Paste a video link first (or upload a video, or tap surprise me).', 'bad');
+    note($('#note'), 'Step 1 first: paste a link, upload a video, or tap Surprise me.', 'bad');
+    const step1 = $('#step1');
+    step1.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    step1.classList.remove('nudge');
+    void step1.offsetWidth; // restart the shake
+    step1.classList.add('nudge');
     return;
   }
   submit({ kind: 'link', url: link });
 }
 
+let sending = false; // a video is on its way: the Make button stays busy (a job-list refresh must not free it)
+
 async function submit(what) {
+  unlockSound(); // still inside the tap: the "ready" chime can play later
+  if (sending) return;
   const msg = $('#note');
   if (state.music === 'upload' && !state.songFile) {
-    note(msg, 'Choose your song file first (Music, Upload my song), or pick another music option.', 'bad');
+    note(msg, 'Choose your song file first (Music, Upload a song), or pick other music.', 'bad');
+    return;
+  }
+  if (!state.worker && standalone()) {
+    askForLink();
     return;
   }
   if (!state.worker) {
@@ -455,13 +623,15 @@ async function submit(what) {
   }
   note(msg, '');
   const btn = $('#makeBtn');
+  sending = true;
   btn.disabled = true;
   btn.textContent = what.kind === 'file' ? 'Picking the best moments…' : 'Sending…';
   const count = makeCount();
+  const draft = isDraft();
   try {
     const form = new FormData();
     form.append('count', String(count));
-    form.append('draft', String(state.preview));
+    form.append('draft', String(draft));
     form.append('clips', String(state.clips));
     form.append('captions', String(state.captions));
     form.append('template', state.style);
@@ -476,19 +646,45 @@ async function submit(what) {
     form.append('idea', $('#idea').value.trim());
     form.append('animal', $('#animalOpt').value.trim());
     if (state.music === 'upload') form.append('song', state.songFile);
-    let tagMissing = false;
+    for (const x of EXTRAS) if (canDo(x.key)) form.append(x.key, extraValue(x.key));
+    const missing = []; // never let the name tag or the Follow me card stop a video
     if (state.brand && !isGuest()) {
       try {
         form.append('badge', await brandBadge(), 'badge.png');
       } catch {
-        tagMissing = true; // never let the name tag stop a video
+        missing.push('your name tag');
+      }
+    }
+    // The owner's Follow me card goes with every video, so the ending can also be switched on later in Edit.
+    if (canDo('outro') && !isGuest()) {
+      try {
+        form.append('endcard', await brandEndCard(), 'endcard.png');
+      } catch {
+        if (extraOn('outro')) missing.push('the Follow me ending');
       }
     }
     if (what.kind === 'link') form.append('url', what.url);
     if (what.kind === 'surprise') form.append('surprise', 'true');
     if (what.kind === 'file') {
-      const pictures = await picturesFromFile(what.file, state.clips, count);
+      // A one-shot worker starts each video from ONE picture (video k: the sharpest moment in part k of
+      // the clip) and carries it on from there; an older worker starts every clip from its own picture.
+      // With the Real → AI opening, the real seconds before each picture go along as frames.
+      const { pictures, openings } = canDo('chain')
+        ? await picturesFromFile(what.file, count, 1, {
+          perVideo: true,
+          opening: extraOn('opening'),
+          onOpening: (k, n) => { btn.textContent = n > 1 ? `Getting the real start ${k + 1} of ${n}…` : 'Getting the real start…'; },
+        })
+        : await picturesFromFile(what.file, state.clips, count);
       pictures.forEach((blob, i) => form.append('images', blob, `picture_${i}.jpg`));
+      // All openings play at one frame rate: the smoothest one's. (A busy phone can miss every other frame
+      // of one opening; then that one is left out, not the smooth ones.)
+      const fps = Math.max(0, ...openings.map((o) => (o ? o.fps : 0)));
+      openings.forEach((o, k) => {
+        if (!o || Math.abs(o.fps - fps) > fps * 0.1) return;
+        o.frames.forEach((f, i) => form.append('hooks', f, `v${k}_${String(i).padStart(3, '0')}.jpg`));
+      });
+      if (fps) form.append('hook_fps', fps.toFixed(3));
       if (state.music === 'mine' && isVideoFile(what.file)) {
         if (what.file.size < 150 * 1024 * 1024) form.append('source', what.file);
         else toast('That video is too big to keep its sound, so it gets funny music.');
@@ -502,16 +698,25 @@ async function submit(what) {
     state.jobs = [...made, ...state.jobs.filter((j) => !ids.has(j.id))];
     renderJobs();
     renderRole();
+    renderPings(); // offers notifications while it's being made
     $('#link').value = '';
+    state.surprise = false;
     setFile(null);
-    const kind = state.preview && made[0].draft ? 'preview' : 'video';
+    renderOptions();
+    const kind = draft && made[0].draft ? 'preview' : 'video';
     const got = made.length > 1 ? `${made.length} ${kind}s on the way` : `Your ${kind} is on the way`;
-    toast(`${got}${tagMissing ? ' (without your name tag this time)' : ''}. You can close the app, it keeps working.`);
+    toast(`${got}${missing.length ? ` (without ${missing.join(' and ')} this time)` : ''}. You can close the app, it keeps working.`);
+    // On a phone the list is below the form: show the new card.
+    if (!matchMedia('(min-width: 960px)').matches) {
+      const card = $('#jobs .job');
+      if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
     schedulePoll(2000);
   } catch (e) {
     note(msg, e.waking ? 'Your worker is waking up (takes up to a minute). Tap Make it again in a moment.' : e.message, 'bad');
     if (e.waking) wakeWorker();
   } finally {
+    sending = false;
     renderMake();
   }
 }
@@ -522,7 +727,10 @@ function makeCount() {
   return Math.max(1, Math.min(state.count, left));
 }
 
-// The Export block (how many videos, quick preview) and the Make button.
+// A 5 s video is one clip, so its "preview" would already be the whole video: no preview then.
+const isDraft = () => state.preview && state.clips > 1;
+
+// Step 4 (length, how many, quick preview) and the Make button.
 function renderMake() {
   const left = isGuest() && state.me ? state.me.uses_left : Infinity;
   document.querySelectorAll('#countSeg button').forEach((b) => {
@@ -530,20 +738,26 @@ function renderMake() {
   });
   const n = makeCount();
   setSeg('countSeg', n);
-  $('#previewOpt').checked = state.preview;
-  const clips = n * (state.preview ? 1 : state.clips);
-  let help = state.preview
-    ? 'Only the first clip of each video is animated, so previews come fast. Edit them as often as you like, then tap Finish for the full video.'
-    : 'Each video is made in full straight away.';
-  if (n > 1) help += ` Each of the ${n} videos gets its own ideas${state.file || $('#link').value ? ' and its own moments' : ''}.`;
-  if (clips > 4) help += ` That's ${clips} AI clips: free time makes about 3–5 a day, so some finish later by themselves.`;
-  $('#exportHelp').textContent = help;
+  const draft = isDraft();
+  $('#previewOpt').checked = draft;
+  $('#previewOpt').disabled = state.clips === 1;
+  $('#previewSub').textContent = state.clips === 1 ? 'Not needed for 5 s'
+    : oneShot() ? `See the first 5 s fast. Finish adds the other ${(state.clips - 1) * 5} s.`
+      : 'Only clip 1 moves. Finish the rest later.';
+  const ai = n * (draft ? 1 : state.clips);
+  const each = clipTime() + (ai === 1 ? '' : ' each') + (state.health && state.health.pc ? ' on your PC' : '');
+  let help = `Uses ${ai} AI clip${ai === 1 ? '' : 's'} (${each}).`;
+  if (isGuest() && state.me) help += ` You have ${state.me.uses_left} video${state.me.uses_left === 1 ? '' : 's'} left.`;
+  else help += ai > 4 ? ' Free time makes about 3–5 a day, so some finish later by themselves.' : ' Free time makes about 3–5 a day.';
+  $('#exportHelp').textContent = nb(help);
   const btn = $('#makeBtn');
   const out = isGuest() && state.me && state.me.uses_left <= 0;
-  btn.disabled = Boolean(out);
-  if (out) btn.textContent = 'No videos left';
-  else if (state.preview) btn.textContent = n > 1 ? `Make ${n} previews` : 'Make a preview';
-  else btn.textContent = n > 1 ? `Make ${n} videos` : 'Make it';
+  if (!sending) { // while a video is being sent, the button says how that is going
+    btn.disabled = Boolean(out);
+    if (out) btn.textContent = 'No videos left';
+    else if (draft) btn.textContent = n > 1 ? `Make ${n} previews` : 'Make a preview';
+    else btn.textContent = n > 1 ? `Make ${n} videos` : 'Make it';
+  }
   $('#surpriseBtn').disabled = Boolean(out);
   if (out) note($('#note'), `You've used all your videos. Ask ${hostName()} for more.`);
   else if ($('#note').textContent.startsWith("You've used all")) note($('#note'), '');
@@ -607,6 +821,83 @@ async function brandBadge() {
   return badgeBlob;
 }
 
+// ---------- The "Follow me" ending card ----------
+
+let endCardBlob = null;
+
+// A see-through 720x1280 card: the creator's picture in a lime ring, @name and a red "Follow for more 🐾"
+// button. The worker lays it over the video's last moment. Drawn here like the badge, so the emoji
+// comes from the phone's own font.
+async function brandEndCard() {
+  if (endCardBlob) return endCardBlob;
+  const img = new Image();
+  img.crossOrigin = 'anonymous'; // keeps the canvas exportable (see brandBadge)
+  img.src = BRAND.avatar;
+  await img.decode();
+  const fam = '"Bricolage Grotesque", system-ui, sans-serif';
+  try {
+    await document.fonts.load(`800 64px ${fam}`);
+  } catch {
+    // the system font is fine too
+  }
+  const W = 720;
+  const H = 1280;
+  const canvas = document.createElement('canvas');
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  const cx = W / 2;
+  const d = 240; // the picture
+  const top = Math.round(H * 0.29);
+  const cy = top + d / 2 + 8;
+  // a soft shadow, the lime ring, the round picture
+  ctx.save();
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
+  ctx.shadowBlur = 28;
+  ctx.shadowOffsetY = 8;
+  ctx.fillStyle = '#c9f04a';
+  ctx.beginPath();
+  ctx.arc(cx, cy, d / 2 + 8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, d / 2, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.drawImage(img, cx - d / 2, cy - d / 2, d, d);
+  ctx.restore();
+  // @name in white with a dark outline, readable on any video
+  let y = top + d + 56;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.font = `800 64px ${fam}`;
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 8;
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+  ctx.strokeText(`@${BRAND.name}`, cx, y);
+  ctx.fillStyle = '#fff';
+  ctx.fillText(`@${BRAND.name}`, cx, y);
+  // the button: a pill drawn with arcs, like the badge (roundRect needs Safari 16)
+  y += 96;
+  const label = 'Follow for more 🐾';
+  ctx.font = `800 40px ${fam}`;
+  const bw = Math.ceil(ctx.measureText(label).width) + 80;
+  const bh = 84;
+  ctx.fillStyle = '#fe2c55';
+  ctx.beginPath();
+  ctx.arc(cx - bw / 2 + bh / 2, y + bh / 2, bh / 2, Math.PI / 2, Math.PI * 1.5);
+  ctx.arc(cx + bw / 2 - bh / 2, y + bh / 2, bh / 2, Math.PI * 1.5, Math.PI / 2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, cx, y + bh / 2 + 2);
+  endCardBlob = await new Promise((resolve, reject) => {
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not draw the card'))), 'image/png');
+  });
+  return endCardBlob;
+}
+
 // ---------- Pictures from an uploaded video (picked on the phone, so only a few small JPEGs are sent) ----------
 
 function waitFor(el, event, ms = 15000) {
@@ -665,8 +956,13 @@ function isVideoFile(file) {
   return file.type.startsWith('video/') || /\.(mov|mp4|m4v|webm|3gp)$/i.test(file.name);
 }
 
-// count pictures (one per clip) for each of `variants` videos: [video 1's, video 2's, ...].
-async function picturesFromFile(file, count, variants = 1) {
+// The sharpest moment in each of `count` parts of the video, for each of `variants` videos
+// ([video 1's, video 2's, ...]). One-shot workers: count = videos, one start picture each (opts.perVideo).
+// Older workers: count = clips per video, variants = videos.
+// opts.opening: every moment comes after some real video, and each video's opening is kept too.
+// opts.onOpening(k, n): called before video k's opening is played (for the Make button).
+// Returns { pictures, openings }; openings[k] is video k's opening ({ frames, fps }) or null.
+async function picturesFromFile(file, count, variants = 1, opts = {}) {
   const isVideo = isVideoFile(file);
   const url = URL.createObjectURL(file);
   try {
@@ -674,7 +970,7 @@ async function picturesFromFile(file, count, variants = 1) {
       const img = new Image();
       img.src = url;
       await img.decode();
-      return [await toJpeg(drawScaled(img, img.naturalWidth, img.naturalHeight, 1024))];
+      return { pictures: [await toJpeg(drawScaled(img, img.naturalWidth, img.naturalHeight, 1024))], openings: [] };
     }
     const video = document.createElement('video');
     video.muted = true;
@@ -691,11 +987,16 @@ async function picturesFromFile(file, count, variants = 1) {
       // autoplay refused: seeking still works on most browsers
     }
     const dur = Number.isFinite(video.duration) ? video.duration : 0;
+    // With the opening, the moments are picked after the first seconds (up to OPENING_LEAD, at most half
+    // the clip), so each video has real footage to start with.
+    const opening = Boolean(opts.opening && opts.perVideo && canGrabOpening());
+    const lead = opening && dur >= 2 * OPENING_MIN ? Math.min(OPENING_LEAD, dur / 2) : 0;
+    const span = dur - lead;
     const samples = dur > 1 ? Math.min(24, Math.max(12, count * variants + 4)) : 1;
     const frames = [];
     for (let i = 0; i < samples; i++) {
       if (samples > 1) {
-        video.currentTime = dur * (0.04 + (0.92 * i) / (samples - 1));
+        video.currentTime = lead + span * (0.04 + (0.92 * i) / (samples - 1));
         await waitFor(video, 'seeked', 8000);
       }
       const canvas = drawScaled(video, video.videoWidth, video.videoHeight, 1024);
@@ -706,18 +1007,151 @@ async function picturesFromFile(file, count, variants = 1) {
     const picks = [];
     for (let v = 0; v < variants; v++) {
       for (let part = 0; part < count; part++) {
-        const lo = (dur * part) / count;
-        const hi = (dur * (part + 1)) / count;
-        const inPart = frames.filter((f) => f.t >= lo && f.t <= hi);
+        const lo = lead + (span * part) / count;
+        const hi = lead + (span * (part + 1)) / count;
+        // parts don't overlap, so two videos never start from the same moment
+        const inPart = frames.filter((f) => f.t >= lo && (f.t < hi || part === count - 1));
         const pool = (inPart.length ? inPart : frames).slice().sort((a, b) => b.score - a.score);
         picks.push(pool[v % pool.length]);
       }
     }
-    if (variants > 1) return Promise.all(picks.map((f) => toJpeg(f.canvas)));
-    return Promise.all([...new Set(picks)].map((f) => toJpeg(f.canvas)));
+    // One-shot workers: picture k is video k's (one picture for all when the clip has just one moment).
+    // Older workers: each moment once.
+    const chosen = variants > 1 || (opts.perVideo && new Set(picks).size > 1) ? picks : [...new Set(picks)];
+    const pictures = await Promise.all(chosen.map((f) => toJpeg(f.canvas)));
+    const openings = [];
+    if (opening) {
+      const played = new Map(); // a moment two videos share is played once
+      for (let k = 0; k < chosen.length; k++) {
+        const f = chosen[k];
+        if (!played.has(f)) {
+          if (opts.onOpening && canGrabOpening()) opts.onOpening(k, chosen.length);
+          played.set(f, await grabOpening(video, f.t));
+        }
+        const got = played.get(f);
+        openings.push(got && { frames: got.frames, fps: got.fps });
+        if (got) pictures[k] = got.picture; // the frame right after the opening's last one
+      }
+    }
+    return { pictures, openings };
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+// ---------- The "Real → AI" opening for uploads ----------
+
+const OPENING_LEAD = 2; // seconds of real video sent before each start picture (the worker uses up to this)
+const OPENING_MIN = 1; // less real video than this before the picture: no opening
+let openingOff = false; // playing for the opening failed on this phone: later uploads don't wait for it
+const canGrabOpening = () => !openingOff && 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
+
+// Plays the real video's last OPENING_LEAD seconds before moment X once, at half speed (so a slow phone
+// keeps every frame), and keeps the frames. The frame on screen at X becomes the start picture, so the
+// real video's last frame and the AI's first frame are neighbours. Needs requestVideoFrameCallback
+// (Chrome 83, Safari 15.4, Firefox 132). Without it, or on any trouble, returns null: no opening, the
+// video is still made.
+async function grabOpening(video, X) {
+  if (!canGrabOpening() || X < OPENING_MIN) return null;
+  const from = Math.max(0, X - OPENING_LEAD);
+  const kept = []; // the opening's frames, at most 30 a second: { t, blob }
+  const encoding = [];
+  // Two canvases, drawn again for every frame (phones limit how much canvas memory a page may hold):
+  // `big` holds the newest frame at full size (the start picture once a later frame shows), `small` the
+  // copy sent as an opening frame (toBlob takes its picture straight away).
+  const big = drawScaled(video, video.videoWidth, video.videoHeight, 1024);
+  const small = drawScaled(big, big.width, big.height, 720);
+  let last = -1; // the newest frame's time
+  let handle = 0;
+  let finished = false;
+  let onEnded = null;
+  let away = document.hidden; // the page was off screen for a while (the phone was busy with another app)
+  const onAway = () => { away = away || document.hidden; };
+  document.addEventListener('visibilitychange', onAway);
+  // On the page while it plays, tiny and see-through: iPhones may pause a muted video that isn't on screen.
+  Object.assign(video.style, { position: 'fixed', left: '0', bottom: '0', width: '2px', height: '2px', opacity: '0.01', pointerEvents: 'none' });
+  document.body.appendChild(video);
+  try {
+    video.currentTime = Math.max(0, from - 0.25);
+    await waitFor(video, 'seeked', 8000);
+    await new Promise((resolve, reject) => {
+      let seen = false;
+      const stop = (err) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(guard);
+        clearTimeout(firstFrame);
+        if (err) reject(err);
+        else resolve();
+      };
+      // At half speed the stretch plays in about twice its length. Frames that don't come (or stop coming)
+      // while the page stays on screen mean this browser can't do it: later uploads skip the opening.
+      const giveUp = (why) => {
+        if (!away && !document.hidden) openingOff = true;
+        stop(new Error(why));
+      };
+      const guard = setTimeout(() => giveUp('too slow'), (X - from + 0.25) * 2000 + 4000);
+      const firstFrame = setTimeout(() => {
+        if (!seen) giveUp('no frames');
+      }, 3000);
+      const onFrame = (now, meta) => {
+        if (finished) return;
+        seen = true;
+        const t = meta.mediaTime;
+        if (t > X + 0.0005) {
+          stop();
+          return;
+        }
+        if (t >= from - 0.02) {
+          big.getContext('2d').drawImage(video, 0, 0, big.width, big.height);
+          last = t;
+          if (!kept.length || t - kept[kept.length - 1].t > 1 / 31) { // the video is made at 30 a second
+            const item = { t, blob: null };
+            kept.push(item);
+            small.getContext('2d').drawImage(big, 0, 0, small.width, small.height);
+            encoding.push(new Promise((ok) => small.toBlob(ok, 'image/jpeg', 0.7)).then((b) => { item.blob = b; }));
+          }
+        }
+        handle = video.requestVideoFrameCallback(onFrame);
+      };
+      onEnded = () => stop();
+      video.addEventListener('ended', onEnded);
+      handle = video.requestVideoFrameCallback(onFrame);
+      video.playbackRate = 0.5;
+      video.play().catch((e) => {
+        if (finished) return; // stopped on purpose
+        if (!away && !document.hidden) openingOff = true;
+        stop(e);
+      });
+    });
+    await Promise.all(encoding);
+  } catch {
+    return null;
+  } finally {
+    finished = true;
+    document.removeEventListener('visibilitychange', onAway);
+    if (handle && video.cancelVideoFrameCallback) video.cancelVideoFrameCallback(handle);
+    if (onEnded) video.removeEventListener('ended', onEnded);
+    video.pause();
+    video.playbackRate = 1;
+    video.remove();
+  }
+  if (last < 0) return null;
+  if (kept.length && kept[kept.length - 1].t === last) kept.pop(); // that one is the picture
+  if (kept.length < 2 || kept.some((k) => !k.blob)) return null;
+  const gaps = kept.slice(1).map((k, i) => k.t - kept[i].t).sort((a, b) => a - b);
+  const fps = Math.min(60, Math.max(10, 1 / gaps[Math.floor(gaps.length / 2)]));
+  // Each frame lasts until the next one (the last until the picture). A frame or three a busy phone
+  // skipped are filled with the one before, so the opening keeps its real timing; after a longer stall
+  // only the smooth part right before the picture is kept.
+  const frames = [];
+  kept.forEach((k, i) => {
+    const slots = Math.max(1, Math.round(((i + 1 < kept.length ? kept[i + 1].t : last) - k.t) * fps));
+    if (slots > 4) frames.length = 0;
+    else for (let j = 0; j < slots; j++) frames.push(k.blob);
+  });
+  if (frames.length < 0.8 * fps) return null; // under 0.8 s: too short for an opening
+  return { frames, picture: await toJpeg(big), fps };
 }
 
 // ---------- Job list ----------
@@ -728,15 +1162,44 @@ function describe(job) {
   if (job.status === 'waiting') {
     const at = job.retry_at ? new Date(job.retry_at * 1000) : null;
     const when = at ? at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'later';
-    return `${job.stage || 'Waiting for free time.'} Next try around ${when}.`;
+    const why = (job.stage || 'Waiting for free time.').replace(/\s*It will finish by itself\.?/, '');
+    return `${why} Tries again by itself around ${when}.`;
   }
   if (job.status === 'failed') return job.error || 'Something went wrong.';
   const len = job.seconds_long ? `${Math.round(job.seconds_long)} sec` : '';
-  if (job.draft) {
-    return ['Preview ready', len, job.wanted > 1 ? 'clip 1 moves, the rest are pictures until you finish' : '']
-      .filter(Boolean).join(' · ');
-  }
+  // A one-shot preview is the first 5 s part of the video (said in the lengths the user picks).
+  if (job.draft && job.chained && job.wanted > 1) return `Preview ready · first 5 of ${job.wanted * 5} sec`;
+  if (job.draft) return ['Preview ready', len].filter(Boolean).join(' · ');
   return ['Ready', len, job.stage].filter(Boolean).join(' · ');
+}
+
+// Keeps number ranges such as "1–2 min" or "3–5 a day" on one line.
+const nb = (text) => String(text).replace(/(\d)–(\d)/g, '$1\u2060–\u2060$2');
+
+// Clips a preview still has to animate when you tap Finish.
+const clipsLeft = (job) => Math.max(0, (job.wanted || 1) - (job.made || 0));
+
+// How long one AI clip takes: the free online GPUs, or the user's own PC.
+const clipTime = () => (state.health && state.health.pc ? '3–5 min' : '1–2 min');
+
+// A v10 worker makes every video one continuous shot (each 5 s part carries on from the one before).
+// Before /health has answered, the page assumes the current worker.
+const oneShot = () => !state.health || canDo('chain');
+
+// About how long Finish takes for `parts` more 5 s parts (one after the other).
+function partsTime(parts) {
+  const [lo, hi] = state.health && state.health.pc ? [3, 5] : [1, 2];
+  return parts === 1 ? `${lo}–${hi} min` : `about ${lo * parts}–${hi * parts} min`;
+}
+
+// What a preview is and what Finish does, in one sentence.
+function previewLine(job) {
+  const rest = clipsLeft(job);
+  if (!rest) return 'Like it? Tap Finish to keep it as your video.';
+  if (job.chained) return `Finish adds the other ${rest * 5} s (${partsTime(rest)}).`;
+  return rest === 1
+    ? `Only clip 1 moves. Finish animates clip ${job.wanted} (${clipTime()}).`
+    : `Only clip 1 moves. Finish animates the other ${rest} (${clipTime()} each).`;
 }
 
 function renderJobs() {
@@ -752,6 +1215,7 @@ function renderJobs() {
         <div class="job-tags" hidden></div>
         <div class="job-stage"></div>
         <div class="meter" hidden><span></span></div>
+        <p class="job-hint" hidden></p>
         <div class="job-actions"></div>
       </div>`;
     const thumb = $('.thumb', card);
@@ -776,7 +1240,7 @@ function renderJobs() {
     };
     if (job.draft) tag('Preview', '');
     if (!isGuest() && job.owner && job.owner !== 'me') tag(`by ${job.owner_name || 'a friend'}`, 'by-friend');
-    $('.job-stage', card).textContent = describe(job);
+    $('.job-stage', card).textContent = nb(describe(job));
     const busy = job.status === 'working' || job.status === 'queued';
     if (busy) {
       $('.meter', card).hidden = false;
@@ -798,22 +1262,34 @@ function renderJobs() {
       thumb.appendChild(play);
       thumb.addEventListener('click', () => openPlayer(job));
     }
+    if (job.status === 'done' && job.draft) {
+      const hint = $('.job-hint', card);
+      hint.textContent = nb(previewLine(job));
+      hint.hidden = false;
+    }
     if (job.status === 'done') {
-      add(job.draft ? 'Watch' : 'Watch & save', 'open', () => openPlayer(job));
-      if (job.editable) add('Edit', '', () => openEditor(job));
-      if (job.draft) add('Finish', 'finish', () => finishJob(job));
+      add(job.draft ? '▶ Watch' : '▶ Watch & save', 'open', () => openPlayer(job));
+      if (job.draft) add('Finish video', 'finish', () => finishJob(job));
       else if (job.editable && job.made < job.wanted) add('Make the rest', 'finish', () => finishJob(job));
+      if (job.editable) add('Edit', '', () => openEditor(job));
       if (!job.draft) add('Copy caption', '', () => copyText(job.caption || ''));
     } else if (job.has_video) {
-      add('Watch last version', 'open', () => openPlayer(job));
+      add(job.status === 'waiting' ? '▶ Watch so far' : '▶ Last version', 'open', () => openPlayer(job));
     }
-    if (job.status === 'failed' || job.status === 'waiting') add('Try again', '', () => retryJob(job));
-    if (job.status !== 'working') add('Delete', 'danger', () => deleteJob(job));
+    if (job.status === 'failed') add('Try again', '', () => retryJob(job));
+    if (job.status === 'waiting') add('Try now', '', () => retryJob(job));
+    if (job.status !== 'working') add('Delete', 'del', () => deleteJob(job));
     box.appendChild(card);
   }
   const drafts = state.jobs.filter(finishable);
   $('#finishAll').hidden = drafts.length < 2;
   $('#finishAll').textContent = `Finish all ${drafts.length} previews`;
+  // Phone: a shortcut from the top of the page down to the list
+  const ready = state.jobs.filter((j) => j.status === 'done').length;
+  const busy = state.jobs.filter((j) => j.status === 'queued' || j.status === 'working').length;
+  const parts = [ready && `${ready} ready`, busy && `${busy} making`].filter(Boolean);
+  $('#jumpVideos').hidden = !state.jobs.length;
+  $('#jumpVideos').textContent = parts.length ? `Your videos: ${parts.join(' · ')}` : `Your videos (${state.jobs.length})`;
 }
 
 function replaceJob(job) {
@@ -831,8 +1307,10 @@ function schedulePoll(ms) {
 
 async function refreshJobs() {
   if (!state.worker) return;
+  const asked = state.worker;
   try {
     const res = await api('/jobs');
+    if (state.worker !== asked) return; // another worker on this device meanwhile: its own list is on the way
     state.jobs = res.jobs;
     if (res.me) state.me = res.me;
     renderJobs();
@@ -842,9 +1320,14 @@ async function refreshJobs() {
     renderWorkerDot(true);
     $('#wakeNote').hidden = true;
     showWhenReady(res.jobs);
+    showLinked(res.jobs);
+    announceReady(res.jobs);
+    renderPings();
+    syncPings();
     const busy = res.jobs.some((j) => j.status === 'queued' || j.status === 'working');
     schedulePoll(document.hidden ? 60000 : state.watchAfter ? 2000 : busy ? 4000 : 30000);
   } catch (e) {
+    if (state.worker !== asked) return;
     renderWorkerDot(false);
     $('#wakeNote').hidden = false;
     if (isGuest() && e.status === 401) {
@@ -890,13 +1373,15 @@ async function retryJob(job) {
 
 // A preview (or a video that came out short) becomes the full video: only missing clips are animated.
 async function finishJob(job) {
+  unlockSound(); // a tap: the chime can play when it's ready
   try {
     replaceJob(await api(`/jobs/${job.id}/finish`, { method: 'POST' }));
     state.watchAfter = { id: job.id, rev: job.rev || 0 };
     const missing = Math.max(0, (job.wanted || 1) - (job.made || 0));
-    toast(missing
-      ? `Animating ${missing} more clip${missing === 1 ? '' : 's'} (1–2 min each). You can close the app.`
-      : 'Making the full video…');
+    let msg = 'Making the full video…';
+    if (missing && job.chained) msg = `Adding the other ${missing * 5} s (${partsTime(missing)}). You can close the app.`;
+    else if (missing) msg = `Animating ${missing} more clip${missing === 1 ? '' : 's'} (1–2 min each). You can close the app.`;
+    toast(nb(msg));
     schedulePoll(1500);
   } catch (e) {
     toast(e.message);
@@ -907,6 +1392,7 @@ async function finishJob(job) {
 const finishable = (j) => j.draft && j.status === 'done' && (isGuest() || !j.owner || j.owner === 'me');
 
 async function finishAll() {
+  unlockSound();
   const drafts = state.jobs.filter(finishable);
   let started = 0;
   for (const job of drafts) {
@@ -935,30 +1421,24 @@ async function deleteJob(job) {
 
 // ---------- Player + saving ----------
 
+// Before you post: what sound is in it, and TikTok's AI label. [text, bold] pieces per line.
 function renderPlayerTip(job) {
   const tip = $('#playerTip');
   tip.textContent = '';
-  const add = (text, bold) => {
-    const el = bold ? document.createElement('b') : document.createTextNode(text);
-    if (bold) el.textContent = text;
-    tip.appendChild(el);
+  const line = (...pieces) => {
+    const li = document.createElement('li');
+    for (const [text, bold] of pieces) {
+      const el = bold ? document.createElement('b') : document.createTextNode(text);
+      if (bold) el.textContent = text;
+      li.appendChild(el);
+    }
+    tip.appendChild(li);
   };
-  if (job.draft) {
-    add('Quick preview: ');
-    add(job.wanted > 1 ? 'clip 1 moves, the others are still pictures' : 'this is how it will look', true);
-    add('. Tap Edit to change anything, or Finish for the full video. ');
-  }
-  if (job.music_used === 'funny') add(`"${songLabel(job.track || '')}" is already in the video (its credit is in the caption). `);
-  else if (job.music_used === 'upload') add('Your song is already in the video. ');
-  else if (job.music_used === 'mine') add("Your video's sound is already in it. ");
-  else {
-    add('Sound idea: ');
-    add(job.sound || 'any trending sound', true);
-    add('. Add it in TikTok. ');
-  }
-  add('Before posting, switch on ');
-  add('AI-generated content', true);
-  add('.');
+  if (job.music_used === 'funny') line(['Music: '], [`"${songLabel(job.track || '')}"`, true], [' is already in (credit in the caption).']);
+  else if (job.music_used === 'upload') line(['Your song is already in.']);
+  else if (job.music_used === 'mine') line(["Your video's sound is already in."]);
+  else line(['No music: add '], [job.sound || 'a trending sound', true], [' in TikTok.']);
+  line(['Before posting, turn on '], ['AI-generated content', true], [' in TikTok.']);
 }
 
 const preview = new Audio();
@@ -1033,6 +1513,82 @@ function togglePreview(name) {
   renderOptions();
 }
 
+// ---------- Pet voice: which voice, and ▶ to hear each one ----------
+
+// How a voice is named in the Extras summary and in "Got it".
+const voiceName = (v) => (v === 'auto' || v === 'on' ? 'Pet voice' : `${VOICE_LABELS[v]} voice`);
+
+// The voice choice (main screen and editor): tap a name to pick it, ▶ to hear it. Built once.
+function buildVoices(box, onPick) {
+  box.innerHTML = '';
+  for (const v of VOICE_PICKS) {
+    const tile = document.createElement('div');
+    tile.className = 'voice';
+    tile.dataset.v = v;
+    const pick = document.createElement('button');
+    pick.type = 'button';
+    pick.className = 'voice-name';
+    pick.textContent = VOICE_LABELS[v];
+    pick.addEventListener('click', () => onPick(v));
+    tile.appendChild(pick);
+    if (v !== 'auto') { // Auto has no sound of its own: it picks one of the others
+      const hear = document.createElement('button');
+      hear.type = 'button';
+      hear.className = 'hear';
+      hear.dataset.v = v;
+      hear.addEventListener('click', () => hearVoice(v));
+      tile.appendChild(hear);
+    }
+    box.appendChild(tile);
+  }
+}
+
+function renderVoices(box, current) {
+  box.querySelectorAll('.voice').forEach((tile) => {
+    const on = tile.dataset.v === current;
+    tile.classList.toggle('on', on);
+    $('.voice-name', tile).setAttribute('aria-pressed', String(on));
+  });
+  renderHear();
+}
+
+// ▶ on every voice sample, ■ on the one playing.
+function renderHear() {
+  document.querySelectorAll('.voices .hear').forEach((b) => {
+    const playing = previewing === `voice:${b.dataset.v}` && !preview.paused;
+    b.textContent = playing ? '■' : '▶';
+    b.setAttribute('aria-label', `${playing ? 'Stop' : 'Hear'} the ${VOICE_LABELS[b.dataset.v].toLowerCase()} voice`);
+  });
+}
+
+// Plays a voice's sample in the song preview's player, so any other preview stops. Tap again to stop.
+function hearVoice(v) {
+  const id = `voice:${v}`;
+  clearTimeout(previewStop);
+  if (previewing === id && !preview.paused) {
+    preview.pause();
+    previewing = '';
+  } else {
+    previewing = id;
+    preview.src = voiceUrl(v);
+    preview.play().catch((e) => {
+      if (previewing !== id) return; // another preview took over
+      previewing = '';
+      renderHear();
+      if (e.name !== 'AbortError') toast("Couldn't play that voice");
+    });
+  }
+  renderOptions(); // a song's ■ turns back to ▶
+}
+
+// Pet voice was switched off: its sample stops too.
+function stopVoiceSample() {
+  if (!previewing.startsWith('voice:')) return;
+  preview.pause();
+  previewing = '';
+  renderHear();
+}
+
 function setSeg(id, value) {
   document.querySelectorAll(`#${id} button`).forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === String(value))));
 }
@@ -1042,6 +1598,7 @@ function chips(box, items, current, onPick) {
   for (const item of items) {
     const b = document.createElement('button');
     b.type = 'button';
+    b.dataset.key = item.key;
     b.textContent = item.label;
     b.setAttribute('aria-pressed', String(item.key === current));
     b.addEventListener('click', () => onPick(item.key));
@@ -1093,7 +1650,11 @@ function renderOptions() {
   $('#songUpload').hidden = state.music !== 'upload';
   $('#songName').textContent = state.songFile ? state.songFile.name : 'No song chosen yet';
   $('#partLine').hidden = state.music === 'none';
-  $('#musicHelp').hidden = state.music === 'none';
+  $('#musicRow [data-key="mine"]').disabled = state.surprise;
+  const hint = state.surprise && state.music === 'mine' ? 'A surprise has no sound of its own, so it gets a meme song.'
+    : MUSIC_HINT[state.music] || '';
+  $('#musicHelp').textContent = hint;
+  $('#musicHelp').hidden = !hint;
   $('#musicNote').hidden = !['mine', 'upload'].includes(state.music);
   const canPick = ['track', 'upload'].includes(state.music);
   $('#partSeg [data-v="custom"]').hidden = !canPick;
@@ -1112,7 +1673,41 @@ function renderOptions() {
   $('#captionsOpt').checked = state.captions;
   $('#brandOpt').checked = state.brand;
   setSeg('friendUsesSeg', state.friendUses);
+  renderExtras();
   renderMake();
+}
+
+const canDo = (key) => Boolean(state.health && (state.health.features || []).includes(key));
+
+// The Real → AI opening needs real video: a link or an uploaded video, not a surprise or a photo.
+const noRealVideo = () => state.surprise || Boolean(state.file && !isVideoFile(state.file));
+
+// Whether an extra is on for the next video: the worker makes it, it is switched on, and it fits.
+function extraOn(key) {
+  if (!canDo(key) || (key === 'outro' && isGuest()) || (key === 'opening' && noRealVideo())) return false;
+  return key === 'voice' ? state.extras.voice !== 'off' : Boolean(state.extras[key]);
+}
+
+// The form value: voice is 'off' or a voice; the others are 'true' or 'false'.
+const extraValue = (key) => (key === 'voice' ? (extraOn('voice') ? state.extras.voice : 'off') : String(extraOn(key)));
+
+// The Extras box: its switches, and the one-line summary shown while it is folded.
+function renderExtras() {
+  for (const x of EXTRAS) {
+    $(`#${x.line}`).hidden = !canDo(x.key) || (x.key === 'outro' && isGuest());
+    $(`#${x.id}`).checked = x.key === 'voice' ? state.extras.voice !== 'off' : Boolean(state.extras[x.key]);
+  }
+  $('#voicePick').hidden = !extraOn('voice'); // which voice: shown while Pet voice is on
+  renderVoices($('#voiceSeg'), state.extras.voicePick);
+  $('#openingOpt').disabled = noRealVideo(); // nothing real to open with
+  $('#openingLine small').textContent = noRealVideo() ? 'Needs a real video' : 'Starts with your real clip';
+  const on = EXTRAS.filter((x) => extraOn(x.key)).map((x) => (x.key === 'voice' ? voiceName(state.extras.voice) : x.label));
+  if (state.captions) on.push('Text');
+  if (state.brand && !isGuest()) on.push(`@${BRAND.name}`);
+  if (state.speed !== 'normal') on.push(state.speed === 'slow' ? 'Slow-mo' : 'Fast');
+  const animal = $('#animalOpt').value.trim();
+  if (animal) on.push(animal);
+  $('#extrasSum').textContent = on.length ? on.join(' · ') : 'All off';
 }
 
 function openPlayer(job) {
@@ -1122,9 +1717,17 @@ function openPlayer(job) {
   video.src = mediaUrl(job, 'video');
   $('#playerCaption').textContent = job.caption || '';
   const ready = job.status === 'done';
-  $('#finishBtn').hidden = !(ready && job.draft);
+  const draft = ready && job.draft;
+  const rest = clipsLeft(job);
+  $('#playerKind').hidden = !draft;
+  $('#playerKind').textContent = nb(job.chained && rest
+    ? `Quick preview: the first 5 s. ${previewLine(job)}`
+    : `Quick preview. ${previewLine(job)}`);
+  $('#finishBtn').hidden = !draft;
+  $('#finishBtn').textContent = !rest ? 'Finish' : job.chained ? `Finish: make all ${job.wanted * 5} s` : `Finish: animate ${rest} more`;
   $('#editBtn').hidden = !(ready && job.editable);
-  $('#saveBtn').className = ready && job.draft ? 'plain' : 'go small';
+  $('#saveBtn').className = draft ? 'plain' : 'go small';
+  $('#saveBtn').textContent = draft ? 'Save preview' : 'Save video';
   renderPlayerTip(job);
   openDialog($('#player'));
   video.play().catch(() => {});
@@ -1173,7 +1776,11 @@ async function saveVideo() {
 const edit = {
   job: null, style: 'random', len: 1, speed: 'normal', part: 'auto', songStart: 0, songDuration: 0,
   songFile: null, songFileUrl: null, redo: new Set(),
+  voice: 'auto', // the voice Pet voice gives this video when it is on
 };
+
+const EDIT_EXTRAS = [['voice', 'editVoice', 'editVoiceLine'], ['meme', 'editMeme', 'editMemeLine'],
+  ['opening', 'editOpening', 'editOpeningLine'], ['outro', 'editOutro', 'editOutroLine']];
 
 const cleanAnimal = (text) => text.replace(/[^a-zA-Z ]/g, '').trim().toLowerCase().slice(0, 30);
 
@@ -1213,7 +1820,7 @@ function openEditor(job) {
     o.textContent = label;
     parent.appendChild(o);
   };
-  opt('funny', 'Meme song for the style');
+  opt('funny', 'Auto meme song');
   const group = document.createElement('optgroup');
   group.label = 'Meme songs';
   sel.appendChild(group);
@@ -1221,8 +1828,19 @@ function openEditor(job) {
   if (job.has_song) opt('upload', 'My uploaded song');
   opt('upload-new', job.has_song ? 'Upload a different song…' : 'Upload my song…');
   if (job.has_sound) opt('mine', "My video's sound");
-  opt('none', "None (I'll add a TikTok sound)");
+  opt('none', 'No music (add a TikTok sound later)');
   sel.value = musicValue(job);
+  // The video's own voice, else the one picked on the main screen.
+  edit.voice = VOICE_PICKS.includes(job.voice) ? job.voice : state.extras.voicePick;
+  for (const [key, id, line] of EDIT_EXTRAS) {
+    // Shown when the worker makes it and this video can have it (real footage for the opening,
+    // the owner's Follow me card for the ending).
+    const sent = key === 'voice' ? typeof job.voice === 'string' : typeof job[key] === 'boolean';
+    const fits = key === 'opening' ? Boolean(job.has_hook)
+      : key === 'outro' ? Boolean(job.has_endcard) && !isGuest() : true;
+    $(`#${line}`).hidden = !(canDo(key) && sent && fits);
+    $(`#${id}`).checked = key === 'voice' ? VOICES.includes(job.voice) && job.voice !== 'off' : Boolean(job[key]);
+  }
 
   const box = $('#editTexts');
   box.innerHTML = '';
@@ -1237,14 +1855,15 @@ function openEditor(job) {
     input.type = 'text';
     input.maxLength = 120;
     input.value = text;
-    input.placeholder = 'No text on this clip';
-    input.setAttribute('aria-label', `Text on clip ${i + 1}`);
+    // A one-shot video keeps its text going unless a part has its own.
+    input.placeholder = job.chained && i > 0 ? 'Same text as before' : 'No text here';
+    input.setAttribute('aria-label', `Text on part ${i + 1}`);
     const redo = document.createElement('button');
     redo.type = 'button';
     redo.className = 'redo';
     redo.textContent = '↻';
-    redo.title = 'New idea and new animation for this clip';
-    redo.setAttribute('aria-label', `New idea for clip ${i + 1}`);
+    redo.title = 'New idea and new animation for this part';
+    redo.setAttribute('aria-label', `New idea for part ${i + 1}`);
     redo.addEventListener('click', () => {
       if (edit.redo.has(i)) edit.redo.delete(i);
       else edit.redo.add(i);
@@ -1254,7 +1873,8 @@ function openEditor(job) {
     if (job.draft && i > 0) {
       const still = document.createElement('span');
       still.className = 'still';
-      still.textContent = 'A still picture in the preview. It moves when you finish.';
+      still.textContent = job.chained ? 'Not in the preview yet. Finish adds it.'
+        : 'A still picture in the preview. It moves when you finish.';
       row.appendChild(still);
     }
     box.appendChild(row);
@@ -1348,8 +1968,11 @@ function renderEditor() {
     b.disabled = left <= 0 && i < animatedClips(job) && !edit.redo.has(i);
   });
   const extra = edit.len - (job.texts || []).length;
-  $('#editRedoHelp').textContent = '↻ gives that clip a new idea and a new animation.'
-    + (extra > 0 ? ` ${extra} more clip${extra === 1 ? '' : 's'} will get new ideas.` : '')
+  const firstRedo = Math.min(...[...edit.redo].filter((i) => i < edit.len));
+  const follows = job.chained && Number.isFinite(firstRedo) && firstRedo < Math.min(edit.len, animatedClips(job)) - 1;
+  $('#editRedoHelp').textContent = '↻ = a new idea and animation for that part.'
+    + (follows ? ' The parts after it are made again too, so the video stays smooth.' : '')
+    + (extra > 0 ? ` ${extra} more part${extra === 1 ? '' : 's'} will get new ideas.` : '')
     + (left < Infinity ? ` New animations left for this video: ${left}.` : '');
   chips($('#editStyle'), STYLES, edit.style, (key) => {
     edit.style = key;
@@ -1375,6 +1998,9 @@ function renderEditor() {
   }
   setSeg('editLenSeg', edit.len);
   setSeg('editSpeedSeg', edit.speed);
+  // Which voice: shown while this video's Pet voice is on.
+  $('#editVoicePick').hidden = $('#editVoiceLine').hidden || !$('#editVoice').checked;
+  renderVoices($('#editVoiceSeg'), edit.voice);
   const animate = willAnimate();
   const blocked = left <= 0 && losesAnimation();
   $('#editSave').disabled = blocked;
@@ -1387,6 +2013,7 @@ function renderEditor() {
 }
 
 async function saveEdit() {
+  unlockSound();
   const job = edit.job;
   const form = new FormData();
   form.append('texts', JSON.stringify([...document.querySelectorAll('#editTexts input')].map((i) => i.value.trim())));
@@ -1414,6 +2041,12 @@ async function saveEdit() {
   form.append('speed', edit.speed);
   form.append('captions', String($('#editCaptions').checked));
   if (job.has_badge) form.append('brand', String($('#editBrand').checked));
+  for (const [key, id, line] of EDIT_EXTRAS) {
+    if ($(`#${line}`).hidden) continue;
+    const on = $(`#${id}`).checked;
+    if (key === 'voice') form.append('voice', on ? edit.voice : 'off');
+    else form.append(key, String(on));
+  }
   const redo = [...edit.redo].filter((i) => i < edit.len);
   if (redo.length) form.append('redo', redo.join(','));
   const animate = willAnimate();
@@ -1658,7 +2291,8 @@ function understand(said, currentStyle) {
   let text = ` ${said} `;
   const orders = {};
   const take = (pattern, fn) => {
-    const re = new RegExp(`${LEAD}\\b(?:${pattern})\\b`, 'gi');
+    // a "please" right after an order goes with it ("no ending please")
+    const re = new RegExp(`${LEAD}\\b(?:${pattern})\\b(?:[\\s,]+please\\b)?`, 'gi');
     text = text.replace(re, (whole, ...groups) => (fn(whole, ...groups) === false ? whole : ' '));
   };
   for (const [song, heardAs, needsCue] of SONG_WORDS) {
@@ -1670,6 +2304,26 @@ function understand(said, currentStyle) {
       return true;
     });
   }
+  // The extras (before the music: "no sound effects" is not "no sound").
+  const no = String.raw`(?:no|without(?:\s+(?:any|a|an|the))?|skip(?:\s+the)?)\s+`;
+  const effects = String.raw`(?:(?:meme|sound|funny)\s+)?(?:effects|fx)`;
+  take(String.raw`${no}${effects}|${no}zoom(?:s|ing)?|turn\s+off\s+(?:the\s+)?${effects}`, () => { orders.meme = false; });
+  // ("the cat makes sound effects" is a description: only "meme effects" counts without "with")
+  take(String.raw`(?:with|add|turn\s+on)\s+(?:the\s+|some\s+)?${effects}|meme\s+effects`, () => { orders.meme = true; });
+  const ending = String.raw`(?:ending|outro|end\s*card|end\s+screen)`;
+  take(String.raw`${no}(?:follow(?:[\s-]+me)?\s+)?${ending}`, () => { orders.outro = false; });
+  take(String.raw`(?:(?:a|an|the)\s+)?follow(?:[\s-]+me)?\s+${ending}|(?:with|add)\s+(?:a\s+|an\s+|the\s+)?${ending}`, () => { orders.outro = true; });
+  const opening = String.raw`real(?:[\s-]+(?:to|2)[\s-]+a\.?\s?i\.?)?\s+(?:start|opening|intro)`;
+  take(`${no}${opening}`, () => { orders.opening = false; });
+  take(String.raw`(?:(?:a|an|the)\s+)?${opening}|real[\s-]+(?:to|2)[\s-]+a\.?\s?i\b\.?|start\s+with\s+the\s+real\s+(?:video|clip|one)`, () => { orders.opening = true; });
+  // The pet voice: "no voice", "in a deep voice", "squeaky voice", "with a narrator", "with a pet voice".
+  // ("the cat raises its voice" is a description: a voice word alone isn't an order)
+  const kinds = String.raw`squeaky|squeaking|chipmunk|high[\s-]?pitched|deep|low|narrator|documentary`;
+  const voiceKind = (w) => (/^(?:deep|low)/i.test(w) ? 'deep' : /^(?:narrator|documentary)/i.test(w) ? 'narrator' : 'squeaky');
+  take(String.raw`${no}(?:(?:pet|funny|talking|${kinds})\s+)?voices?(?:[\s-]?over)?|(?:turn\s+off|mute)\s+(?:the\s+)?(?:pet\s+)?voice|voice\s+off`, () => { orders.voice = 'off'; });
+  take(String.raw`(?:(?:a|an|the)\s+)?(${kinds})\s+(?:pet\s+|talking\s+)?voice|(?:the\s+)?(?:pet\s+)?voice\s+(?:is\s+|to\s+)?(${kinds})`, (whole, a, b) => { orders.voice = voiceKind(a || b); });
+  take(String.raw`(?:with|add|use|using)\s+(?:a\s+|the\s+)?narrator`, () => { orders.voice = 'narrator'; });
+  take(String.raw`(?:with|add|turn\s+on|give\s+(?:it|him|her|them|(?:the|my)\s+[a-z]+))\s+(?:a\s+|an\s+|the\s+|some\s+)?(?:(?:pet|funny|talking)\s+)?voice(?:[\s-]?over)?|(?:(?:a|the)\s+)?(?:pet|funny|talking)\s+voice|voice\s+on`, () => { orders.voice = 'on'; });
   take(String.raw`(?:no|without(?:\s+any)?)\s+(?:music|song|sound)`, () => { orders.music = 'none'; });
   take(String.raw`(?:keep|use|with)\s+(?:the\s+|my\s+|its\s+)?(?:own|original)\s+sound|original\s+sound`, () => { orders.music = 'mine'; });
   take(String.raw`(?:make|give\s+me|create|do)?\s*(\d|one|two|three|four|five)\s+(?:different\s+)?(?:videos?|versions?|variations?|takes)`, (whole, n) => {
@@ -1737,18 +2391,43 @@ function orderLabels(o, target) {
   if (o.captions === true) labels.push('Text on');
   if (target === 'main' && o.preview === false) labels.push('Full video');
   if (target === 'main' && o.preview === true) labels.push('Quick preview');
+  if (o.voice && extraOrderFits('voice', target)) labels.push(o.voice === 'off' ? 'No voice' : voiceName(o.voice));
+  for (const [key, on, off] of EXTRA_ORDERS) {
+    if (o[key] !== undefined && extraOrderFits(key, target)) labels.push(o[key] ? on : off);
+  }
   return labels;
+}
+
+// Spoken extras: [key, label when on, label when off, its switch in the editor]. (The pet voice is a
+// word, not on/off: orders.voice is 'off', 'on' (the voice picked last) or a voice.)
+const EXTRA_ORDERS = [['meme', 'Meme effects', 'No effects', 'editMeme'], ['opening', 'Real start', 'No real start', 'editOpening'],
+  ['outro', 'Follow me ending', 'No ending', 'editOutro']];
+
+// A spoken extra counts only where its switch shows (the worker makes it; the ending is the owner's;
+// in the editor, this video can have it).
+function extraOrderFits(key, target) {
+  if (target === 'edit') return !$(`#${EDIT_EXTRAS.find((x) => x[0] === key)[2]}`).hidden;
+  return canDo(key) && !(key === 'outro' && isGuest());
 }
 
 // Sets the options; returns a function that puts them back.
 function applyOrders(o, target) {
+  const extras = EXTRA_ORDERS.filter(([key]) => o[key] !== undefined && extraOrderFits(key, target));
+  const voice = o.voice && extraOrderFits('voice', target) ? o.voice : null;
   if (target === 'edit') {
     const sel = $('#editMusic');
-    const before = { style: edit.style, len: edit.len, speed: edit.speed, music: sel.value, captions: $('#editCaptions').checked };
+    const before = { style: edit.style, len: edit.len, speed: edit.speed, music: sel.value, captions: $('#editCaptions').checked,
+      voice: edit.voice, voiceOn: $('#editVoice').checked };
+    const switchesBefore = extras.map(([, , , id]) => [id, $(`#${id}`).checked]);
     if (o.style) edit.style = o.style;
     if (o.clips) edit.len = o.clips;
     if (o.speed) edit.speed = o.speed;
     if (o.captions !== undefined) $('#editCaptions').checked = o.captions;
+    for (const [key, , , id] of extras) $(`#${id}`).checked = o[key];
+    if (voice) {
+      $('#editVoice').checked = voice !== 'off';
+      if (VOICE_PICKS.includes(voice)) edit.voice = voice;
+    }
     const want = o.music === 'track' ? `track:${o.track}` : o.music;
     if (want && [...sel.options].some((x) => x.value === want)) sel.value = want;
     loadEditSongDuration();
@@ -1757,11 +2436,17 @@ function applyOrders(o, target) {
       Object.assign(edit, { style: before.style, len: before.len, speed: before.speed });
       sel.value = before.music;
       $('#editCaptions').checked = before.captions;
+      for (const [id, checked] of switchesBefore) $(`#${id}`).checked = checked;
+      if (voice) {
+        edit.voice = before.voice;
+        $('#editVoice').checked = before.voiceOn;
+      }
       renderEditor();
     };
   }
   const keys = ['style', 'music', 'track', 'clips', 'count', 'speed', 'captions', 'preview'];
   const before = Object.fromEntries(keys.map((k) => [k, state[k]]));
+  const extrasBefore = { ...state.extras };
   const set = (k, v) => {
     state[k] = v;
     save(KEYS[k], v);
@@ -1774,10 +2459,20 @@ function applyOrders(o, target) {
   if (o.speed) set('speed', o.speed);
   if (o.captions !== undefined) set('captions', o.captions);
   if (o.preview !== undefined) set('preview', o.preview);
+  if (extras.length || voice) {
+    for (const [key] of extras) state.extras[key] = o[key];
+    if (VOICE_PICKS.includes(voice)) state.extras.voicePick = voice;
+    if (voice) state.extras.voice = voice === 'off' ? 'off' : state.extras.voicePick;
+    save(KEYS.extras, state.extras);
+  }
   if (o.music || o.track) songChanged();
   renderOptions();
   return () => {
     keys.forEach((k) => set(k, before[k]));
+    if (extras.length || voice) {
+      state.extras = extrasBefore;
+      save(KEYS.extras, state.extras);
+    }
     songChanged();
     renderOptions();
   };
@@ -1800,6 +2495,327 @@ function heard(box, before, said) {
     typed(box, joinText(before, said, box.maxLength));
     line.hidden = true;
   };
+}
+
+// ---------- Home Screen app + "your video is ready" ----------
+// antics can live on the Home Screen (manifest.json + sw.js). When a video is ready, an open app chimes,
+// buzzes and counts it in the title and on the icon. With notifications on, the phone also gets one when
+// antics is closed (Web Push: the worker sends it through the browser's own free push service). Only
+// workers that list 'push' in /health "features" can send them.
+
+const APP_TITLE = document.title;
+const pings = {
+  reg: null, // the service worker
+  started: false, // registering the service worker has finished (or failed)
+  key: null, // the worker's push key, fetched ahead so a tap goes straight to the permission prompt
+  keyAsked: false,
+  on: false, // this phone gets notifications from the current worker
+  synced: '', // which worker this phone's notifications were last checked with
+  syncing: false,
+  seen: null, // ready videos already announced (null until the first list arrives)
+  unseen: 0, // got ready while antics was in the background
+  install: null, // Chrome's own "Add to Home Screen" prompt, when it offers one
+  audio: null,
+};
+
+const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const pushReady = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const workerPings = () => canDo('push');
+// iPhone Safari in a tab: notifications only work in the Home Screen app.
+const iosTab = () => isIOS() && !standalone() && !pushReady();
+const pingTarget = () => (state.worker ? `${state.worker.url} ${state.worker.key} ${workerPings()}` : '');
+const bytesB64url = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const b64urlBytes = (text) => Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (text.length % 4)) % 4)), (c) => c.charCodeAt(0));
+const subKey = (sub) => {
+  try {
+    return bytesB64url(sub.options.applicationServerKey);
+  } catch {
+    return ''; // this browser doesn't say which key: assume it's ours
+  }
+};
+const jsonPost = (body) => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+async function startApp() {
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault(); // offered as a button in Settings instead
+    pings.install = e;
+    renderPings();
+  });
+  window.addEventListener('appinstalled', () => {
+    pings.install = null;
+    renderPings();
+  });
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', (e) => {
+      const msg = e.data || {};
+      if (msg.type === 'antics-ready') refreshJobs();
+      if (msg.type === 'antics-open') openFromLink(msg.url);
+    });
+    try {
+      pings.reg = await navigator.serviceWorker.register('sw.js');
+    } catch {
+      // no offline copy and no notifications; everything else still works
+    }
+  }
+  pings.started = true;
+  syncPings();
+}
+
+async function pushKey() {
+  if (pings.key) return pings.key;
+  const asked = state.worker;
+  const { key } = await api('/push/key');
+  if (state.worker === asked) pings.key = key;
+  return key;
+}
+
+// Keeps this phone's notifications pointed at the current worker (after an update, an invite, a new key).
+// Checked once per worker, after /health; tried again on the next refresh while the worker sleeps.
+async function syncPings() {
+  const target = pingTarget();
+  if (pings.syncing || !pings.started || !state.health || !target || pings.synced === target) return;
+  pings.syncing = true;
+  try {
+    let on = false;
+    if (workerPings() && pings.reg && pushReady() && Notification.permission === 'granted') {
+      const sub = await pings.reg.pushManager.getSubscription();
+      if (sub && [await pushKey(), ''].includes(subKey(sub))) {
+        await api('/push/subscribe', jsonPost(sub));
+        on = true;
+      }
+    }
+    if (pingTarget() === target) {
+      pings.on = on;
+      pings.synced = target;
+    }
+  } catch {
+    // an older or sleeping worker: tried again on the next refresh
+  } finally {
+    pings.syncing = false;
+    renderPings();
+  }
+}
+
+// Another worker or invite on this phone: its notifications are set up again.
+function resetPings() {
+  pings.key = null;
+  pings.keyAsked = false;
+  pings.on = false;
+  pings.synced = '';
+  pings.seen = null;
+}
+
+async function turnOnPings() {
+  save(KEYS.pingAsked, true);
+  if (!pushReady()) {
+    toast(iosTab() ? 'On iPhone, notifications work in the Home Screen app. Settings shows how.'
+      : "This browser can't show notifications. Try Chrome.");
+    renderPings();
+    return;
+  }
+  if (!workerPings()) {
+    toast(isGuest() ? `Ask ${hostName()} to update antics first.` : 'Update your worker first (Settings), then turn notifications on.');
+    return;
+  }
+  try {
+    // Safari only asks for permission when subscribe() comes straight from the tap, so the key and the
+    // service worker are ready ahead (renderPings, startApp) and nothing else is awaited before it then.
+    const key = pings.key || (await pushKey());
+    const reg = pings.reg || (await navigator.serviceWorker.ready);
+    let sub = null;
+    if (Notification.permission === 'granted') { // allowed before: there may be a subscription already
+      sub = await reg.pushManager.getSubscription();
+      if (sub && ![key, ''].includes(subKey(sub))) {
+        await sub.unsubscribe(); // made for another worker
+        sub = null;
+      }
+    }
+    // This asks for permission (the browser's own prompt) when it wasn't given yet.
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlBytes(key) });
+    await api('/push/subscribe', jsonPost(sub));
+    pings.on = true;
+    pings.synced = pingTarget();
+    toast("Done. You'll get a notification when a video is ready.");
+  } catch (e) {
+    toast(Notification.permission === 'denied'
+      ? 'Notifications are blocked for antics. Allow them in the browser settings, then try again.'
+      : e.waking ? 'Your worker is waking up. Try again in a minute.' : `Couldn't turn notifications on: ${e.message}`);
+  }
+  renderPings();
+}
+
+// worker: the one to tell (Leave and Disconnect pass the one this phone is leaving).
+async function turnOffPings(worker = state.worker) {
+  try {
+    const sub = pings.reg && (await pings.reg.pushManager.getSubscription());
+    if (sub) {
+      if (worker) {
+        await fetch(`${worker.url}/push/unsubscribe`, {
+          ...jsonPost({ endpoint: sub.endpoint }),
+          headers: { 'Content-Type': 'application/json', 'X-Antics-Key': worker.key },
+        }).catch(() => {});
+      }
+      await sub.unsubscribe();
+    }
+  } catch {
+    // already off
+  }
+  if (state.worker === worker) pings.on = false;
+  renderPings();
+}
+
+async function testPing() {
+  try {
+    const res = await api('/push/test', { method: 'POST' });
+    toast(res.sent ? 'Test sent. It shows up in a few seconds.' : 'It didn’t arrive. Turn notifications off and on again.');
+  } catch (e) {
+    toast(e.waking ? 'Your worker is waking up. Try again in a minute.' : e.message);
+  }
+}
+
+async function installApp() {
+  const ask = pings.install;
+  if (!ask) return;
+  ask.prompt();
+  await ask.userChoice.catch(() => {});
+  pings.install = null;
+  renderPings();
+}
+
+// iPhone Safari: the nudge's "Show me how" opens the Home Screen steps in Settings.
+function showAppSteps() {
+  save(KEYS.pingAsked, true);
+  openSettings();
+  $('#appBox').scrollIntoView({ block: 'center' });
+}
+
+// Settings (notifications, the Home Screen app and its link) and the nudge under Your videos.
+function renderPings() {
+  const blocked = pushReady() && Notification.permission === 'denied';
+  const can = pushReady() && workerPings();
+  const ios = iosTab();
+  const owner = Boolean(state.worker) && !isGuest();
+  const inSettings = Boolean(state.worker) && $('#setupPane').hidden; // not while setting up or updating
+  const touch = matchMedia('(pointer: coarse)').matches; // a phone or tablet, not a computer
+  // Notifications: only with a worker that can send them
+  $('#pingBox').hidden = !(inSettings && workerPings());
+  const chip = $('#pingState');
+  chip.textContent = pings.on ? 'on' : blocked ? 'blocked' : 'off';
+  chip.classList.toggle('on', pings.on);
+  $('#pingBtn').textContent = pings.on ? 'Turn off' : 'Turn on';
+  $('#pingBtn').hidden = !can || (blocked && !pings.on);
+  $('#pingTest').hidden = !pings.on;
+  $('#pingRow').hidden = $('#pingBtn').hidden && $('#pingTest').hidden;
+  $('#pingHelp').textContent = ios ? 'On iPhone, notifications work in the Home Screen app. The steps are below.'
+    : blocked ? 'Notifications are blocked for antics. Allow them in the browser settings.'
+      : !pushReady() ? "This browser can't show notifications."
+        : `A notification on this ${touch ? 'phone' : 'computer'} when a video is ready, even when antics is closed.`;
+  // The Home Screen app: how to add it, and the link that connects it (in the browser, not in the app)
+  const tab = !standalone();
+  $('#appSteps').hidden = !(tab && isIOS());
+  $('#appStepCopy').textContent = owner ? 'Copy app link' : 'Copy my invite link';
+  $('#installBtn').hidden = !pings.install;
+  $('#installBtn').textContent = touch ? '📲 Add to Home Screen' : 'Install the app';
+  $('#installHelp').hidden = !tab || isIOS() || Boolean(pings.install);
+  $('#installHelp').textContent = touch ? 'Put antics on your Home Screen: open the browser menu, then Add to Home screen or Install app.'
+    : 'Install antics as an app: open the browser menu, then Install app.';
+  $('#copyAppLink').hidden = !(tab && owner && state.worker.space);
+  $('#copyInvite').hidden = !(tab && isGuest());
+  $('#appLinkHelp').hidden = $('#copyAppLink').hidden && $('#copyInvite').hidden;
+  $('#appLinkHelp').textContent = owner ? 'Keep it private: anyone with this link can use your antics.'
+    : 'Paste it in the Home Screen app, or open it on another phone.';
+  $('#appBox').hidden = !inSettings || (!tab && !pings.install);
+  // The nudge, while one of your videos is being made: once, until you answer it
+  const mine = (j) => isGuest() || !j.owner || j.owner === 'me';
+  const busy = state.jobs.some((j) => ['queued', 'working', 'waiting'].includes(j.status) && mine(j));
+  const offer = workerPings() && !pings.on && !blocked && (can || ios);
+  $('#pingNudge').hidden = !(busy && offer && !load(KEYS.pingAsked, false));
+  $('#pingNudgeText').textContent = ios
+    ? "🔔 Want a notification when it's ready? On iPhone, that needs antics on your Home Screen."
+    : "🔔 Get a notification when it's ready? Then you can close antics.";
+  $('#pingNudgeBtn').textContent = ios ? 'Show me how' : 'Yes, notify me';
+  if (can && !blocked && state.worker && !pings.key && !pings.keyAsked) { // ahead of the tap
+    pings.keyAsked = true;
+    pushKey().catch(() => { pings.keyAsked = false; });
+  }
+}
+
+// A video that just got ready: a chime, a buzz, and a count in the title and on the app icon.
+function announceReady(jobs) {
+  const mine = jobs.filter((j) => j.status === 'done' && (isGuest() || !j.owner || j.owner === 'me'));
+  const keys = mine.map((j) => `${j.id}:${j.rev || 0}`);
+  if (!pings.seen) {
+    pings.seen = new Set(keys); // ready before antics opened: nothing to announce
+    return;
+  }
+  const fresh = mine.filter((j, i) => !pings.seen.has(keys[i]));
+  keys.forEach((k) => pings.seen.add(k));
+  if (!fresh.length) return;
+  chime();
+  // Phones only allow a buzz after a tap on the page.
+  if (navigator.vibrate && (!navigator.userActivation || navigator.userActivation.hasBeenActive)) navigator.vibrate([90, 60, 90]);
+  if (document.hidden) {
+    pings.unseen += fresh.length;
+    document.title = `(${pings.unseen}) Ready · ${APP_TITLE}`;
+    if (navigator.setAppBadge) navigator.setAppBadge(pings.unseen).catch(() => {});
+  } else if (!anyDialogOpen()) {
+    toast(fresh.length > 1 ? `${fresh.length} videos are ready` : `${fresh[0].draft ? 'Your preview' : 'Your video'} is ready. Tap it to watch.`);
+  }
+}
+
+function clearReady() {
+  pings.unseen = 0;
+  document.title = APP_TITLE;
+  if (navigator.clearAppBadge) navigator.clearAppBadge().catch(() => {});
+}
+
+// Sound needs a tap first on phones: Make it, Finish and Show new version unlock it for the chime later.
+function unlockSound() {
+  try {
+    pings.audio = pings.audio || new (window.AudioContext || window.webkitAudioContext)();
+    if (pings.audio.state === 'suspended') pings.audio.resume().catch(() => {});
+  } catch {
+    // no sound: the toast and the badge still show
+  }
+}
+
+function chime() {
+  const ctx = pings.audio;
+  if (!ctx || ctx.state !== 'running') return;
+  const t = ctx.currentTime;
+  [[880, 0], [1320, 0.14]].forEach(([freq, at]) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.0001, t + at);
+    gain.gain.exponentialRampToValueAtTime(0.25, t + at + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + at + 0.35);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(t + at);
+    osc.stop(t + at + 0.4);
+  });
+}
+
+// index.html#video=<id>, from a notification: open that video once the list is loaded.
+function openFromLink(url, refresh = true) {
+  const m = String(url || '').match(/#video=([\w-]+)/);
+  if (!m) return;
+  state.openVideo = m[1];
+  if (location.hash.startsWith('#video=')) history.replaceState(null, '', location.pathname + location.search);
+  if (refresh && state.worker) refreshJobs();
+}
+
+function showLinked(jobs) {
+  const id = state.openVideo;
+  if (!id) return;
+  state.openVideo = null;
+  const job = jobs.find((j) => j.id === id);
+  if (!job) toast('That video is gone.');
+  else if (job.has_video) {
+    [...document.querySelectorAll('dialog')].forEach((d) => d.open && closeDialog(d));
+    openPlayer(job);
+  }
 }
 
 // ---------- Settings ----------
@@ -1835,7 +2851,7 @@ async function loadFriends() {
 function renderFriends() {
   const list = $('#friendList');
   list.innerHTML = '';
-  const outdated = Boolean(state.health && state.health.version !== WORKER_VERSION);
+  const outdated = Boolean(state.health && !(Number(state.health.version) >= 7)); // friends came with v7
   $('#friendAdd').hidden = outdated;
   if (outdated) {
     note($('#friendNote'), 'Update your worker first (the button above) to invite friends.');
@@ -1944,6 +2960,10 @@ async function refreshHealth() {
     return; // asleep or offline: keep the last known state
   }
   renderPc();
+  renderExtras();
+  renderMake();
+  renderPings();
+  syncPings();
 }
 
 function renderPc() {
@@ -1985,6 +3005,11 @@ async function getPairCode() {
 function renderSettings() {
   const guest = isGuest();
   $('#guestPane').hidden = !guest;
+  $('#setupLinkLine').hidden = !(standalone() && !state.worker); // the Home Screen app: the link is quicker
+  // Notifications and the Home Screen app sit near the top: the owner's after the worker line, a friend's
+  // before Leave this invite.
+  if (guest) $('#guestPane').insertBefore($('#appBoxes'), $('#guestPane > .row'));
+  else $('#optionsPane').insertBefore($('#appBoxes'), $('#optionsPane > .friends-box'));
   if (guest) {
     $('#setupPane').hidden = true;
     $('#optionsPane').hidden = true;
@@ -1994,6 +3019,7 @@ function renderSettings() {
       ? `${host} gave you ${me.uses_left + me.used} videos. ${me.uses_left} left.`
       : `You're using ${host}'s antics.`;
     $('#guestFine').textContent = `Your videos are made on ${host}'s free worker, and only you and ${host} can see them. Ask ${host} if you need more.`;
+    renderPings();
     return;
   }
   const updating = state.setupMode === 'update' && Boolean(state.worker);
@@ -2014,6 +3040,7 @@ function renderSettings() {
     $('#workerState').textContent = state.online ? '(running)' : '(asleep or starting)';
   }
   renderPc();
+  renderPings();
 }
 
 function init() {
@@ -2031,9 +3058,26 @@ function init() {
   state.brand = load(KEYS.brand, true) !== false;
   state.count = pickSaved(KEYS.count, [1, 2, 3, 5], 1);
   state.preview = load(KEYS.preview, true) !== false;
+  const savedExtras = load(KEYS.extras, null) || {};
+  state.extras = { ...EXTRAS_DEFAULT };
+  for (const k of ['meme', 'opening', 'outro']) if (typeof savedExtras[k] === 'boolean') state.extras[k] = savedExtras[k];
+  if (VOICES.includes(savedExtras.voice)) state.extras.voice = savedExtras.voice;
+  if (VOICE_PICKS.includes(savedExtras.voicePick)) state.extras.voicePick = savedExtras.voicePick;
+  if (state.extras.voice !== 'off') state.extras.voicePick = state.extras.voice; // the voice in use is the pick
   readInvite();
+  openFromLink(location.hash, false);
   $('#idea').value = load(KEYS.idea, '');
   $('#animalOpt').value = load(KEYS.animal, '');
+  buildVoices($('#voiceSeg'), (v) => {
+    state.extras.voicePick = v;
+    state.extras.voice = v;
+    save(KEYS.extras, state.extras);
+    renderExtras();
+  });
+  buildVoices($('#editVoiceSeg'), (v) => {
+    edit.voice = v;
+    renderEditor();
+  });
   renderOptions();
 
   const onSeg = (id, apply) => document.querySelectorAll(`#${id} button`).forEach((b) => b.addEventListener('click', () => {
@@ -2060,6 +3104,19 @@ function init() {
     renderOptions();
   });
   $('#link').addEventListener('change', renderOptions);
+  $('#link').addEventListener('input', renderSource);
+  for (const x of EXTRAS) {
+    $(`#${x.id}`).addEventListener('change', (e) => {
+      // Pet voice comes back on with the voice picked last.
+      state.extras[x.key] = x.key === 'voice' ? (e.target.checked ? state.extras.voicePick : 'off') : e.target.checked;
+      if (x.key === 'voice' && !e.target.checked) stopVoiceSample();
+      save(KEYS.extras, state.extras);
+      renderExtras();
+    });
+  }
+  for (const ev of ['play', 'pause', 'ended']) preview.addEventListener(ev, renderHear);
+  // Extras are open on a PC (every option in sight) and folded on a phone.
+  if (matchMedia('(min-width: 960px)').matches) $('#extras').open = true;
 
   // The edit window
   const onEditSeg = (id, apply) => document.querySelectorAll(`#${id} button`).forEach((b) => b.addEventListener('click', () => {
@@ -2088,7 +3145,7 @@ function init() {
     $('#editSongStartLabel').textContent = clock(edit.songStart);
   });
   $('#editHear').addEventListener('click', () => {
-    if (!preview.paused) preview.pause();
+    if (!preview.paused && !previewing.startsWith('voice:')) preview.pause(); // a voice sample just gives way
     else playSong(editSongUrl(), 0);
   });
   $('#editHearPart').addEventListener('click', () => {
@@ -2097,9 +3154,13 @@ function init() {
   });
   $('#editIdea').addEventListener('input', renderEditor);
   $('#editAnimal').addEventListener('input', renderEditor);
+  $('#editVoice').addEventListener('change', (e) => {
+    if (!e.target.checked) stopVoiceSample();
+    renderEditor();
+  });
   $('#editSave').addEventListener('click', saveEdit);
   $('#editCancel').addEventListener('click', () => closeDialog($('#editor')));
-  $('#editor').addEventListener('close', () => {
+  onClosed($('#editor'), () => {
     preview.pause();
     if (listening) listening.stop();
     edit.job = null;
@@ -2111,13 +3172,18 @@ function init() {
   $('#captionsOpt').addEventListener('change', (e) => {
     state.captions = e.target.checked;
     save(KEYS.captions, state.captions);
+    renderExtras();
   });
   $('#idea').addEventListener('input', (e) => save(KEYS.idea, e.target.value));
   $('#brandOpt').addEventListener('change', (e) => {
     state.brand = e.target.checked;
     save(KEYS.brand, state.brand);
+    renderExtras();
   });
-  $('#animalOpt').addEventListener('input', (e) => save(KEYS.animal, e.target.value));
+  $('#animalOpt').addEventListener('input', (e) => {
+    save(KEYS.animal, e.target.value);
+    renderExtras();
+  });
   $('#songFile').addEventListener('change', (e) => {
     state.songFile = e.target.files[0] || null;
     songChanged();
@@ -2138,8 +3204,8 @@ function init() {
     }
   });
   $('#file').addEventListener('change', (e) => setFile(e.target.files[0] || null));
-  $('#clearFile').addEventListener('click', () => setFile(null));
-  $('#surpriseBtn').addEventListener('click', () => submit({ kind: 'surprise' }));
+  $('#clearFile').addEventListener('click', () => setSurprise(false));
+  $('#surpriseBtn').addEventListener('click', () => setSurprise(true));
 
   $('#openSettings').addEventListener('click', openSettings);
   $('#closeSettings').addEventListener('click', () => closeDialog($('#settings')));
@@ -2147,22 +3213,26 @@ function init() {
   $('#pairBtn').addEventListener('click', getPairCode);
   $('#updateBtn').addEventListener('click', openUpdate);
   $('#updateBtnMain').addEventListener('click', openUpdate);
-  $('#settings').addEventListener('close', () => {
+  onClosed($('#settings'), () => {
     state.setupMode = 'setup';
     $('#steps').hidden = true;
   });
   $('#redoSetup').addEventListener('click', () => {
     $('#setupPane').hidden = false;
     $('#optionsPane').hidden = true;
+    renderPings();
   });
   $('#disconnect').addEventListener('click', () => {
     if (!confirm('Disconnect this phone from your worker? Your videos stay in your Hugging Face account.')) return;
+    if (pings.on) turnOffPings(state.worker); // no more notifications from it on this phone
     state.worker = null;
     save(KEYS.worker, null);
     state.jobs = [];
+    resetPings();
     renderJobs();
     renderWorkerDot(false);
     renderSettings();
+    renderConnect();
   });
 
   $('#saveBtn').addEventListener('click', saveVideo);
@@ -2176,17 +3246,60 @@ function init() {
   });
   $('#copyBtn').addEventListener('click', () => copyText(state.playing ? state.playing.caption || '' : ''));
   $('#closePlayer').addEventListener('click', () => closeDialog($('#player')));
-  $('#player').addEventListener('close', () => {
+  onClosed($('#player'), () => {
     $('#playerVideo').pause();
     state.playing = null;
   });
 
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) refreshJobs();
+    if (!document.hidden) {
+      clearReady();
+      refreshJobs();
+    }
   });
+
+  // Notifications, the Home Screen app, and the link that connects it
+  $('#pingBtn').addEventListener('click', () => (pings.on ? turnOffPings() : turnOnPings()));
+  $('#pingNudgeBtn').addEventListener('click', () => (iosTab() ? showAppSteps() : turnOnPings()));
+  $('#pingNudgeNo').addEventListener('click', () => {
+    save(KEYS.pingAsked, true);
+    renderPings();
+  });
+  $('#pingTest').addEventListener('click', testPing);
+  $('#installBtn').addEventListener('click', installApp);
+  $('#copyAppLink').addEventListener('click', () => copyText(appLink(), 'Copied. Keep it private.'));
+  $('#copyInvite').addEventListener('click', () => copyText(myInviteLink(), 'Copied your invite link'));
+  $('#connectBtn').addEventListener('click', () => connectWith($('#connectLink').value));
+  $('#connectLink').addEventListener('input', (e) => connectWith(e.target.value, true));
+  $('#connectLink').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') connectWith(e.target.value);
+  });
+  $('#connectPaste').addEventListener('click', async () => {
+    try {
+      $('#connectLink').value = (await navigator.clipboard.readText()).trim();
+    } catch {
+      $('#connectLink').focus();
+      toast('Long-press the box and tap Paste');
+      return;
+    }
+    connectWith($('#connectLink').value);
+  });
+  $('#connectSetup').addEventListener('click', openSettings);
+  $('#toConnect').addEventListener('click', () => {
+    closeDialog($('#settings'));
+    $('#connectLink').focus();
+  });
+  // A link opened while antics is already open: an invite, an app link, or a video from a notification.
+  window.addEventListener('hashchange', () => {
+    if (readInvite()) workerChanged();
+    openFromLink(location.hash);
+  });
+  startApp();
 
   renderWorkerDot(false);
   renderRole();
+  renderSource();
+  renderConnect();
   if (state.worker) refreshJobs();
 }
 

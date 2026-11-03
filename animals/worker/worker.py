@@ -6,11 +6,17 @@
 # nothing is lost when the Space restarts, and jobs that hit the daily free limit finish by
 # themselves once it resets.
 #
-# A quick preview animates only the first clip (the rest show as still pictures). Every made clip
-# is kept, so edits to text, music or speed just re-cut the video in seconds, and Finish animates
-# only what is missing. Friends get their own invite key with a number of videos to make.
+# A video is one continuous shot: each clip after the first starts from the last frame of the clip
+# before. A quick preview is just the first clip; Finish carries it on. Every made clip is kept, so
+# edits to text, music or speed just re-cut the video in seconds, and Finish animates only what is
+# missing. Friends get their own invite key with a number of videos to make.
+# The meme edit (meme.py, sfx.py) adds punch-in zooms and cartoon sound effects at the funny moments.
+# The Real -> AI opening plays the real video's last seconds before the start picture, then switches to
+# the AI with a soft flash and a whoosh; the Follow me ending holds the last frame, blurred, under the
+# owner's follow card (drawn by the page). Both are switched on and off by just re-cutting the video.
 # For browsers that can't turn speech into text themselves, the worker writes it down (Whisper).
 
+import collections
 import json
 import logging
 import os
@@ -37,7 +43,14 @@ from PIL import Image, ImageDraw, ImageFont
 import beats
 import ideas
 
-VERSION = '9'
+try:  # meme edits (zoom punch-ins and sound effects); if their files are missing or broken, it runs without them
+    import meme
+    import sfx
+except Exception as e:
+    logging.getLogger('antics').warning('no meme edits: %s', e)
+    meme = sfx = None
+
+VERSION = '10'
 HF_TOKEN = os.environ.get('HF_TOKEN') or None
 ANTICS_KEY = os.environ.get('ANTICS_KEY', '')
 DATASET = os.environ.get('ANTICS_DATASET', '')
@@ -50,6 +63,16 @@ MAX_VIDEOS = 5  # videos made at once from one link or upload
 GUEST_REDOS = 3  # times a friend may animate a video's clips again (each edit that re-animates counts once)
 SPEEDS = {'slow': 0.8, 'normal': 1.0, 'fast': 1.25}
 MUSIC_MODES = ('funny', 'track', 'upload', 'mine', 'none')
+# The Real -> AI opening: the real video's last seconds before the start picture, then the switch to the AI.
+HOOK_MAX = 2.0  # seconds of real video kept before each start picture (hook.mp4, FPS frames a second)
+HOOK_MIN = 0.8  # less real video than this: no opening
+HOOK_WANT = 1.6  # the opening's length, nudged so the switch lands on a beat of the song
+FLASH, FLASH_FADE = 0.2, 0.25  # the soft flash at the switch (added brightness, gone after FLASH_FADE seconds)
+AI_LABEL_SECONDS = 1.5  # how long the AI label stays after the switch
+DUCK = 0.45  # the music's volume under the real seconds (full from the switch on)
+WHOOSH_PEAK = 0.27  # seconds from the start of sfx's whoosh to its loudest moment (put on the switch)
+# The Follow me ending: the last frame held, blurred and darkened, under the owner's follow card.
+OUTRO_SECONDS = 1.5
 
 # Free Wan image-to-video Spaces, tried in order. They all spend the same daily free GPU time.
 ENGINES = [
@@ -124,8 +147,8 @@ def public(job):
     keys = ['id', 'created', 'status', 'stage', 'progress', 'error', 'label', 'kind', 'caption', 'sound',
             'made', 'wanted', 'retry_at', 'seconds_long', 'template', 'music', 'track', 'music_used', 'speed', 'idea',
             'owner_name', 'animal', 'song_part', 'song_start', 'has_sound', 'has_song', 'rev', 'group', 'index',
-            'batch']
-    view = {k: job.get(k) for k in keys}
+            'batch', 'opening_s']
+    view = {k: job.get(k) for k in keys}  # opening_s: the opening's seconds in the current video (None: none)
     view['has_video'] = bool(job.get('thumb'))  # a finished version exists (also while an edit is being made)
     view['has_thumb'] = bool(job.get('thumb'))
     view['draft'] = bool(job.get('draft'))
@@ -136,6 +159,14 @@ def public(job):
     view['owner'] = job.get('owner', 'me')
     view['redos'] = job.get('redos', 0)
     view['editable'] = job.get('clips_done') is not None and bool(job.get('ideas'))  # not videos from before v7
+    view['chained'] = 'chain' in job  # one continuous shot (v10): a preview is just its first part
+    view['meme'] = bool(job.get('meme', False))  # videos from before v10 keep their look until it is switched on
+    # The opening needs the real seconds before the start picture (kept from a link, or sent by the page with
+    # an upload); the ending needs the owner's follow card. Each is on only when the video can have it.
+    view['has_hook'] = bool(job.get('hook_frames'))
+    view['opening'] = bool(job.get('opening')) and view['has_hook']
+    view['has_endcard'] = bool(job.get('has_endcard'))
+    view['outro'] = bool(job.get('outro')) and view['has_endcard']
     return view
 
 
@@ -445,18 +476,93 @@ def sample_frames(source, folder):
     return duration, scored
 
 
-def pick_frames(sampled, count, folder, variant=0):
-    """The sharpest moment in each part of the video, one per clip. Extra videos made from the same
-    link (variant 1, 2, ...) take the next-sharpest moments, so each one starts differently."""
+def pick_start(sampled, part, parts, path):
+    """The picture a video starts from: the sharpest moment in part `part` of `parts` equal parts of the
+    source. Videos made from the same link at the same time each take their own part, so each one starts
+    differently. Within its part, a moment with real video before it for the opening comes first (at least
+    HOOK_MAX seconds in, else HOOK_MIN). Returns the file name and the moment's time."""
     duration, scored = sampled
-    names = []
-    for part in range(count):
-        lo, hi = duration * part / count, duration * (part + 1) / count
-        in_part = sorted([s for s in scored if lo <= s[0] <= hi] or scored, key=lambda s: -s[1])
-        name = f'input_{part}.jpg'
-        shutil.copy(in_part[variant % len(in_part)][2], folder / name)
-        names.append(name)
-    return names
+    lo, hi = duration * part / parts, duration * (part + 1) / parts
+    pool = [s for s in scored if lo <= s[0] <= hi] or scored
+    pool = [s for s in pool if s[0] >= HOOK_MAX] or [s for s in pool if s[0] >= HOOK_MIN] or pool
+    best = max(pool, key=lambda s: s[1])
+    shutil.copy(best[2], path)
+    return path.name, best[0]
+
+
+SMALL = "scale='min(1280,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2"
+
+
+def frame_rate(path):
+    """A video's frames per second, from its header."""
+    out = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries',
+                          'stream=avg_frame_rate,r_frame_rate', '-of', 'json', str(path)],
+                         check=True, capture_output=True, text=True).stdout
+    stream = json.loads(out)['streams'][0]
+    for key in ('avg_frame_rate', 'r_frame_rate'):
+        num, _, den = (stream.get(key) or '0/0').partition('/')
+        if float(den or 0) > 0 and float(num or 0) > 0:
+            return min(120.0, float(num) / float(den))
+    return 30.0
+
+
+def cut_hook(source, t, folder):
+    """The opening of a video made from a link: the real video's last HOOK_MAX seconds before moment t, at
+    FPS frames a second (hook.mp4), and the start picture (input_0.jpg) written again from the frame right
+    after them in the same decode, so the two meet exactly (two separate seeks can be a frame apart). Kept
+    with every link video, so the opening can be switched on later without the link. Returns the opening's
+    frames (counted: ffmpeg 7.1 reports such files a frame short) and the picture's time; 0 frames: too close
+    to the start of the video, no opening."""
+    rate = frame_rate(source)
+    start = max(0.0, t - HOOK_MAX)
+    before = int(round((t - start) * rate))  # the source's frames before the picture
+    if before < HOOK_MIN * rate:
+        return 0, t
+    hook, picture = folder / 'hook.mp4', folder / 'input_0.new.jpg'
+    try:
+        run(['ffmpeg', '-v', 'error', '-y', '-ss', f'{start:.3f}', '-i', str(source), '-an', '-filter_complex',
+             f'[0:v]split[a][b];[a]trim=end_frame={before},setpts=PTS-STARTPTS,fps={FPS},{SMALL},format=yuv420p[h];'
+             f"[b]trim=start_frame={before}:end_frame={before + 1},scale='min(1024,iw)':-2[p]",
+             '-map', '[h]', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-movflags', '+faststart',
+             str(hook), '-map', '[p]', '-frames:v', '1', '-q:v', '2', str(picture)])
+        frames = clip_info(hook)[2]
+        if frames < HOOK_MIN * FPS or not picture.exists():
+            raise RuntimeError(f'only {frames} frames')
+        os.replace(picture, folder / 'input_0.jpg')
+    except Exception as e:  # the opening must never cost a video
+        log.warning('no opening for %s: %s', folder.name, e)
+        hook.unlink(missing_ok=True)
+        picture.unlink(missing_ok=True)
+        return 0, t
+    first = float(np.ceil(start * rate - 1e-6)) / rate  # the seek starts at the first frame from `start` on
+    return frames, first + before / rate
+
+
+def hook_from_frames(frames, rate, folder):
+    """The opening of an uploaded video: the real frames the page sent (in order; the last one comes right
+    before the start picture), made into hook.mp4 at FPS frames a second. Returns its frames (0: none)."""
+    frames = frames[-int(round(HOOK_MAX * rate)):]  # the last HOOK_MAX seconds before the picture
+    if len(frames) < HOOK_MIN * rate:
+        return 0
+    work = folder / 'hookframes'
+    hook = folder / 'hook.mp4'
+    try:
+        work.mkdir(exist_ok=True)
+        for i, path in enumerate(frames):  # numbered without gaps, for the image sequence reader
+            os.replace(path, work / f'f_{i:03d}.jpg')
+        run(['ffmpeg', '-v', 'error', '-y', '-framerate', f'{rate:.3f}', '-start_number', '0', '-i',
+             str(work / 'f_%03d.jpg'), '-vf', f'fps={FPS},{SMALL},format=yuv420p', '-c:v', 'libx264',
+             '-preset', 'veryfast', '-crf', '18', '-movflags', '+faststart', str(hook)])
+        count = clip_info(hook)[2]
+        if count < HOOK_MIN * FPS:
+            raise RuntimeError(f'only {count} frames')
+        return count
+    except Exception as e:  # the opening must never cost a video
+        log.warning('no opening for %s from the frames sent: %s', folder.name, e)
+        hook.unlink(missing_ok=True)
+        return 0
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 def surprise_picture(prompt, path):
@@ -574,17 +680,10 @@ def plain_text(text):
     return ''.join(ch for ch in text if ord(ch) < 0x2000 or ch in TEXT_OK)
 
 
-def caption_png(text, path, tag=''):
-    """White text with a black outline near the top, like a TikTok caption. tag: a small label lower
-    down (previews use it on clips that are still pictures)."""
+def caption_png(text, path):
+    """White text with a black outline near the top, like a TikTok caption."""
     img = Image.new('RGBA', (OUT_W, OUT_H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    if tag:
-        small = ImageFont.truetype(FONT, 26)
-        width = draw.textlength(tag, font=small)
-        left, top = (OUT_W - width) / 2 - 22, OUT_H * 0.8
-        draw.rounded_rectangle((left, top, left + width + 44, top + 50), radius=25, fill=(22, 19, 16, 215))
-        draw.text((OUT_W / 2, top + 25), tag, font=small, fill='white', anchor='mm')
     text = re.sub(r'\s+', ' ', plain_text(text or '')).strip()
     if text:
         font = ImageFont.truetype(FONT, 46)
@@ -604,68 +703,305 @@ def caption_png(text, path, tag=''):
     img.save(path)
 
 
-def make_still(picture, seconds, out):
-    """A slow zoom into a still picture: stands in for a clip a preview hasn't animated yet."""
-    w, h = Image.open(picture).size
-    scale = min(1.0, 720 / max(w, h))
-    w, h = max(2, int(w * scale) // 2 * 2), max(2, int(h * scale) // 2 * 2)
-    frames = max(1, int(seconds * FPS))
-    zoom = (f"scale={w * 2}:{h * 2},zoompan=z='1+0.06*on/{frames}':d={frames}:x='iw/2-(iw/zoom/2)':"
-            f"y='ih/2-(ih/zoom/2)':s={w}x{h}:fps={FPS},format=yuv420p")
-    run(['ffmpeg', '-v', 'error', '-y', '-i', str(picture), '-vf', zoom, '-frames:v', str(frames),
-         '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', str(out)])
+def clip_info(path):
+    """(width, height, frames, fps) of a clip. Frames are counted, not taken from the file's header."""
+    out = subprocess.run(['ffprobe', '-v', 'error', '-count_packets', '-select_streams', 'v:0', '-show_entries',
+                          'stream=width,height,avg_frame_rate,r_frame_rate,nb_read_packets', '-of', 'json', str(path)],
+                         check=True, capture_output=True, text=True).stdout
+    s = json.loads(out)['streams'][0]
+    num, den = (s.get('avg_frame_rate') or '0/0').split('/')
+    if not float(den or 0) or not float(num):
+        num, den = s['r_frame_rate'].split('/')
+    return s['width'], s['height'], int(s['nb_read_packets']), float(num) / float(den)
 
 
-def join_clips(clips, captions, out, lengths, speed=1.0, audio=None, audio_start=0.0, badge=None):
-    """Each clip fills a 720x1280 frame (cropped if close to vertical, else on a blurred copy), plays at
-    `speed` and is cut to lengths[i] seconds. audio is laid under the whole video from audio_start
-    (looped, faded out), else silence. badge (the creator's name tag) sits on the left, clear of
-    TikTok's buttons and caption."""
+CHAIN_LOOK = 4  # the next clip starts from the sharpest of the last 4 frames (1 = always the very last)
+
+
+def chain_frame(clip, out, look=CHAIN_LOOK):
+    """Saves the picture the next clip starts from (lossless PNG, full size): the sharpest of the clip's
+    last `look` frames, so a blurry last frame doesn't start the next clip. Returns its frame number
+    (the video then cuts this clip on that frame). One pass: counts the frames, keeps the last few."""
+    w, h, _, _ = clip_info(clip)
+    size = w * h * 3
+    proc = subprocess.Popen(['ffmpeg', '-v', 'error', '-i', str(clip), '-map', '0:v:0', '-f', 'rawvideo',
+                             '-pix_fmt', 'rgb24', '-'], stdout=subprocess.PIPE)
+    last, count = collections.deque(maxlen=look), 0
+    while True:
+        buf = proc.stdout.read(size)
+        if len(buf) < size:
+            break
+        last.append(buf)
+        count += 1
+    proc.stdout.close()
+    if proc.wait() != 0 or not count:
+        raise RuntimeError(f'Could not read the end of {Path(clip).name}')
+    pictures = [Image.frombuffer('RGB', (w, h), b, 'raw', 'RGB', 0, 1) for b in last]
+    best = max(range(len(pictures)), key=lambda k: (sharpness(pictures[k]), k))  # a tie: the later one
+    pictures[best].save(out, 'PNG')
+    return count - len(pictures) + best
+
+
+def clip_spans(job, numbers):
+    """Which frames of each clip play, as (first, end) with end exclusive (None = to its end). A clip that
+    began from a frame of the clip before skips its own frame 0 (the same picture again), and the clip
+    before ends on the frame it handed over. Clips from before v10 (no chain) join with a plain cut."""
+    chain = job.get('chain') or {}
+    spans = []
+    for n, i in enumerate(numbers):
+        first = 1 if n and numbers[n - 1] == i - 1 and str(i) in chain else 0
+        nxt = numbers[n + 1] if n + 1 < len(numbers) else None
+        end = chain[str(nxt)] + 1 if nxt == i + 1 and str(nxt) in chain else None
+        spans.append((first, end))
+    return spans
+
+
+def span_seconds(clip, span, speed=1.0):
+    _, _, frames, fps = clip_info(clip)
+    first, end = span
+    end = frames if end is None else max(1, min(end, frames))
+    first = max(0, min(first, end - 1))
+    return first, end, (end - first) / fps / speed
+
+
+def caption_windows(captions, lengths):
+    """[(caption file, start, end)]: clips in a row with the same caption share one window."""
+    out, t = [], 0.0
+    for cap, length in zip(captions, lengths):
+        if out and Path(out[-1][0]).read_bytes() == Path(cap).read_bytes():
+            out[-1] = (out[-1][0], out[-1][1], t + length)
+        else:
+            out.append((cap, t, t + length))
+        t += length
+    return out
+
+
+def first_frame_grey(path, width=96):
+    raw = subprocess.run(['ffmpeg', '-v', 'error', '-i', str(path), '-frames:v', '1', '-vf', f'scale={width}:-2',
+                          '-f', 'image2pipe', '-c:v', 'png', '-'], check=True, capture_output=True).stdout
+    return Image.open(BytesIO(raw)).convert('L')
+
+
+def as_engine(img, w, h, mode):
+    """The picture as an engine framed it for a w x h clip: 'crop' = cut to the clip's shape around the
+    middle (Wan 2.2 for very tall or wide pictures, the PC helper), 'stretch' = squeezed whole (Wan 2.1,
+    Wan 2.2 otherwise)."""
+    if mode == 'crop':
+        a, (iw, ih) = w / h, img.size
+        if iw / ih > a:
+            cw = round(ih * a)
+            img = img.crop(((iw - cw) // 2, 0, (iw - cw) // 2 + cw, ih))
+        else:
+            ch = round(iw / a)
+            img = img.crop((0, (ih - ch) // 2, iw, (ih - ch) // 2 + ch))
+    return img.resize((w, h), Image.LANCZOS)
+
+
+def clip_framing(picture, clip):
+    """How the engine framed the start picture in a clip ('crop' or 'stretch'), found by comparing the clip's
+    first frame with both, and how far off the better one is (mean grey difference: about 3 when it matches;
+    over 25 the clip did not start from the picture)."""
+    w, h, _ = probe(clip)
+    first = np.asarray(first_frame_grey(clip), dtype=np.float32)
+    pic = Image.open(picture).convert('L')
+    best = ('stretch', 999.0)
+    for mode in ('crop', 'stretch'):
+        guess = as_engine(pic, w, h, mode).resize((first.shape[1], first.shape[0]), Image.BILINEAR)
+        err = float(np.abs(np.asarray(guess, dtype=np.float32) - first).mean())
+        if err < best[1]:
+            best = (mode, err)
+    return best
+
+
+def label_png(name, text, ai=False):
+    """The opening's small labels: a red dot and REAL on dark, then a sparkle and AI on lime (drawn shapes:
+    the font may not have the symbols). Drawn once and kept."""
+    path = DATA / 'labels' / f'{name}.png'
+    if path.exists():
+        return path
+    font = ImageFont.truetype(FONT, 30)
+    h, pad, mark = 56, 18, 31
+    w = int(pad + mark + ImageDraw.Draw(Image.new('RGBA', (1, 1))).textlength(text, font=font) + pad)
+    img = Image.new('RGBA', (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.rounded_rectangle((0, 0, w - 1, h - 1), radius=h // 2, fill=(201, 240, 74, 240) if ai else (22, 19, 16, 220))
+    cx, cy = pad + 10.5, h / 2
+    if ai:  # a four-pointed sparkle
+        r, q = 12.5, 3.2
+        draw.polygon([(cx, cy - r), (cx + q, cy - q), (cx + r, cy), (cx + q, cy + q), (cx, cy + r), (cx - q, cy + q),
+                      (cx - r, cy), (cx - q, cy - q)], fill=(22, 19, 16))
+    else:  # the red recording dot
+        draw.ellipse((cx - 10.5, cy - 10.5, cx + 10.5, cy + 10.5), fill=(255, 59, 48))
+    draw.text((pad + mark, h / 2), text, font=font, fill=(22, 19, 16) if ai else 'white', anchor='lm')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    part = path.with_name(f'{name}.{secrets.token_hex(3)}.png')  # two videos can be cut at once
+    img.save(part)
+    os.replace(part, path)
+    return path
+
+
+def fit(src, w, h, dst, tag, frames):
+    """The filters that fill the 720x1280 frame with a w x h video of `frames` frames: cropped if close to
+    vertical, else on a blurred copy of itself."""
+    ratio = (w / h) / (OUT_W / OUT_H)
+    if 0.85 < ratio < 1.18:
+        return f'{src}scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=increase,crop={OUT_W}:{OUT_H},setsar=1{dst}'
+    # overlay drops its last frame on ffmpeg 6-7: give it a copy to drop, then cut back to the real frames
+    return (f'{src}tpad=stop=1:stop_mode=clone,split[s{tag}][f{tag}];'
+            f'[s{tag}]scale=72:128:force_original_aspect_ratio=increase,crop=72:128,boxblur=6,'
+            f'scale={OUT_W}:{OUT_H},eq=brightness=-0.08[bg{tag}];'
+            f'[f{tag}]scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=decrease[fg{tag}];'
+            f'[bg{tag}][fg{tag}]overlay=(W-w)/2:(H-h)/2,trim=end_frame={frames},setsar=1{dst}')
+
+
+def out_frames(seconds):
+    """How many frames the fps filter makes of `seconds` of video (it rounds the end to the nearest frame)."""
+    return int(seconds * FPS + 0.5)
+
+
+def join_clips(clips, captions, out, spans=None, speed=1.0, audio=None, audio_start=0.0, badge=None,
+               zooms=None, sounds=None, sounds_gain=1.0, opening=None, outro=None):
+    """Each clip fills a 720x1280 frame (cropped if close to vertical, else on a blurred copy), plays its
+    frames spans[i] (see clip_spans) at `speed`, and the clips join into one video. Captions go on after
+    the join (an overlay on each clip would drop that clip's last frame, a visible skip at each join).
+    audio is laid under the whole video from audio_start (looped, faded out), else silence. badge (the
+    creator's name tag) sits on the left, clear of TikTok's buttons and caption. The meme edit: zooms
+    (meme.plan) punch in on the joined video, under the captions and the name tag so they stay still,
+    without changing a single frame's time; sounds is a WAV of sound effects as long as the video
+    (sfx.sfx_track, made at sounds_gain), mixed over the music, which dips a little under each one.
+    opening = {'video': hook.mp4, 'frames': its frames, 'keep': how many of its last frames to show,
+    'framing': 'crop' or 'stretch' (how the engine framed clip 1's picture), 'size': clip 1's (w, h), 'duck':
+    quieter music under it}: the Real -> AI opening. The real video plays first at normal speed, framed exactly
+    like clip 1 so its last frame turns into clip 1's first, under clip 1's caption and a REAL label; at the
+    switch a soft flash and the AI label (the sound effects bring the whoosh).
+    outro = {'card': the follow card, a 720x1280 PNG}: the Follow me ending. The last frame is held for
+    OUTRO_SECONDS, blurred and darkened, the card slides in and the name tag goes (the card has the name);
+    the music plays on and fades out. Zooms and sounds are on the whole video's timeline. Returns the length."""
     cmd = ['ffmpeg', '-v', 'error', '-y']
-    parts = []
+    parts, lengths, segs = [], [], []
     n = len(clips)
+    spans = spans or [(0, None)] * n
     for clip in clips:
         cmd += ['-i', str(clip)]
-    for cap in captions:
+    k = n  # the next input's number
+    lead, before = 0.0, 0  # the opening's seconds; frames before the ending
+    if opening:
+        w, h = opening['size']
+        keep = opening['keep']
+        cmd += ['-i', str(opening['video'])]
+        # The real video framed like the engine framed its next frame (clip 1's picture), at twice the clip's
+        # size (it is sharper than the AI), then filled into the frame exactly like clip 1.
+        crop = f"crop='min(iw,ih*{w}/{h})':'min(ih,iw*{h}/{w})'," if opening['framing'] == 'crop' else ''
+        parts.append(f"[{k}:v]trim=start_frame={max(0, opening['frames'] - keep)},setpts=PTS-STARTPTS,"
+                     f'{crop}scale={2 * w}:{2 * h},setsar=1[th]')
+        parts.append(fit('[th]', 2 * w, 2 * h, '[bh]', 'h', keep))
+        parts.append(f'[bh]fps={FPS},format=yuv420p[vh]')
+        segs.append('[vh]')
+        lead, before, k = keep / FPS, keep, k + 1
+    base = None  # the size of the part the current shot began with
+    for i, clip in enumerate(clips):
+        w, h, _, _ = clip_info(clip)
+        first, end, seconds = span_seconds(clip, spans[i], speed)
+        lengths.append(seconds)
+        before += out_frames(seconds)
+        # A part that carries on from the one before shows the same scene, so it gets exactly the same
+        # framing: scaled to the size of the part its shot began with (the Wan 2.1 backup stretches
+        # pictures to 512x896).
+        size = ''
+        if base and first:
+            if (w, h) != base:
+                size = f',scale={base[0]}:{base[1]},setsar=1'
+            w, h = base
+        else:
+            base = (w, h)
+        parts.append(f'[{i}:v]trim=start_frame={first}:end_frame={end},setpts=PTS-STARTPTS{size}[t{i}]')
+        parts.append(fit(f'[t{i}]', w, h, f'[b{i}]', i, end - first))
+        parts.append(f'[b{i}]setpts=PTS/{speed},fps={FPS},format=yuv420p[v{i}]')
+        segs.append(f'[v{i}]')
+    tail = OUTRO_SECONDS if outro else 0.0
+    total = lead + sum(lengths) + tail
+    if outro:  # cut on a whole frame: the held ending is exactly its frames, under the card to the very end
+        count = before + out_frames(tail)
+        total = count / FPS
+    # One copied frame at the very end, for the overlays below to use up instead of a real one; the ending
+    # holds the last frame (copies of it) for its seconds.
+    pad = 1 + (out_frames(tail) if outro else 0)
+    parts.append(''.join(segs) + f'concat=n={len(segs)}:v=1:a=0,tpad=stop={pad}:stop_mode=clone[j0]')
+    last = 'j0'
+    zoom = meme.zoom_filter(zooms, OUT_W, OUT_H) if zooms and meme else ''
+    if zoom:  # on the whole shot's own timeline, so a punch can run across a join
+        parts.append(f'[j0]{zoom}[jz]')
+        last = 'jz'
+    if opening:  # the switch: a soft flash (the text and labels stay as they are), REAL before it, AI after
+        sw = lead - 0.5 / FPS  # between the last real frame and the first AI frame
+        parts.append(f"[{last}]eq=brightness='{FLASH}*(1-(t-{lead:.4f})/{FLASH_FADE})':eval=frame:"
+                     f"enable='between(t,{sw:.4f},{lead + FLASH_FADE - 0.5 / FPS:.4f})'[jf]")
+        cmd += ['-i', str(label_png('real_v10', 'REAL')), '-i', str(label_png('ai_v10', 'AI', ai=True))]
+        y = int(OUT_H * 0.15) - 74  # above the caption, below TikTok's top tabs
+        parts.append(f"[jf][{k}:v]overlay=24:{y}:enable='lt(t,{sw:.4f})'[jr];"
+                     f"[jr][{k + 1}:v]overlay=24:{y}:enable='between(t,{sw:.4f},{lead + AI_LABEL_SECONDS:.4f})'[ja]")
+        last, k = 'ja', k + 2
+    windows = caption_windows(captions, lengths)
+    for m, (cap, t0, t1) in enumerate(windows):
+        # The opening plays under clip 1's caption; the last caption stays on under the ending's blur.
+        t0, t1 = (t0 + lead if m else 0.0), t1 + lead + (tail if m == len(windows) - 1 else 0.0)
         cmd += ['-i', str(cap)]
+        parts.append(f"[{last}][{k}:v]overlay=0:0:enable='between(t,{t0:.3f},{t1 - 0.001:.3f})'[j{k}]")
+        last, k = f'j{k}', k + 1
+    if outro:
+        s = before / FPS  # the first held frame
+        e = s - 0.5 / FPS
+        cmd += ['-loop', '1', '-framerate', str(FPS), '-i', str(outro['card'])]  # (until the video ends)
+        # The blurred copy fades in over the held frame (blurred only from the ending on: before it, it is
+        # see-through anyway); the card fades in while it slides up into place.
+        parts.append(f"[{last}]split[om][ob];[ob]boxblur=22:2:enable='gte(t,{e:.4f})',"
+                     f"eq=brightness=-0.13:saturation=0.85:enable='gte(t,{e:.4f})',format=yuva420p,"
+                     f"fade=t=in:st={s:.4f}:d=0.25:alpha=1[ok];[om][ok]overlay=0:0:enable='gte(t,{e:.4f})'[ov];"
+                     f'[{k}:v]format=rgba,fade=t=in:st=0:d=0.3:alpha=1,setpts=PTS+{s:.4f}/TB[oc];'
+                     f"[ov][oc]overlay=0:'60*max(0,1-(t-{s:.4f})/0.3)^2':eof_action=pass[oe]")
+        last, k = 'oe', k + 1
+    if badge:
+        cmd += ['-i', str(badge)]
+        hide = f":enable='lt(t,{before / FPS - 0.5 / FPS:.4f})'" if outro else ''  # the card shows the name
+        parts.append(f'[{last}][{k}:v]overlay=24:{int(OUT_H * 0.62)}{hide}[out]')
+        k += 1
+    else:
+        parts.append(f'[{last}]null[out]')
     if audio:
         cmd += ['-stream_loop', '-1', '-ss', f'{audio_start:.3f}', '-i', str(audio)]
     else:
         cmd += ['-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo']
-    if badge:
-        cmd += ['-i', str(badge)]
-    total = sum(lengths)
-    for i, clip in enumerate(clips):
-        w, h, _ = probe(clip)
-        ratio = (w / h) / (OUT_W / OUT_H)
-        if 0.85 < ratio < 1.18:
-            parts.append(f'[{i}:v]scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=increase,crop={OUT_W}:{OUT_H},setsar=1[b{i}]')
-        else:
-            parts.append(f'[{i}:v]split[s{i}][f{i}];'
-                         f'[s{i}]scale=72:128:force_original_aspect_ratio=increase,crop=72:128,boxblur=6,'
-                         f'scale={OUT_W}:{OUT_H},eq=brightness=-0.08[bg{i}];'
-                         f'[f{i}]scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=decrease[fg{i}];'
-                         f'[bg{i}][fg{i}]overlay=(W-w)/2:(H-h)/2,setsar=1[b{i}]')
-        parts.append(f'[b{i}][{n + i}:v]overlay=0:0,setpts=PTS/{speed},trim=duration={lengths[i]:.3f},'
-                     f'setpts=PTS-STARTPTS,fps={FPS},format=yuv420p[v{i}]')
-    parts.append(''.join(f'[v{i}]' for i in range(n)) + f'concat=n={n}:v=1:a=0[joined]')
-    if badge:
-        parts.append(f'[joined][{2 * n + 1}:v]overlay=24:{int(OUT_H * 0.62)}[out]')
+    fade = 1.2 if outro else 0.8  # with the ending, the music plays on under the card and fades with it
+    music = f'[{k}:a]aresample=44100,afade=t=in:d=0.1,afade=t=out:st={max(0.0, total - fade):.2f}:d={fade}'
+    if opening and opening.get('duck'):  # quieter under the real video, full from the switch on
+        music += f",volume='if(lt(t,{lead:.4f}),{DUCK},1)':eval=frame"
+    if sounds:
+        cmd += ['-i', str(sounds)]
+        # The music dips 2-6 dB under each effect so it cuts through; the limiter keeps the sum under -1 dBFS
+        # without changing the overall level (level=0) or the timing (latency=1). The dip's key is padded
+        # with silence: sidechaincompress stops when its key ends, and on ffmpeg 7 that dropped up to 1.3 s
+        # of the music still on its way (the sound then ended before the picture). -t ends it all instead.
+        parts.append(f'{music},aformat=channel_layouts=stereo[mus]')
+        parts.append(f'[{k + 1}:a]aresample=44100,aformat=channel_layouts=stereo,asplit[key0][fx];[key0]apad[key]')
+        parts.append(f'[mus][key]sidechaincompress=threshold={0.05 * sounds_gain:.4f}:ratio=2:attack=5:release=250[duck]')
+        parts.append(f'[duck][fx]amix=inputs=2:duration=first:normalize=0,'
+                     f'alimiter=limit=0.89:attack=3:release=60:level=0:latency=1,'
+                     f'afade=t=out:st={max(0.0, total - 0.15):.2f}:d=0.15[aout]')
     else:
-        parts.append('[joined]null[out]')
-    parts.append(f'[{2 * n}:a]aresample=44100,afade=t=in:d=0.1,afade=t=out:st={max(0.0, total - 0.8):.2f}:d=0.8[aout]')
-    cmd += ['-filter_complex', ';'.join(parts), '-map', '[out]', '-map', '[aout]', '-t', f'{total:.2f}',
-            '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', '-pix_fmt', 'yuv420p',
+        parts.append(f'{music}[aout]')
+    cmd += ['-filter_complex', ';'.join(parts), '-map', '[out]', '-map', '[aout]']
+    cmd += ['-frames:v', str(count), '-t', f'{total:.6f}'] if outro else ['-t', f'{total:.3f}']
+    cmd += ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '21', '-pix_fmt', 'yuv420p',
             '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', str(out)]
     run(cmd)
+    return total
 
 
 # ---------- The pipeline ----------
 
 def get_link(job, folder):
-    """Downloads the link and picks its best moments, also for the other videos made from it at the
-    same time (each gets different moments), so the link is fetched only once."""
-    wanted = job['wanted']
+    """Downloads the link and picks the picture the video starts from, also for the other videos made
+    from it at the same time (each from its own part of the source), so the link is fetched only once."""
     others = sorted((j for j in list(jobs.values()) if j is not job and job.get('group')
                      and j.get('group') == job['group'] and j['kind'] == 'link' and not j.get('inputs')),
                     key=lambda j: j.get('index', 0))
@@ -683,34 +1019,40 @@ def get_link(job, folder):
             source, label, text = found
         update(job, stage='Finding the best moments…', progress=0.12)
         sampled = sample_frames(source, folder)
-        inputs = pick_frames(sampled, wanted, folder)
-        picks = [pick_frames(sampled, o['wanted'], job_dir(o['id']), variant=k + 1) for k, o in enumerate(others)]
+        parts = 1 + len(others)
+        # Each video keeps the real seconds before its picture (hook.mp4) now, while there is a source: the
+        # opening can be switched on later too.
+        hooks = []
+        for k, one in enumerate([job] + others):
+            _, at = pick_start(sampled, k, parts, job_dir(one['id']) / 'input_0.jpg')
+            hooks.append(cut_hook(source, at, job_dir(one['id'])))
+        inputs, picks = ['input_0.jpg'], [['input_0.jpg'] for _ in others]
         if job.get('music') == 'mine' and extract_sound(source, folder / 'sound.m4a'):
             sound = folder / 'sound.m4a'
         source.unlink(missing_ok=True)
     except Exception as e:
         # Still blocked (YouTube especially): the pictures the site shows publicly still work.
         log.warning('%s: download failed (%s), trying the public pictures', job['id'], e)
-        inputs, label, text = link_pictures(job, folder, wanted)
-        if not inputs:
+        names, label, text = link_pictures(job, folder, 1 + len(others))
+        if not names:
             raise
-        picks = []
-        for o in others:
-            for name in inputs:
-                shutil.copy(folder / name, job_dir(o['id']) / name)
-            picks.append(list(inputs))
+        inputs, picks = names[:1], []
+        for k, o in enumerate(others):  # each video its own picture while there are enough
+            shutil.copy(folder / names[(k + 1) % len(names)], job_dir(o['id']) / 'input_0.jpg')
+            picks.append(['input_0.jpg'])
+        hooks = [(0, None)] * (1 + len(others))  # no video, no real seconds for an opening
     guessed = said_animal(job) or ideas.guess_animal(text)  # the user's own words first, then the video's title
-    update(job, label=job.get('label') or label, animal=job.get('animal') or guessed, inputs=inputs,
-           has_sound=bool(sound))
-    batch = [(job, inputs + (['sound.m4a'] if sound else []))]
-    for other, names in zip(others, picks):
-        if other['id'] not in jobs:  # deleted meanwhile
-            continue
-        if sound:
-            shutil.copy(sound, job_dir(other['id']) / 'sound.m4a')
-        update(other, label=other.get('label') or label, animal=other.get('animal') or guessed, inputs=names,
-               has_sound=bool(sound))
-        batch.append((other, names + (['sound.m4a'] if sound else [])))
+    extra = ['sound.m4a'] if sound else []
+    batch = []
+    for one, names, (frames, at) in zip([job] + others, [inputs] + picks, hooks):
+        if one is not job:
+            if one['id'] not in jobs:  # deleted meanwhile
+                continue
+            if sound:
+                shutil.copy(sound, job_dir(one['id']) / 'sound.m4a')
+        update(one, label=one.get('label') or label, animal=one.get('animal') or guessed, inputs=names,
+               has_sound=bool(sound), hook_frames=frames, hook_at=round(at, 3) if frames else None)
+        batch.append((one, names + extra + (['hook.mp4'] if frames else [])))
     save_many(batch)
 
 
@@ -734,7 +1076,7 @@ def process(job):
     animal = job.get('animal') or 'animal'
     have = job.get('ideas') or []
     if len(have) != wanted:
-        have = have[:wanted] + new_ideas(job, animal, wanted - len(have))
+        have = have[:wanted] + new_ideas(job, animal, wanted)[len(have):]
         for i, text in (job.get('keep_texts') or {}).items():  # the user's own words from an edit
             if int(i) < len(have):
                 have[int(i)].update(caption=text, typed=True)
@@ -744,56 +1086,71 @@ def process(job):
     if not job.get('sound'):
         update(job, sound=random.choice(ideas.SOUND_IDEAS))
 
-    # A preview animates only the first clip; the others show as still pictures until Finish.
-    # Made clips are kept (also on the Hub), so edits that keep an animation just re-cut the video.
+    # One continuous shot: clip 1 starts from the chosen picture, every clip after it from the end of the
+    # clip before (job['chain'][i] = the frame of clip i-1 that clip i started from). A preview is just
+    # clip 1, and Finish carries it on. Made clips are kept (also on the Hub), so edits that keep them just
+    # re-cut the video.
     limit = 1 if job.get('draft') else wanted
     if job.get('clips_done') is None:  # jobs from before clips were kept
         job['clips_done'] = [f'clip_{i}.mp4' for i in range(wanted) if (folder / f'clip_{i}.mp4').exists()]
-    parts, failed = [], None  # parts: (clip number, video file, animated?)
+    job.setdefault('chain', {})
+    parts, failed = [], None  # parts: (clip number, video file)
     for i, idea in enumerate(job['ideas'][:limit]):
         name = f'clip_{i}.mp4'
         out = folder / name
         if name in job['clips_done']:
             try:
-                parts.append((i, local_file(job, name), True))
+                parts.append((i, local_file(job, name)))
                 continue
             except Exception:  # gone (e.g. an old job after a restart): animate it again
-                job['clips_done'].remove(name)
-        if failed:  # the engines just failed: don't wait on them again for the next clip
-            continue
+                pass
+        drop_clips(job, i)  # every clip after this one would start where this one ends: they go too
+        if i < wanted - 1:
+            idea['twist'] = ''  # the gag comes at the end of the video, not halfway
         where, each = ('Your PC is animating', '3–5 min each') if pc_online() else ('Animating', '1–2 min each')
-        what = 'the preview clip' if job.get('draft') else f'clip {i + 1} of {wanted}'
+        what = 'the preview' if job.get('draft') else f'part {i + 1} of {wanted}'
         update(job, stage=f'{where} {what}… ({each})', progress=0.15 + 0.7 * i / limit)
-        picture = local_file(job, job['inputs'][i % len(job['inputs'])])
         try:
-            make_clip(picture, ideas.video_prompt(idea, animal), job['seconds'], out)
+            if i == 0:
+                picture = local_file(job, job['inputs'][0])
+            else:  # carries straight on from the clip before
+                picture = folder / f'start_{i}.png'
+                handed = chain_frame(parts[-1][1], picture)
+            make_clip(picture, ideas.video_prompt(idea, animal, follow=i > 0), job['seconds'], out)
         except Exception as e:
             log.exception('%s: clip %d failed', job['id'], i + 1)
             failed = e
-            continue
-        parts.append((i, out, True))
+            break  # the clips after it need its last frame
+        if i:
+            job['chain'][str(i)] = handed
+        parts.append((i, out))
         job['clips_done'].append(name)
-        update(job, made=sum(1 for p in parts if p[2]))
+        update(job, made=len(parts))
         save(job, [name])
     if not parts:
         raise failed or RuntimeError('No clips could be made')
     made = len(parts)
-    if job.get('draft'):
-        for i in range(limit, wanted):
-            out = folder / f'still_{i}.mp4'
-            make_still(local_file(job, job['inputs'][i % len(job['inputs'])]), job['seconds'], out)
-            parts.append((i, out, False))
 
     update(job, stage='Putting your video together…', progress=0.9)
-    clips, captions = [], []
-    for n, (i, clip, animated) in enumerate(parts):
+    clips, captions, text = [], [], ''
+    for n, (i, clip) in enumerate(parts):
+        if job.get('captions', True):
+            text = job['ideas'][i]['caption'] or text  # a part without its own text keeps the text before it
         path = folder / f'caption_{n}.png'
-        caption_png(job['ideas'][i]['caption'] if job.get('captions', True) else '', path,
-                    tag='' if animated else 'PREVIEW · moves when you tap Finish')
+        caption_png(text, path)
         clips.append(clip)
         captions.append(path)
+    spans = clip_spans(job, [i for i, _ in parts])
     speed = SPEEDS.get(job.get('speed'), 1.0)
-    lengths = [probe(c)[2] / speed for c in clips]
+    length = sum(span_seconds(c, s, speed)[2] for c, s in zip(clips, spans))  # the animated parts' seconds
+    if failed and job.get('thumb') and length < (job.get('ai_seconds') or job.get('seconds_long') or 0) - 0.5:
+        # Stopped early (e.g. a part made again ran out of free time), and the video so far is shorter than
+        # the one the user already has: that one stays until the rest is made.
+        raise failed
+    hook, outro = opening_for(job, parts), outro_for(job)
+    tail = OUTRO_SECONDS if outro else 0.0
+    have = hook['frames'] / FPS if hook else 0.0
+    lead = min(HOOK_WANT, have)
     music, audio, credit, used, natural = job.get('music', 'funny'), None, '', 'none', 'start'
     if music == 'mine' and job.get('has_sound'):
         audio, used = local_file(job, 'sound.m4a'), 'mine'
@@ -805,38 +1162,191 @@ def process(job):
             credit = ideas.MUSIC_CREDIT.format(track=job['track'])
         except requests.RequestException as e:
             log.warning('%s: no music this time (%s)', job['id'], e)
-    start = 0.0
+    start, info = 0.0, None
+    synced = bool(hook and used == 'mine' and job.get('hook_at') is not None)
+    if synced:  # the video's own sound, in step with its real seconds
+        lead = round(lead * FPS) / FPS
+        start = max(0.0, job['hook_at'] - lead)
     if audio:
         part = job.get('song_part') if job.get('song_part') in ('start', 'drop', 'custom') else natural
         try:
             info = beats.analyse(audio)
-            if part == 'custom':  # the user's own start time, nudged onto the nearest beat
+            if synced:
+                pass
+            elif part == 'custom':  # the user's own start time, nudged onto the nearest beat
                 start = beats.nearest_beat(info, max(0.0, float(job.get('song_start') or 0)))
             else:
-                start = beats.pick_start(info, sum(lengths), part)
-            lengths = beats.snap_cuts(info, start, lengths)  # cuts land on the beat
+                start = beats.pick_start(info, lead + length + tail, part)
+            if hook and used != 'mine':  # the switch from the real video to the AI lands on a beat
+                lead = hook_length(info, start, have)
+            # No cutting clips onto the beat any more: the parts join without a cut, and trimming one would
+            # make the picture jump at the join.
         except Exception as e:  # the beat finder must never cost a video
             log.warning('%s: beat finder skipped (%s)', job['id'], e)
+    opening = None
+    if hook:  # whole frames of the real video
+        keep = max(1, min(hook['frames'], round(lead * FPS)))
+        lead = keep / FPS
+        opening = dict(hook, keep=keep, duck=used not in ('mine', 'none'))  # (its own sound is the real moment)
+    else:
+        lead = 0.0
+    total = lead + length + tail
     badge = local_file(job, 'badge.png') if job.get('has_badge') and job.get('brand', True) else None
-    # Written next to the old version and swapped in, so the old one plays until the new one is ready.
-    join_clips(clips, captions, folder / 'final.new.mp4', lengths, speed, audio, start, badge)
+    # The whoosh into the switch, when the video has sound (with no music the user adds a TikTok sound).
+    whoosh = [(round(lead - WHOOSH_PEAK, 4), 'whoosh')] if opening and (used != 'none' or job.get('meme')) else []
+    zooms, sounds, gain = meme_edit(job, folder, parts, spans, speed, audio, info, start, used, lead, total, whoosh)
+    # Written next to the old version and swapped in, so the old one plays until the new one is ready. The
+    # extras must never cost a video: if the join fails, it is made again without the meme edit, then
+    # without the opening and the ending too.
+    tries = [(zooms, sounds, gain, opening, outro)]
+    if zooms or sounds:
+        tries.append((None, None, 1.0, opening, outro))
+    if opening or outro:
+        tries.append((None, None, 1.0, None, None))
+    effects = 'the meme edit' if job.get('meme') else 'the sound effects'
+    try:
+        for n, (z, s, g, o, e) in enumerate(tries):
+            try:
+                join_clips(clips, captions, folder / 'final.new.mp4', spans, speed, audio, start, badge, z, s, g,
+                           o, e)
+                opening, outro = o, e
+                break
+            except Exception as err:
+                if n == len(tries) - 1:
+                    raise
+                why = getattr(err, 'stderr', None)  # ffmpeg's first line names the filter, its last what failed
+                lines = why.decode(errors='replace').strip().splitlines() if isinstance(why, bytes) else []
+                why = ' / '.join(dict.fromkeys(line[:200] for line in (lines[:1] + lines[-1:]))) if lines else repr(err)
+                had = [x for x, on in ((effects, z or s), ('the opening', o), ('the ending', e)) if on]
+                drop = [effects] if z or s else had
+                log.warning('%s: the video did not join with %s (%s); made again without %s', job['id'],
+                            ' and '.join(had), why, ' and '.join(drop))
+                if z or s:
+                    (folder / 'meme.json').unlink(missing_ok=True)
+    finally:
+        if sounds:
+            sounds.unlink(missing_ok=True)
+    lead = lead if opening else 0.0
     os.replace(folder / 'final.new.mp4', folder / 'final.mp4')
-    run(['ffmpeg', '-v', 'error', '-y', '-ss', '1', '-i', str(folder / 'final.mp4'), '-frames:v', '1',
+    at = lead + 1  # the thumbnail shows the AI part
+    run(['ffmpeg', '-v', 'error', '-y', '-ss', f'{at:.3f}', '-i', str(folder / 'final.mp4'), '-frames:v', '1',
          '-vf', 'scale=360:-2', str(folder / 'thumb.new.jpg')])
     os.replace(folder / 'thumb.new.jpg', folder / 'thumb.jpg')
-    caption = f"{job['ideas'][0]['caption']} {ideas.HASHTAGS}" + (f'\n{credit}' if credit else '')
+    first_text = next((i['caption'] for i in job['ideas'] if i.get('caption')), '')
+    caption = f"{first_text} {ideas.HASHTAGS}".strip() + (f'\n{credit}' if credit else '')
     _, _, seconds_long = probe(folder / 'final.mp4')
-    if job.get('draft'):
-        note = ('Preview: the first clip moves, the rest are still pictures. Edit it, or tap Finish.'
-                if wanted > 1 else 'Preview ready. Edit it, or tap Finish when you like it.')
+    full = round(job['seconds'] * wanted)
+    if job.get('draft'):  # (in the animated seconds: the opening and the ending come on top)
+        note = (f'Preview: the first {round(length)} seconds. Edit it, or tap Finish to carry it on to '
+                f'{full} seconds.' if wanted > 1 else 'Preview ready. Edit it, or tap Finish when you like it.')
     elif made < wanted:
-        note = f'Made {made} of {wanted} clips (the free engines were busy or out of time). Tap Make the rest later.'
+        note = (f'Made {round(length)} of {full} seconds (the free engines were busy or out of time). '
+                'Tap Make the rest to carry it on.')
     else:
         note = ''
     update(job, status='done', stage=note, progress=1, error='', thumb='thumb.jpg', made=made, caption=caption,
            music_used=used, music_start=round(start, 2), seconds_long=round(seconds_long, 1),
+           ai_seconds=round(length, 3), opening_s=round(lead, 3) if opening else None,
            rev=(job.get('rev') or 0) + 1)
     save(job, ['final.mp4', 'thumb.jpg'])
+    if failed and isinstance(failed, (QuotaError, BusyError)):
+        raise failed  # the shorter video is ready to watch; the rest is made by itself when free time is back
+
+
+def opening_for(job, parts):
+    """The Real -> AI opening for this cut, or None: it is switched on, the real seconds before the start
+    picture were kept, and clip 1 (where the real video turns into the AI) is in the video (also in a
+    preview). Finds how the engine framed clip 1's picture; a clip that did not start from its picture gets
+    no opening (the switch would jump)."""
+    if not (job.get('opening') and job.get('hook_frames') and parts and parts[0][0] == 0):
+        return None
+    try:
+        video = local_file(job, 'hook.mp4')
+        framing, off = clip_framing(local_file(job, job['inputs'][0]), parts[0][1])
+        size = probe(parts[0][1])[:2]
+    except Exception as e:  # the opening must never cost a video
+        log.warning('%s: no opening this time (%s)', job['id'], e)
+        return None
+    if off > 25:
+        log.warning('%s: clip 1 does not start from its picture (%.1f), no opening', job['id'], off)
+        return None
+    return {'video': video, 'frames': int(job['hook_frames']), 'framing': framing, 'size': size}
+
+
+def outro_for(job):
+    """The Follow me ending for this cut, or None: it is switched on and the owner's follow card was sent."""
+    if not (job.get('outro') and job.get('has_endcard')):
+        return None
+    try:
+        return {'card': local_file(job, 'endcard.png')}
+    except Exception as e:  # the ending must never cost a video
+        log.warning('%s: no ending this time (%s)', job['id'], e)
+        return None
+
+
+def hook_length(info, start, have):
+    """The opening's length: the beat nearest HOOK_WANT seconds after the song's start, so the switch to the
+    AI lands on it; at least HOOK_MIN + 0.4 s (when there is that much), at most what was kept."""
+    hi = min(have, HOOK_MAX)
+    lo = min(hi, HOOK_MIN + 0.4)
+    if not info or not len(info.get('beats', [])):
+        return min(HOOK_WANT, hi)
+    near = np.asarray(info['beats']) - start
+    near = near[(near >= lo) & (near <= hi)]
+    return float(near[np.argmin(np.abs(near - HOOK_WANT))]) if len(near) else min(HOOK_WANT, hi)
+
+
+def meme_edit(job, folder, parts, spans, speed, audio, info, start, used, lead=0.0, total=None, extra=()):
+    """The meme edit for this cut of the video, when it is on, and other sound effects (extra: [(time, name)],
+    the opening's whoosh): (zooms, sound effects WAV, its gain) for join_clips. The edit is planned on the
+    animated parts' own timeline and moved `lead` seconds on (the opening plays first); the sound track is
+    `total` seconds long (the whole video). (None, None, 1.0) when there is nothing to add, and also when
+    anything goes wrong: the effects must never cost a video. The meme plan is also written to meme.json
+    (local only), for checking."""
+    (folder / 'meme.json').unlink(missing_ok=True)
+    on = bool(meme and sfx and job.get('meme', False))
+    if not (sfx and (on or extra)):
+        return None, None, 1.0
+    sounds = folder / 'sfx.wav'
+    try:
+        layout, at = [], 0.0
+        for n, ((i, clip), span) in enumerate(zip(parts, spans)):
+            _, _, frames, fps = clip_info(clip)
+            first, _, shown = span_seconds(clip, span, speed)
+            # cut: a plain cut leads into this part (clips from before v10); a part that carries on from the
+            # one before skips its first frame instead.
+            layout.append({'idea': job['ideas'][i], 'clip': str(clip), 'at': at, 'shown': shown,
+                           'skip': first / fps / speed, 'full': frames / fps / speed, 'cut': n > 0 and not first})
+            at += shown
+        total = lead + at if total is None else total
+        zooms, events = [], []
+        if on:  # (the song is at start + lead when the animated parts begin)
+            zooms, events = meme.plan(layout, info, start + lead, use_beats=used in ('funny', 'upload'),
+                                      speed=speed, motion=True)
+            for p in zooms:
+                p['t0'] += lead
+                if 'end' in p:
+                    p['end'] += lead
+            events = [(t + lead, name) for t, name in events]
+        events = sorted(events + list(extra))
+        gain = 1.0
+        if events:  # the effects follow the song's loudness (none: as they are)
+            gain = sfx.sfx_track(events, total, sounds, sfx.loudness(audio, start, total) if audio else None)
+        if on:
+            (folder / 'meme.json').write_text(json.dumps({'zooms': zooms, 'sounds': events, 'gain': gain}))
+            log.info('%s: meme edit: %d zooms, sounds %s', job['id'], len(zooms), [name for _, name in events])
+        return zooms or None, sounds if events else None, gain
+    except Exception as e:
+        log.warning('%s: meme effects skipped (%s)', job['id'], e)
+        sounds.unlink(missing_ok=True)
+        return None, None, 1.0
+
+
+def drop_clips(job, start):
+    """Forget clip `start` and every clip after it: each of them began where the one before it ended."""
+    job['clips_done'] = [n for n in job.get('clips_done') or [] if clip_number(n) < start]
+    if 'chain' in job:
+        job['chain'] = {k: v for k, v in job['chain'].items() if int(k) < start}
 
 
 def said_animal(job):
@@ -846,16 +1356,24 @@ def said_animal(job):
 
 
 def new_ideas(job, animal, count):
-    """Fresh ideas for `count` more clips, from the user's description or the chosen style."""
+    """Fresh ideas for a whole video of `count` parts, from the user's description or the chosen style.
+    Callers that need only some parts (a longer video, a part made again) take those from it, so a story
+    keeps its parts in order. The video is one shot, so its text stays from part 1 on: later parts get no
+    text of their own, except the parts of a story, which each get their own line."""
     if count <= 0:
         return []
     template = job.get('template') or 'random'
     if job.get('idea'):
         style = job['scene']['scene']['style'] if job.get('scene') else None
-        return ideas.custom_ideas(job['idea'], animal, count, template, style)
-    if job.get('scene'):
-        return ideas.ideas_for_scene(job['scene']['scene'], animal, count, template)
-    return ideas.ideas_for_picture(animal, count, template)
+        made = ideas.custom_ideas(job['idea'], animal, count, template, style)
+    elif job.get('scene'):
+        made = ideas.ideas_for_scene(job['scene']['scene'], animal, count, template)
+    else:
+        made = ideas.ideas_for_picture(animal, count, template)
+    for k, idea in enumerate(made):
+        if k and not idea.get('story'):
+            idea['caption'] = ''
+    return made
 
 
 def refund(job):
@@ -1026,10 +1544,19 @@ def home():
     return 'Animal Antics worker is running.'
 
 
+def features():
+    """What this worker can do right now. The page shows a feature's controls only when it is listed.
+    chain: a video is one continuous shot, and a preview is just its first part.
+    meme: zoom punch-ins and sound effects at the funny moments (the meme field of a video).
+    opening: the Real -> AI opening (the opening field; the hooks + hook_fps an upload sends).
+    outro: the Follow me ending (the outro field; the owner's endcard)."""
+    return ['chain'] + (['meme'] if meme and sfx else []) + ['opening', 'outro']
+
+
 @app.get('/health')
 def health():
     return {'ok': True, 'version': VERSION, 'storage': bool(hub), 'token': bool(HF_TOKEN), 'token_ok': token_ok,
-            'pc': pc_online(), 'pc_name': pc['name']}
+            'pc': pc_online(), 'pc_name': pc['name'], 'features': features()}
 
 
 @app.get('/me')
@@ -1064,10 +1591,16 @@ def create_job(
     idea: str = Form(''),
     count: int = Form(1),
     draft: bool = Form(False),
+    meme_on: bool = Form(True, alias='meme'),  # (not named meme: that is the module)
+    opening: bool = Form(False),
+    outro: bool = Form(False),
+    hook_fps: float = Form(30),
     images: list[UploadFile] = File(None),
     source: UploadFile = File(None),
     song: UploadFile = File(None),
     badge: UploadFile = File(None),
+    endcard: UploadFile = File(None),
+    hooks: list[UploadFile] = File(None),
 ):
     who = caller(x_antics_key)
     url = url.strip()
@@ -1081,6 +1614,7 @@ def create_job(
                 raise HTTPException(403, f'No videos left. Ask {host_of(who)} for more.')
             who['uses_left'] -= count
             who['used'] += count
+    wanted = max(1, min(MAX_CLIPS, clips))
     settings = {
         'captions': captions, 'seconds': max(2, min(5, seconds)), 'animal': clean_animal(animal),
         'template': template if template in ideas.TEMPLATES else 'random',
@@ -1089,11 +1623,16 @@ def create_job(
         'song_part': song_part if song_part in ('auto', 'start', 'drop', 'custom') else 'auto',
         'song_start': max(0.0, min(3600.0, song_start)),
         'speed': speed if speed in SPEEDS else 'normal',
-        'idea': clean_idea(idea), 'draft': draft, 'brand': True,
+        # A preview is the first part of a longer video: a one-part (5 s) video is made in full at once.
+        'idea': clean_idea(idea), 'draft': draft and wanted > 1, 'brand': True,
+        'meme': meme_on,  # zoom punch-ins and sound effects (CPU only)
+        # The Real -> AI opening (needs real video: a link or the frames the page sends with an upload) and the
+        # Follow me ending (needs the owner's follow card). Both can be switched on and off later.
+        'opening': opening, 'outro': outro,
     }
     try:
-        made = build_jobs(who, count, max(1, min(MAX_CLIPS, clips)), settings, url, surprise, images, source,
-                          song, badge)
+        made = build_jobs(who, count, wanted, settings, url, surprise, images, source, song, badge, endcard, hooks,
+                          max(10.0, min(60.0, hook_fps)))
     except Exception:
         if who is not OWNER:
             with guests_lock:
@@ -1107,12 +1646,13 @@ def create_job(
     return {'jobs': [public(j) for j in made], 'me': me_view(who)}
 
 
-def build_jobs(who, count, wanted, settings, url, surprise, images, source, song, badge):
+def build_jobs(who, count, wanted, settings, url, surprise, images, source, song, badge, endcard=None, hooks=None,
+               hook_fps=30.0):
     """`count` new videos from the same input. Files the user sent are read once and copied to each."""
     now, group = time.time(), (secrets.token_hex(4) if count > 1 else None)
     made = [dict(settings, id=f"{time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}", created=now, index=k,
                  batch=count, group=group, status='queued', stage='In line…', progress=0, error='', wanted=wanted,
-                 made=0, clips_done=[], redos=0, owner=who['id'],
+                 made=0, clips_done=[], chain={}, redos=0, owner=who['id'],
                  owner_name='' if who is OWNER else who['name'])
             for k in range(count)]
     folder = job_dir(made[0]['id'])
@@ -1126,6 +1666,16 @@ def build_jobs(who, count, wanted, settings, url, surprise, images, source, song
             flags['has_badge'] = True
         except Exception:
             log.warning('%s: the name tag could not be read', made[0]['id'])
+    if endcard and who is OWNER:  # the owner's follow card for the ending, drawn by the page (720x1280)
+        try:
+            card = Image.open(endcard.file).convert('RGBA')
+            if card.size != (OUT_W, OUT_H):
+                card = card.resize((OUT_W, OUT_H), Image.LANCZOS)
+            card.save(folder / 'endcard.png')
+            shared.append('endcard.png')
+            flags['has_endcard'] = True
+        except Exception:
+            log.warning('%s: the follow card could not be read', made[0]['id'])
     if song and settings['music'] == 'upload':
         original = folder / 'song_original'
         with open(original, 'wb') as f:
@@ -1144,13 +1694,34 @@ def build_jobs(who, count, wanted, settings, url, surprise, images, source, song
                 raise HTTPException(400, 'That picture could not be opened')
             pictures.append(img)
         for k, job in enumerate(made):
-            # The page sends different moments for each video when the clip has enough; else they share.
-            own = pictures[k * wanted:(k + 1) * wanted] if len(pictures) >= wanted * count else pictures[:wanted]
-            names = []
-            for i, img in enumerate(own):
-                save_picture(img, job_dir(job['id']) / f'input_{i}.jpg')
-                names.append(f'input_{i}.jpg')
-            job.update(kind='images', inputs=names, label='Your video')
+            # One starting picture per video: the page sends a different moment for each when it can.
+            save_picture(pictures[k % len(pictures)], job_dir(job['id']) / 'input_0.jpg')
+            job.update(kind='images', inputs=['input_0.jpg'], label='Your video')
+        # The opening's frames, picked on the phone: v{k}_{i}.jpg are the real frames right before picture k.
+        frames = {}  # picture number -> {frame number: file}
+        for upload in (hooks or [])[:MAX_VIDEOS * int(HOOK_MAX * 60)]:
+            found = re.fullmatch(r'v(\d+)_(\d+)\.jpe?g', upload.filename or '', re.I)
+            if found and int(found[1]) < len(pictures):
+                path = folder / f'hookframe_{int(found[1])}_{int(found[2]):04d}.jpg'
+                with open(path, 'wb') as f:
+                    shutil.copyfileobj(upload.file, f)
+                frames.setdefault(int(found[1]), {})[int(found[2])] = path
+        built = {}  # picture number -> the job folder holding its hook.mp4 (videos sharing a picture share it)
+        for k, job in enumerate(made):
+            p = k % len(pictures)
+            if p in built:
+                if built[p][1]:
+                    shutil.copy(built[p][0] / 'hook.mp4', job_dir(job['id']) / 'hook.mp4')
+                    job['hook_frames'] = built[p][1]
+                continue
+            got = 0
+            if frames.get(p):
+                got = hook_from_frames([frames[p][i] for i in sorted(frames[p])], hook_fps, job_dir(job['id']))
+            built[p] = (job_dir(job['id']), got)
+            if got:
+                job['hook_frames'] = got
+        for path in folder.glob('hookframe_*.jpg'):  # (any left over)
+            path.unlink(missing_ok=True)
         if source and settings['music'] == 'mine':
             original = folder / 'original'
             with open(original, 'wb') as f:
@@ -1173,7 +1744,8 @@ def build_jobs(who, count, wanted, settings, url, surprise, images, source, song
     with jobs_lock:
         for job in made:
             jobs[job['id']] = job
-    save_many([(job, (job.get('inputs') or []) + shared) for job in made])
+    save_many([(job, (job.get('inputs') or []) + shared + (['hook.mp4'] if job.get('hook_frames') else []))
+               for job in made])
     return made
 
 
@@ -1193,11 +1765,14 @@ def edit_job(
     speed: str = Form(None),
     captions: bool = Form(None),
     brand: bool = Form(None),
+    meme_on: bool = Form(None, alias='meme'),
+    opening: bool = Form(None),
+    outro: bool = Form(None),
     redo: str = Form(''),
     song: UploadFile = File(None),
 ):
-    """Change a video. Text, music, speed and length changes re-cut it in seconds. A new description,
-    style or animal, or redo (clip numbers), animates the clips concerned again."""
+    """Change a video. Text, music, speed, length, meme effects, the opening and the ending re-cut it in
+    seconds. A new description, style or animal, or redo (clip numbers), animates the clips concerned again."""
     who = caller(x_antics_key)
     job = own_job(who, job_id)
     try:
@@ -1232,7 +1807,9 @@ def edit_job(
         replan = new_idea != old_idea or new_template != old_template or new_animal != job.get('animal')
         repaint = job['kind'] == 'surprise' and new_idea != old_idea
         done = list(job.get('clips_done') or [])
-        lost = done if replan else [n for n in done if clip_number(n) in redo_set]
+        # Each clip carries on from the one before, so a clip made again takes every later clip with it.
+        keep = min(redo_set | {wanted})
+        lost = done if replan else [n for n in done if keep <= clip_number(n) < wanted]
         if who is not OWNER and lost and job.get('redos', 0) >= GUEST_REDOS:
             raise HTTPException(403, f'This video used its {GUEST_REDOS} new animations. Change its text or '
                                      'music, or make a new video.')
@@ -1243,6 +1820,8 @@ def edit_job(
             job['redos'] = job.get('redos', 0) + 1
         old_music = job.get('music')
         job.update(idea=new_idea, template=new_template, animal=new_animal, wanted=wanted)
+        if wanted == 1:  # a preview of a one-part video is the whole video
+            job['draft'] = False
         if music in MUSIC_MODES and not (music == 'mine' and not job.get('has_sound')):
             job['music'] = music
         if job['music'] == 'track' and track in ideas.MUSIC:
@@ -1262,20 +1841,28 @@ def edit_job(
             job['captions'] = captions
         if brand is not None:
             job['brand'] = brand
+        if meme_on is not None:  # effects on or off: just a re-cut, no new animation
+            job['meme'] = meme_on
+        if opening is not None:  # the Real -> AI opening and the Follow me ending: also just a re-cut
+            job['opening'] = opening
+        if outro is not None:
+            job['outro'] = outro
         word = job.get('animal') or 'animal'
         if repaint:  # a surprise with a new description gets a new picture first, then new ideas
-            job.update(inputs=None, scene=None, ideas=[], clips_done=[],
+            job.update(inputs=None, scene=None, ideas=[], clips_done=[], chain={},
                        keep_texts={str(i): t for i, t in typed.items()})
         else:
             if replan:
                 plan = new_ideas(job, word, wanted)
-                job['clips_done'] = []
+                drop_clips(job, 0)
             else:
                 plan = job['ideas'][:wanted]
-                plan += new_ideas(job, word, wanted - len(plan))
-                for i in redo_set:
-                    plan[i] = new_ideas(job, word, 1)[0]
-                job['clips_done'] = [n for n in done if clip_number(n) < wanted and clip_number(n) not in redo_set]
+                if len(plan) < wanted or redo_set:  # new parts come from a plan for the whole video
+                    fresh = new_ideas(job, word, wanted)
+                    plan += fresh[len(plan):]
+                    for i in redo_set:
+                        plan[i] = fresh[i]
+                drop_clips(job, keep)
             for i, t in typed.items():
                 if i < len(plan):
                     plan[i].update(caption=t, typed=True)
@@ -1524,7 +2111,8 @@ def pc_next(wait: float = Query(25), x_antics_key: str = Header(None)):
 @app.get('/pc/tasks/{task_id}/image')
 def pc_task_image(task_id: str, x_antics_key: str = Header(None)):
     check(x_antics_key)
-    return FileResponse(pc_task(task_id)['picture'], media_type='image/jpeg')
+    picture = pc_task(task_id)['picture']
+    return FileResponse(picture, media_type='image/png' if picture.endswith('.png') else 'image/jpeg')
 
 
 @app.post('/pc/tasks/{task_id}/done')

@@ -570,7 +570,7 @@ def custom_ideas(text, animal, count, template='random', style=None):
         if story and i >= len(beats):  # the story is told: end on a reaction, the classic punchline
             move = random.choice(template_moves('honest'))
             out.append({'title': move['title'], 'action': move['action'], 'caption': fresh(move['captions'])
-                        or move['captions'][0], 'twist': '', 'style': style})
+                        or move['captions'][0], 'twist': '', 'style': style, 'story': True})
             used.add(out[-1]['caption'])
             continue
         part = beats[i] if i < len(beats) else text
@@ -587,7 +587,7 @@ def custom_ideas(text, animal, count, template='random', style=None):
         used.add(caption)
         twist = pick_twist(template) if i and not story else ''
         out.append({'title': 'Your idea', 'action': action, 'custom': True, 'caption': caption, 'twist': twist,
-                    'style': style})
+                    'style': style, 'story': story})
     return out
 
 
@@ -615,9 +615,12 @@ def random_scene():
     return {'scene': scene, 'animal': animal, 'style': style['title'], 'subject': subject, 'prompt': prompt}
 
 
-def video_prompt(idea, animal):
-    """The text sent to the video model."""
+def video_prompt(idea, animal, follow=False):
+    """The text sent to the video model. follow: the clip carries straight on from the end of the one
+    before (its picture is that clip's last frame)."""
     look = STYLES[idea['style']]['video'] if idea.get('style') else 'Realistic video, same camera angle and same place as the picture'
+    if follow:
+        look += ', carrying straight on from the picture without a cut'
     twist = ' ' + idea['twist'] if idea.get('twist') else ''
     action = idea['action']
     if idea.get('custom'):
@@ -630,4 +633,4 @@ def video_prompt(idea, animal):
     else:
         sentence = f'The {animal} {action}'
     return (f"{look}. {sentence}.{twist} Natural, physically believable movement, "
-            f'the {animal} keeps exactly the same look, fur and face.')
+            f'the {animal} keeps exactly the same look, fur and face' + (', same colours and light.' if follow else '.'))
