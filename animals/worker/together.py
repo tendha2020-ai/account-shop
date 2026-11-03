@@ -836,6 +836,15 @@ def uses_ai(job):
             or (job.get('voice') or 'off') != 'off')
 
 
+def shared_uses_ai(job):
+    """uses_ai() of the version the video has now (final.mp4: the one played, shared and posted), as finish_video
+    kept it (made_with['ai']). While an edit is under way (↻ New picture, another scene, ⇄ Swap places, another
+    look) the job's own fields describe the next version (made_as is None until it is planned), but the old one is
+    still the video. Before a first version, or for a video made before this was kept: uses_ai() of the job."""
+    made = job.get('made_with') or {}
+    return bool(made['ai']) if job.get('thumb') and 'ai' in made else uses_ai(job)
+
+
 def credit_lines(job):
     """Each free clip's credit line, once, in the cast's order. A CC BY clip says it was edited (every look crops
     and re-times it, the AI looks also animate it), as its licence asks; CC0 and public domain need no credit,
@@ -848,10 +857,12 @@ def credit_lines(job):
     return list(dict.fromkeys(out))
 
 
-def caption_credit(job, music_credit=''):
-    """Every credit line a post of this video needs, one per line: the music's, then the free clips'. (The posting
-    plan's plan_caption() gives this as the credit, for its own captions and the owner's.)"""
-    return '\n'.join(dict.fromkeys(([music_credit] if music_credit else []) + credit_lines(job)))
+def caption_credit(job, music_credit='', lines=None):
+    """Every credit line a post of this video needs, one per line: the music's, then the free clips' (lines: the
+    clips' credit lines the shared version was made with, else the job's now). (The posting plan's plan_caption()
+    gives this as the credit, for its own captions and the owner's.)"""
+    clips = credit_lines(job) if lines is None else [str(x) for x in lines]
+    return '\n'.join(dict.fromkeys(([music_credit] if music_credit else []) + clips))
 
 
 def tiktok_caption(job, first_text, music_credit=''):
@@ -1623,9 +1634,11 @@ def process(job, w):
         free_cut(job, w, look)
 
 
-def song_cuts(job, w, seconds, speed):
+def song_cuts(job, w, seconds, speed, made=None):
     """Quick cuts on the beat: the song this video gets and where it starts (the same choice as the worker's
-    join), then plan_cuts on its bar downbeats. In the layout's own seconds (before the video's speed)."""
+    join), then plan_cuts on its bar downbeats. In the layout's own seconds (before the video's speed). made: what
+    final.mp4 was made with (the TikTok cut of a video made before layout_cuts were kept): a saved song starts
+    where it did then, not where its meme part is now."""
     shown = seconds / speed
     tail = w.OUTRO_SECONDS if w.outro_for(job) else 0.0
     music, info, start = job.get('music', 'funny'), None, 0.0
@@ -1635,6 +1648,8 @@ def song_cuts(job, w, seconds, speed):
             audio, natural = w.local_file(job, 'song.m4a'), 'drop'
         elif music == 'mysong' and (mine := w.my_song(job)):
             audio, saved = mine
+            if made and made.get('start') is not None:  # (the song's meme part may have moved since)
+                saved = float(made['start'])
         elif music != 'none':
             audio = w.music_file(job['track'])
         info = beats.analyse(audio) if audio else None
@@ -1671,10 +1686,14 @@ def free_panels(job, w):
     return panels
 
 
-def layout_key(job, w, look, panels):
-    """What a free look's layout.mp4 shows (it is made again only when this changes)."""
+def layout_key(job, w, look, panels, cuts=None):
+    """What a free look's layout.mp4 shows (it is made again only when this changes). cuts: the quick cuts it was
+    laid out with (the TikTok cut uses those of final.mp4), else the ones the song gives now."""
     seconds = float(job['length'])
-    cuts = song_cuts(job, w, seconds, w.SPEEDS.get(job.get('speed'), 1.0)) if look == 'cuts' else []
+    if look != 'cuts':
+        cuts = []
+    elif cuts is None:
+        cuts = song_cuts(job, w, seconds, w.SPEEDS.get(job.get('speed'), 1.0))
     labels = free_labels(job['scene'], job['cast'], look)
     return json.dumps([look, [str(p['src']) for p in panels], labels, seconds, cuts]), labels, cuts
 
@@ -1716,7 +1735,7 @@ def free_cut(job, w, look):
         if int(i) == 0:
             idea.update(caption=text, typed=True)
     w.update(job, made_as=look, wanted=1, seconds=seconds, ideas=[idea], draft=False, picture_check=False,
-             keep_texts=None)
+             keep_texts=None, layout_cuts=cuts)  # (the quick cuts final.mp4 gets: its TikTok cut keeps them)
     w.finish_video(job, folder, [(0, layout)])
 
 
@@ -1728,7 +1747,12 @@ def made_parts(job, w):
     if job.get('made_as') in FREE_LOOKS:
         look = job['made_as']
         panels = free_panels(job, w)
-        key, labels, cuts = layout_key(job, w, look, panels)
+        # The quick cuts final.mp4 was laid out with (a saved song's meme part may have moved since: the cut
+        # points the song gives now aren't the video's), for the check and for laying it out again.
+        cuts = job.get('layout_cuts')
+        if look == 'cuts' and cuts is None:  # (made before they were kept: from the start the song had then)
+            cuts = song_cuts(job, w, float(job['length']), w.SPEEDS.get(job.get('speed'), 1.0), job.get('made_with'))
+        key, labels, cuts = layout_key(job, w, look, panels, cuts)
         if key != job.get('layout_key'):
             raise RuntimeError('the free look changed since the video was made')
         layout = w.job_dir(job['id']) / 'layout.mp4'
@@ -1803,7 +1827,8 @@ def public(job):
             'made_as': job.get('made_as'), 'picture_check': bool(job.get('picture_check')),
             'has_picture': has_picture(job), 'compose_engine': (job.get('compose') or {}).get('engine'),
             'free_look': free_look(job.get('scene'), len(cast)), 'note': job.get('note') or '',
-            'length': job.get('length'), 'part_seconds': job.get('part_seconds') or 5, 'uses_ai': uses_ai(job),
+            'length': job.get('length'), 'part_seconds': job.get('part_seconds') or 5,
+            'uses_ai': shared_uses_ai(job),  # (of the video played and shared: the Post screen's AI label)
             'editable': True}
 
 

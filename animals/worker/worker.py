@@ -1519,8 +1519,12 @@ def finish_video(job, folder, parts, failed=None):
     os.replace(folder / 'thumb.new.jpg', folder / 'thumb.jpg')
     first_text = next((i['caption'] for i in job['ideas'] if i.get('caption')), '')
     caption = f"{first_text} {ideas.HASHTAGS}".strip() + (f'\n{credit}' if credit else '')
+    # What the posting plan says of this version (its text and the song's credit) is kept with it: while an edit
+    # is under way the job's own fields already describe the next version, but the plan still shares this one.
+    made_with = dict(cut['made_with'], text=first_text, credit=credit)
     if job.get('kind') == 'together' and together:  # (Together) its own tags, and the free clips' credits
         caption = together.tiktok_caption(job, first_text, credit)
+        made_with.update(ai=together.uses_ai(job), clips=together.credit_lines(job))  # (the AI label, the credits)
     _, _, seconds_long = probe(folder / 'final.mp4')
     full = round(job['seconds'] * wanted)
     if job.get('draft'):  # (in the animated seconds: the opening and the ending come on top)
@@ -1534,7 +1538,7 @@ def finish_video(job, folder, parts, failed=None):
     update(job, status='done', stage=note, progress=1, error='', thumb='thumb.jpg', made=made, caption=caption,
            music_used=used, music_start=round(start, 2), seconds_long=round(seconds_long, 1),
            ai_seconds=round(length, 3), opening_s=round(lead, 3) if cut['opening'] else None,
-           rev=(job.get('rev') or 0) + 1, made_with=cut['made_with'], song_name=cut['song_name'])
+           rev=(job.get('rev') or 0) + 1, made_with=made_with, song_name=cut['song_name'])
     save(job, ['final.mp4', 'thumb.jpg'])
     if failed and isinstance(failed, (QuotaError, BusyError)):
         raise failed  # the shorter video is ready to watch; the rest is made by itself when free time is back
@@ -2789,10 +2793,12 @@ def job_video(job_id: str, key: str = Query(None), cut: str = Query(None), x_ant
 
 
 @app.get('/jobs/{job_id}/thumb')
-def job_thumb(job_id: str, key: str = Query(None), x_antics_key: str = Header(None)):
+def job_thumb(job_id: str, key: str = Query(None), pc: str = Query(None), x_antics_key: str = Header(None)):
     job = own_job(caller(x_antics_key, key), job_id)
     name = 'thumb.jpg' if job.get('thumb') else (job.get('inputs') or [None])[0]
-    if job.get('picture_check') and job.get('inputs'):  # (Together) the new picture, while it is being checked
+    if pc is not None and job.get('picture_check') and job.get('inputs'):
+        # (Together) the new picture while it is being checked, when the page's card asks for it (&pc=): the plan
+        # and the Post screen keep the video's own picture, the version they share
         name = job['inputs'][0]
     if not name:
         raise HTTPException(404, 'No picture yet')
@@ -3253,20 +3259,25 @@ def plan_caption(item, job, state):
     hashtags for this post and, for a Kevin MacLeod song left in the video, its CC BY credit (an own caption
     gets that credit too). A Together video also credits each free library clip in it (on its own line, also in
     the TikTok cut: the clips are still in it), gets each of its animals' own tags, and #aivideo only when AI made
-    any of it."""
-    credit = (ideas.MUSIC_CREDIT.format(track=job['track'])
-              if item['audio'] == 'as_made' and job.get('music_used') == 'funny' and job.get('track') else '')
+    any of it. All of it about the version the plan shares (final.mp4): while an edit is under way (a new picture,
+    another scene or look, new words) the job's own fields already describe the next one, so its text, the song's
+    credit, the clips' credits and whether AI made it come from what finish_video kept (made_with)."""
+    made = job.get('made_with') or {}  # (videos from before version 13 kept none of it: as they are now)
+    music = made['credit'] if 'credit' in made else (
+        ideas.MUSIC_CREDIT.format(track=job['track']) if job.get('music_used') == 'funny' and job.get('track') else '')
+    credit = music if item['audio'] == 'as_made' else ''
     animals, ai = None, True
     if job.get('kind') == 'together' and together:
-        credit = together.caption_credit(job, credit)
-        animals, ai = [c.get('animal') for c in job.get('cast') or []], together.uses_ai(job)
+        credit = together.caption_credit(job, credit, made.get('clips'))
+        animals, ai = [c.get('animal') for c in job.get('cast') or []], together.shared_uses_ai(job)
     if item.get('caption'):  # (the owner's own words; each credit line is added when they left it out)
         text = item['caption']
         for line in credit.split('\n') if credit else []:
             text = posting.with_credit(text, line)
         return text, True, posting.tags_in(item['caption'])
     tags = posting.pick_tags(state['plan'], job, state['posted_count'], animals=animals, ai=ai)
-    return posting.compose(first_caption(job), tags, credit), False, tags
+    text = made['text'] if 'text' in made else first_caption(job)
+    return posting.compose(text, tags, credit), False, tags
 
 
 def plan_view():
