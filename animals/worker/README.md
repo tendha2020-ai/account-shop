@@ -54,3 +54,17 @@ clip library (library.json) lists only CC0, public domain and CC BY clips; their
 ("Clip (edited): ..." for CC BY, as the licence asks).
 A Together video in the posting plan carries its clips' credit lines in its caption too (also when the owner
 writes their own), and #aivideo only when AI made any of it.
+
+Sing videos (sing.py, sing_audio.py): one or two animals sing a song from My songs. Each song is made ready to sing
+once, on this Space's CPU, and kept next to it in the same private dataset (`songs/<id>.sing/`: the voice and the
+music split apart, and `sing.json` with the sung lines' times, never their words): the quick split with Spleeter
+2-stems (MIT weights, through sherpa-onnx, Apache-2.0), then the best one with Kim's Mel-Band RoFormer (MIT, through
+audio-separator on torch-cpu) when it is installed; the lines with faster-whisper `small` (MIT). The animals' voices
+are WORLD (pyworld, MIT), or Rubber Band without it. The stage pictures come from Together's free composer engines,
+the singing from free lip-sync Spaces (LongCat-Video-Avatar 1.5, MIT; LTX-2 audio-to-video, LTX-2 Community License:
+free under US$10M revenue, machine-generated content disclosed; Kandinsky S2V, MIT) or the owner's own PC
+(InfiniteTalk, Apache-2.0; with its duet model, the lines both animals sing are one two-shot). Every ZeroGPU call
+goes through the GPU guard (gpu.py) inside the free time, and Sing
+keeps to its share of the day (`sing_settings.json`, with each engine's 5-second test result). Without the guard,
+Sing makes no AI call at all. No song, stem or lyric is ever part of this Space or the app: they stay in the
+owner's private dataset.

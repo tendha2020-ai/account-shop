@@ -29,6 +29,8 @@
 # The GPU guard (gpu.py): antics only ever uses the owner's FREE ZeroGPU time. Every ZeroGPU call goes through
 # gpu.gpu_call(), which checks the account's real quota before and after, one call at a time, and stops all AI work
 # if Hugging Face ever bills credits (PRO accounts go past the free time on pre-paid credits by themselves).
+# Sing (sing.py, sing_audio.py): 1-2 animals sing a song from My songs, mouth and body moving with the singing, in
+# sharp stage shots cut like a music video, each in its own voice; long songs as TikTok parts of 59 s or less.
 
 import collections
 import copy
@@ -96,8 +98,13 @@ except Exception as e:
     logging.getLogger('antics').warning('no Together videos: %s', e)
     together = None
 THIS = sys.modules[__name__]  # (Together) this worker, for together.py: its storage, engines and video join
+try:  # (Sing) animals singing a song; if its files or their packages are missing or broken, the worker runs without
+    import sing  # it, and the page doesn't offer it
+except Exception as e:
+    logging.getLogger('antics').warning('no Sing videos: %s', e)
+    sing = None
 
-VERSION = '13'
+VERSION = '14'  # (Sing)
 HF_TOKEN = os.environ.get('HF_TOKEN') or None
 ANTICS_KEY = os.environ.get('ANTICS_KEY', '')
 DATASET = os.environ.get('ANTICS_DATASET', '')
@@ -248,6 +255,8 @@ def public(job):
     view['gpu_wait'] = job.get('gpu_wait') if job.get('status') == 'waiting' else None
     if job.get('kind') == 'together' and together:  # (Together) its animals, scene, look and picture check
         view.update(together.public(job))
+    if job.get('kind') == 'sing' and sing:  # (Sing) its singers, song, part, shots, parts and the test
+        view.update(sing.public(job))
     return view
 
 
@@ -644,6 +653,8 @@ def load_jobs():
         loaders = {'guests.json': load_guests, 'push.json': load_push, 'songs.json': load_songs, 'gpu.json': gpu.load}
         if posting:
             loaders['posting.json'] = load_plan
+        if sing:  # (Sing) its share of the day, the engines' test results, the PC's measurements
+            loaders[sing.SETTINGS_FILE] = sing.load_settings
         for name in names:
             if name in loaders:
                 read_hub(name, loaders[name])
@@ -2034,6 +2045,8 @@ def needs_animation(job):
     """True when the job still needs the AI (a picture or a clip), not just a re-cut."""
     if job.get('kind') == 'together' and together:  # (Together) a free look is a cut on the CPU
         return together.needs_animation(job)
+    if job.get('kind') == 'sing' and sing:  # (Sing) a voice or title change is a re-cut on the CPU
+        return sing.needs_animation(job)
     if not job.get('inputs') or job.get('clips_done') is None:
         return True
     limit = 1 if job.get('draft') else job['wanted']
@@ -2156,7 +2169,10 @@ def make_cut(job_id):
             snap = copy.deepcopy(job)
         rev, started = snap.get('rev'), time.time()
         try:
-            cut_video(snap, folder, made_parts(snap), out, song=False)
+            if snap.get('kind') == 'sing' and sing:  # (Sing) the same video stream without the song
+                sing.cut_silent(snap, out)
+            else:
+                cut_video(snap, folder, made_parts(snap), out, song=False)
             want, got = clip_info(local_file(snap, 'final.mp4')), clip_info(out)
             if got != want:  # (size, frames, frame rate)
                 raise RuntimeError(f'it came out different from the video: {got} instead of {want}')
@@ -2281,6 +2297,8 @@ def make_video(job):
     inside the video's render_lock, so its TikTok cut is never made at the same time.)"""
     if job.get('kind') == 'together' and together:
         return together.process(job, THIS)
+    if job.get('kind') == 'sing' and sing:  # (Sing)
+        return sing.process(job, THIS)
     return process(job)
 
 
@@ -2310,13 +2328,24 @@ def worker_loop(lane):
                      'loading': 'Your worker is still starting. It will finish by itself.',
                      'saving': 'Hugging Face is busy right now. It will finish by itself.'}.get(
                 reason, 'The free GPUs are all busy right now. It will finish by itself.')
+            extra = {}
+            if job.get('kind') == 'sing' and sing and isinstance(e, QuotaError):  # (Sing) "Singing 4 of 7 done ...",
+                extra['sing_wait'] = sing.wait_reason(e)  # or why no AI call can be made now (the key can't read the
+                stage = sing.wait_text(job, extra['sing_wait'])  # free time, the worker is starting ...): the guard's
+                # texts above stay for every other video (and gpu_wait for all), a Sing job takes this one, which
+                # words every reason (wait_text)
             # (a QuotaError's wait already has its minute after the reset; the GPU guard's clock is the one to use)
             update(job, status='waiting', stage=stage,
                    gpu_wait=reason if reason in ('quota', 'stopped', 'unreadable') else None,
-                   retry_at=gpu.now() + e.wait_seconds + (0 if isinstance(e, QuotaError) else 60), progress=0)
+                   retry_at=gpu.now() + e.wait_seconds + (0 if isinstance(e, QuotaError) else 60), progress=0, **extra)
             save(job)
             continue  # (no notification: it finishes by itself, and that one sends it)
         except Exception as e:
+            if sing and isinstance(e, sing.PcWait):  # (Sing) made on the owner's PC: it waits for it (and wakes then)
+                update(job, status='waiting', stage=str(e), retry_at=time.time() + e.wait_seconds,
+                       sing_wait=getattr(e, 'why', 'pc'))  # ('pc_singing': the PC is singing one of its shots now)
+                save(job)
+                continue
             log.exception('%s failed', job_id)
             update(job, status='failed', error=friendly(e), stage='')
             refund(job)
@@ -2420,6 +2449,8 @@ async def lifespan(_app):
     threading.Thread(target=update_downloader, daemon=True).start()
     if pet_voice:
         pet_voice.start_check()  # (in the background: the worker doesn't wait for it)
+    if sing:
+        sing.attach(THIS)  # (Sing)
     load_jobs()
     threading.Thread(target=worker_loop, args=(work_queue,), daemon=True).start()
     threading.Thread(target=worker_loop, args=(quick_queue,), daemon=True).start()
@@ -2427,6 +2458,8 @@ async def lifespan(_app):
     threading.Thread(target=scheduler_loop, daemon=True).start()
     threads_up.set()
     gpu.view()  # (reads the quota in the background, so /health has it)
+    if sing:  # (Sing) every My song without its singing pack is prepared in the background (Детство first)
+        sing.start(THIS)
     yield
 
 
@@ -2517,11 +2550,15 @@ def features():
     gpu: the GPU guard (/health "gpu": the free AI time left today and its reset, alert 'billed' when it stopped all
     AI work because Hugging Face charged credits; POST /gpu/resume; a waiting video's gpu_wait).
     together: Together videos (mode 'together' of POST /jobs, /jobs/{id}/copy, the edit's scene/look/recompose/
-    order/names). library: the free clip library (library.json, by id in a Together video's cast)."""
+    order/names). library: the free clip library (library.json, by id in a Together video's cast).
+    (Sing) sing: Sing videos (mode 'sing' of POST /jobs, /songs/{id}/sing, /songs/{id}/voice, /gpu, /settings,
+    /jobs/{id}/test, /jobs/{id}/shots/{k}/redo), only when sing.py, sing_audio.py and a voice/music split import
+    here; sing_duet: two singers; sing_best: the best split (RoFormer); gpu_guard: the free-for-sure GPU guard."""
     return (['chain'] + (['meme'] if meme and sfx else []) + ['opening', 'outro']
             + (['voice'] if pet_voice and pet_voice.ready() else []) + (['push'] if webpush else []) + ['songs']
             + (['plan'] if posting else []) + ['gpu']
-            + (['together'] if together else []) + (['library'] if together and together.load_library() else []))
+            + (['together'] if together else []) + (['library'] if together and together.load_library() else [])
+            + (sing.features() if sing else []))
 
 
 @app.get('/health')
@@ -2530,9 +2567,13 @@ def health():
     # the quota can't be read: 'key' or 'down', else None), estimated (a free account's ledger), key_refused}; it
     # never waits for Hugging Face (the quota is read in the background, at most every gpu.CACHE seconds).
     g = gpu.view()  # (token_ok: also false once Hugging Face refuses the key for the quota and whoami: revoked)
-    return {'ok': True, 'version': VERSION, 'storage': bool(hub), 'token': bool(HF_TOKEN),
-            'token_ok': token_ok and not g['key_refused'], 'pc': pc_online(), 'pc_name': pc['name'],
-            'features': features(), 'gpu': g}
+    out = {'ok': True, 'version': VERSION, 'storage': bool(hub), 'token': bool(HF_TOKEN),
+           'token_ok': token_ok and not g['key_refused'], 'pc': pc_online(), 'pc_name': pc['name'],
+           'features': features(), 'gpu': g}
+    if sing:  # (Sing) the guard, the splits, the engines' test results, whether the PC can sing
+        out['sing'] = sing.health()
+        out['pc_sing'] = out['sing']['pc']
+    return out
 
 
 @app.post('/gpu/resume')
@@ -2598,8 +2639,34 @@ def create_job(
     cast: str = Form(''),
     real_fps: float = Form(30),
     cast_files: list[UploadFile] = File(None),
+    singers: str = Form(''),  # (Sing) 'sing': 1-2 singers sing a song (see sing.build_jobs)
+    part: str = Form('meme'),
+    part_from: float = Form(None),
+    part_to: float = Form(None),
+    shots: str = Form('cuts'),
+    who: str = Form('turns'),
+    voices: str = Form('original'),
+    sharp: str = Form('sharp'),
+    engine: str = Form('online'),
+    test: bool = Form(False),
+    test_engine: str = Form(''),
+    title_on: bool = Form(True),
+    beat_zooms: bool = Form(True),
+    song_name: str = Form(''),
+    singer_files: list[UploadFile] = File(None),
 ):
-    who = caller(x_antics_key)
+    caller_ = caller(x_antics_key)
+    if mode == 'sing':  # (Sing) its own form: the singers, the song and its part, the stage, the voices
+        if not (sing and sing.ready()):
+            raise HTTPException(400, "This worker can't make Sing videos. Update it in Settings.")
+        return sing_job(caller_, {
+            'singers': singers, 'cast_files': (cast_files or []) + (singer_files or []) + (images or []),
+            'real_fps': real_fps, 'song_id': song_id, 'song': song, 'song_name': song_name, 'part': part,
+            'part_from': part_from, 'part_to': part_to, 'look': look, 'shots': shots, 'who': who, 'voices': voices,
+            'sharp': sharp, 'engine': engine, 'test': test, 'test_engine': test_engine, 'draft': draft,
+            'opening': opening, 'outro': outro, 'title_on': title_on, 'beat_zooms': beat_zooms, 'badge': badge,
+            'endcard': endcard})
+    who = caller_
     if music == 'mysong':
         need_read('songs.json', 'Your songs are')
     url = url.strip()
@@ -2650,6 +2717,29 @@ def create_job(
             with guests_lock:
                 who['uses_left'] += count
                 who['used'] = max(0, who['used'] - count)
+        raise
+    if who is not OWNER:
+        save_guests()
+    for job in made:
+        enqueue(job)
+    return {'jobs': [public(j) for j in made], 'me': me_view(who)}
+
+
+def sing_job(who, form):
+    """(Sing) One Sing video (a friend's counts as one of their videos, given back if it can't be made)."""
+    if who is not OWNER:
+        with guests_lock:
+            if who['uses_left'] <= 0:
+                raise HTTPException(403, f'No videos left. Ask {host_of(who)} for more.')
+            who['uses_left'] -= 1
+            who['used'] += 1
+    try:
+        made = sing.build_jobs(THIS, who, form)
+    except BaseException:
+        if who is not OWNER:
+            with guests_lock:
+                who['uses_left'] += 1
+                who['used'] = max(0, who['used'] - 1)
         raise
     if who is not OWNER:
         save_guests()
@@ -2796,11 +2886,27 @@ def edit_job(
     recompose: bool = Form(None),
     order: str = Form(None),
     names: str = Form(None),
+    voices: str = Form(None),  # (Sing) the voices (a re-mix), who sings what, the part, shots, angles, ↻ pictures
+    who: str = Form(None),
+    part: str = Form(None),
+    part_from: float = Form(None),
+    part_to: float = Form(None),
+    shots: str = Form(None),
+    angles: str = Form(None),
+    repicture: str = Form(None),
+    title_on: bool = Form(None),
+    beat_zooms: bool = Form(None),
 ):
     """Change a video. Text, music, speed, length, meme effects, the pet voice, the opening and the ending re-cut
     it in seconds. A new description, style or animal, or redo (clip numbers), animates the clips concerned again."""
+    sing_form = {'voices': voices, 'who': who, 'part': part, 'part_from': part_from, 'part_to': part_to,
+                 'shots': shots, 'angles': angles, 'repicture': repicture, 'title_on': title_on,
+                 'beat_zooms': beat_zooms, 'look': look, 'redo': redo, 'opening': opening, 'outro': outro,
+                 'brand': brand}  # (Sing)
     who = caller(x_antics_key)
     job = own_job(who, job_id)
+    if job.get('kind') == 'sing' and sing:  # (Sing) its own edit: voices, who sings, part, shots, pictures, look
+        return sing.edit(THIS, job, who, sing_form)
     if music == 'mysong':
         need_read('songs.json', 'Your songs are')
     try:
@@ -2931,7 +3037,10 @@ def copy_job(job_id: str, look: str = Form('free'), x_antics_key: str = Header(N
 @app.post('/jobs/{job_id}/finish')
 def finish_job(job_id: str, x_antics_key: str = Header(None)):
     """From a preview (or a video that came out short) to the full video: animates only what is missing."""
-    job = own_job(caller(x_antics_key), job_id)
+    who = caller(x_antics_key)
+    job = own_job(who, job_id)
+    if job.get('kind') == 'sing' and sing:  # (Sing) a preview -> every shot; an approved test -> the meme part
+        return public(sing.finish(THIS, job, who))
     with jobs_lock:
         if job['status'] == 'working':
             raise HTTPException(409, 'Still working on this one. Finish it when it is ready.')
@@ -2946,11 +3055,18 @@ def finish_job(job_id: str, x_antics_key: str = Header(None)):
 
 
 @app.get('/jobs/{job_id}/video')
-def job_video(job_id: str, key: str = Query(None), cut: str = Query(None), x_antics_key: str = Header(None)):
+def job_video(job_id: str, key: str = Query(None), cut: str = Query(None), x_antics_key: str = Header(None),
+              part: int = Query(None), sofar: str = Query(None), test: str = Query(None)):
     """The video. cut=tiktok: its TikTok cut, for the owner's posting plan (the video without its song; a video
-    without a song is its own TikTok cut). 404 while that isn't ready for the video as it is now."""
+    without a song is its own TikTok cut). 404 while that isn't ready for the video as it is now.
+    (Sing) part=n: that TikTok part (cut=tiktok&part=n: its no-song cut); sofar=1: Watch so far (the shots sung
+    from the start, with the song); test=L1: that engine's test clip (Compare)."""
     who = caller(x_antics_key, key)
     job = own_job(who, job_id)
+    if job.get('kind') == 'sing' and sing and (part is not None or sofar or test):  # (Sing)
+        if cut == 'tiktok' and who is not OWNER:  # (the posting plan is the owner's)
+            raise HTTPException(403, 'Only the owner can do that')
+        return sing_video(job, part, sofar, test, cut)
     if not job.get('thumb'):  # the newest finished version (an edit swaps it in when it is ready)
         raise HTTPException(409, 'Not ready yet')
     if cut == 'tiktok' and who is not OWNER:  # (the posting plan is the owner's)
@@ -2967,6 +3083,77 @@ def job_video(job_id: str, key: str = Query(None), cut: str = Query(None), x_ant
             raise HTTPException(404, 'The TikTok version is not ready yet')
         return FileResponse(path, media_type='video/mp4', filename=f'antics-{job_id}-tiktok.mp4')
     return FileResponse(local_file(job, 'final.mp4'), media_type='video/mp4', filename=f'antics-{job_id}.mp4')
+
+
+def sing_video(job, part, sofar, test, cut):
+    """(Sing) A part, its no-song cut, Watch so far, or a test clip."""
+    if sofar:  # (its own lock: it is watched while the video is still being sung)
+        path = sing.sofar(job)
+        if not path:
+            raise HTTPException(409, 'Nothing sung yet')
+        return FileResponse(path, media_type='video/mp4', filename=f"antics-{job['id']}-so-far.mp4")
+    if test:
+        if test not in sing.ENGINES:
+            raise HTTPException(404, 'No such test clip')
+        try:
+            path = local_file(job, f'test_{test}.mp4')
+        except Exception:
+            raise HTTPException(404, 'No such test clip')
+        if not path.exists():
+            raise HTTPException(404, 'No such test clip')
+        return FileResponse(path, media_type='video/mp4', filename=f"antics-{job['id']}-test-{test}.mp4")
+    post = next((p for p in job.get('posts') or [] if p.get('n') == part), None)
+    if not post or not post.get('ready'):  # (a part is ready as soon as its shots are sung)
+        raise HTTPException(404, 'That part is not ready yet')
+    name = post.get('cut') if cut == 'tiktok' else post.get('file')
+    if not name:
+        raise HTTPException(404, 'That part is not ready yet')
+    return FileResponse(local_file(job, name), media_type='video/mp4', filename=f"antics-{job['id']}-part{part}.mp4")
+
+
+@app.get('/jobs/{job_id}/picture')
+def job_picture(job_id: str, name: str = Query('close'), key: str = Query(None), x_antics_key: str = Header(None)):
+    """(Sing) A stage picture (close, medium, wide, closeA, closeB, two) for the picture check, or a singer's own
+    picture (singer0, singer1)."""
+    job = own_job(caller(x_antics_key, key), job_id)
+    if job.get('kind') != 'sing':
+        raise HTTPException(404, 'No such picture')
+    m = re.fullmatch(r'singer([01])', name or '')
+    if m and int(m[1]) < len(job.get('singers') or []):
+        file = job['singers'][int(m[1])].get('pic')
+    else:
+        file = (job.get('angles') or {}).get(name)
+    if not file:
+        raise HTTPException(404, 'No such picture yet')
+    return FileResponse(local_file(job, file), media_type='image/jpeg')
+
+
+@app.post('/jobs/{job_id}/test')
+def sing_test_answer(job_id: str, answer: str = Form(None), verdict: str = Form(None),
+                     next_: str = Form(None, alias='next'), x_antics_key: str = Header(None)):
+    """(Sing) The 5-second test's answer (answer, or verdict): 'good' (Yes, use this one), 'bad' (No, try another
+    engine: the same picture and seconds go to the next engine, or the one next names; next=false only marks it),
+    'pc' (Try my PC tonight). Returns {'job', 'gpu'}."""
+    who = caller(x_antics_key)
+    job = own_job(who, job_id)
+    if not sing or job.get('kind') != 'sing':
+        raise HTTPException(400, "That isn't a singing test")
+    nxt = (next_ or '').strip()
+    go = nxt.lower() not in ('false', '0', 'no')
+    done = sing.verdict(THIS, job, who, answer or verdict, go_next=go, next_engine=nxt if nxt in sing.ENGINES else None)
+    return {'job': public(done), 'gpu': sing.gpu_view()}
+
+
+@app.post('/jobs/{job_id}/shots/{k}/redo')
+def sing_redo(job_id: str, k: int, x_antics_key: str = Header(None)):
+    """(Sing) ↻ one shot: sung again with a new seed (a friend's redo counts)."""
+    who = caller(x_antics_key)
+    job = own_job(who, job_id)
+    if not sing or job.get('kind') != 'sing':
+        raise HTTPException(400, 'Only Sing videos have shots')
+    if not any(s['k'] == k and s['kind'] != 'cutaway' for s in job.get('shots') or []):
+        raise HTTPException(404, 'No such shot')
+    return sing.redo_shot(THIS, job, who, k)
 
 
 @app.get('/jobs/{job_id}/thumb')
@@ -3224,8 +3411,13 @@ def add_song(file: UploadFile = File(...), name: str = Form(''), x_antics_key: s
     finally:
         original.unlink(missing_ok=True)
     found = meme_part(path)
+    known = sing.known_song(audio_seconds(path)) if sing else None  # (Sing) a song antics knows: its meme part
+    if known:  # (first, before the finder's other picks)
+        others = [c for c in found.get('candidates') or [] if abs(float(c.get('start') or 0) - known['meme']) > 1.0]
+        found = dict(found, start=known['meme'], how='known song',
+                     candidates=[{'start': known['meme'], 'why': 'chorus'}] + others)
     title = (clean_song_name(name) or clean_song_name(Path(file.filename or '').stem.replace('_', ' '))
-             or 'My song')
+             or (known or {}).get('name') or 'My song')
     song = {'id': song_id, 'name': title, 'start': float(found['start']), 'seconds_hint': found.get('seconds') or 15.0,
             'default': False, 'added': time.time(), 'candidates': found.get('candidates') or [],
             'duration': audio_seconds(path)}
@@ -3238,6 +3430,8 @@ def add_song(file: UploadFile = File(...), name: str = Form(''), x_antics_key: s
         view = song_view(song)
     save_songs(added=[song_id])
     log.info('song %s "%s": meme part at %.2f s (%s)', song_id, title, song['start'], found.get('how', ''))
+    if sing and sing.ready():  # (Sing) its singing pack (voice, music, lines) is made in the background now
+        sing.queue_prepare(song_id)
     return view
 
 
@@ -3290,6 +3484,8 @@ def delete_song(song_id: str, x_antics_key: str = Header(None)):
         raise HTTPException(404, 'No such song')
     (DATA / 'songs' / f'{song_id}.m4a').unlink(missing_ok=True)
     save_songs(removed=[song_id])
+    if sing:  # (Sing) its singing pack goes too
+        sing.delete_pack(song_id)
     return {'ok': True}
 
 
@@ -3306,6 +3502,75 @@ def song_audio(song_id: str, key: str = Query(None), x_antics_key: str = Header(
     except Exception:
         raise HTTPException(404, "That song's file is missing")
     return FileResponse(path, media_type='audio/mp4')
+
+
+@app.get('/songs/{song_id}/sing')
+def song_sing(song_id: str, singers: int = Query(1), x_antics_key: str = Header(None)):
+    """(Sing) A song made ready to sing: its state ('queued' / 'preparing' / 'ready' / 'failed'), the split,
+    duration, bpm, the lines (times and kinds only, never words), the parts and the time line of each part
+    (online / your PC / both). Asks for the pack when it isn't made."""
+    caller(x_antics_key)
+    need_read('songs.json', 'Your songs are')
+    if not sing:
+        raise HTTPException(503, "This worker can't make Sing videos yet. Update it in Settings.")
+    return sing.song_view(song_id, singers)
+
+
+@app.get('/songs/{song_id}/voice')
+def song_voice(song_id: str, v: str = Query('original'), at: float = Query(None), animal: str = Query('cat'),
+               key: str = Query(None), x_antics_key: str = Header(None)):
+    """(Sing) 4 s of the song's singer in that voice (original, animal, cat, bear, dog, small, bird), over the music."""
+    caller(x_antics_key, key)
+    need_read('songs.json', 'Your songs are')
+    if not sing:
+        raise HTTPException(503, "This worker can't make Sing videos yet. Update it in Settings.")
+    with songs_lock:
+        if song_id not in songs:
+            raise HTTPException(404, 'No such song')
+    return FileResponse(sing.voice_sample(song_id, v, at, clean_animal(animal) or 'cat'), media_type='audio/mp4')
+
+
+@app.get('/gpu')
+def gpu_view(x_antics_key: str = Header(None)):
+    """(Sing) The free GPU time today (from the GPU guard), Sing's share of it, and each singing engine's state
+    (friends too: it holds no secrets)."""
+    caller(x_antics_key)
+    if not sing:
+        raise HTTPException(503, "This worker can't make Sing videos yet. Update it in Settings.")
+    return sing.gpu_view()
+
+
+@app.post('/settings')
+def change_settings(body: Any = Body(None), x_antics_key: str = Header(None)):
+    """(Sing) sing_share (seconds, or 25/50/75/100 % of the day), sing_engines {id: {state}}, sing_mix,
+    sing_pc_until."""
+    check(x_antics_key)
+    if not sing:
+        raise HTTPException(503, "This worker can't make Sing videos yet. Update it in Settings.")
+    need_read(sing.SETTINGS_FILE, 'Your singing settings are')
+    return sing.change_settings(plan_body(body))
+
+
+@app.get('/sing/test')
+def sing_test_cost(engine: str = Query(None), x_antics_key: str = Header(None)):
+    """(Sing) What the next 5-second test costs, before anything is spent."""
+    check(x_antics_key)
+    if not sing:
+        raise HTTPException(503, "This worker can't make Sing videos yet. Update it in Settings.")
+    return sing.test_cost(engine)
+
+
+@app.get('/sing/space')
+def sing_space(x_antics_key: str = Header(None)):
+    """(Sing) The owner's own singing Space (v14.1, not in this version)."""
+    check(x_antics_key)
+    return {'state': 'none', 'available': False, 'version': '14.1'}
+
+
+@app.post('/sing/space/setup')
+def sing_space_setup(x_antics_key: str = Header(None)):
+    check(x_antics_key)
+    raise HTTPException(501, 'Your own singing GPU comes in a later version.')
 
 
 # ---------- Notifications ----------
@@ -3429,6 +3694,8 @@ def plan_song(item, job):
         with songs_lock:
             song = dict(songs.get(job.get('song_id') or '') or {})
         start = job.get('music_start') if job.get('music_start') is not None else song.get('start')
+        if item.get('part') and sing:  # (Sing) that part's own start in the song
+            start = sing.part_start(job, item['part'], start)
         return {'name': song.get('name') or job.get('song_name') or 'your song', 'start': round(float(start or 0), 2)}
     if used == 'upload':  # ('your song': the page says "the same song" then)
         return {'name': job.get('upload_name') or 'your song', 'start': round(float(job.get('music_start') or 0), 2)}
@@ -3458,6 +3725,8 @@ def plan_caption(item, job, state):
         return text, True, posting.tags_in(item['caption'])
     tags = posting.pick_tags(state['plan'], job, state['posted_count'], animals=animals, ai=ai)
     text = made['text'] if 'text' in made else first_caption(job)
+    if item.get('part') and sing:  # (Sing) "... · Part 2/4"
+        text = sing.part_caption(job, item['part'], text)
     return posting.compose(text, tags, credit), False, tags
 
 
@@ -3481,7 +3750,11 @@ def plan_view():
             at = next(planned, None) if item['status'] == 'waiting' else item['reminded_at']
             last = at if item['status'] == 'waiting' and at is not None else last
         ready = item['audio'] == 'as_made' or cut_ready(job)
-        queue_view.append(dict(item, label=short_label(job), thumb=f"/jobs/{job['id']}/thumb", caption=caption,
+        label = short_label(job)
+        if item.get('part') and sing:  # (Sing) one part of a long sung video: its own cut, made with the parts
+            ready = item['audio'] == 'as_made' or sing.part_ready(job, item['part'])
+            label = sing.part_label(job, item['part'], label)
+        queue_view.append(dict(item, label=label, thumb=f"/jobs/{job['id']}/thumb", caption=caption,
                                custom=own, tags=tags, song=plan_song(item, job), cut_ready=ready, at=at,
                                cut_rev=job.get('tiktok_rev'),
                                cut_failed=not ready and cut_failed.get(job['id']) == job.get('rev')))
@@ -3502,6 +3775,8 @@ def plan_item(pid):
 
 def postable(job):
     """Why a video can't go in the plan ('' when it can)."""
+    if job.get('test'):  # (Sing)
+        return "That's the singing test. Make the real video, then add it."
     if job.get('draft'):
         return "That's a preview. Tap Finish first, then add the whole video."
     if job.get('picture_check'):  # (Together: its new picture is being checked, the video isn't made yet)
@@ -3550,17 +3825,26 @@ def plan_add(body: Any = Body(None), x_antics_key: str = Header(None)):
     t = posting.now()
     with plan_lock:
         queued = {item['job'] for item in plan_state['queue']}
+        parts_in = {(item['job'], item.get('part')) for item in plan_state['queue']}  # (Sing: a series' parts)
         items = []
         for job_id in ids:
             job = jobs.get(job_id)
             if not job:
                 raise HTTPException(404, 'No such video')
-            why = postable(job) or ('That video is already in your posting plan.' if job_id in queued else '')
+            parts = sing.plan_parts(job) if sing and job.get('kind') == 'sing' else []  # (Sing) Part 1/N ... N/N
+            if parts:
+                parts = [n for n in parts if (job_id, n) not in parts_in]
+            why = postable(job) or ('That video is already in your posting plan.' if job_id in queued and not parts
+                                    else '')
             if why:
                 raise HTTPException(409, why)
             audio = 'no_song' if job.get('music') in ('mysong', 'upload') else 'as_made'
             by = (job.get('owner_name') or 'A friend') if job.get('owner', 'me') != OWNER['id'] else None
-            items.append(posting.new_item(job_id, audio, by, t))
+            for n in parts or [None]:
+                item = posting.new_item(job_id, audio, by, t)
+                if n is not None:
+                    item['part'] = n
+                items.append(item)
         if len(plan_state['queue']) + len(items) > posting.MAX_QUEUE:
             raise HTTPException(409, f'Your posting plan holds {posting.MAX_QUEUE} videos. Post or remove some first.')
         plan_state['queue'] = items + plan_state['queue'] if where == 'start' else plan_state['queue'] + items
@@ -3675,8 +3959,21 @@ def pc_pair(code: str = Form(...)):
 
 
 @app.post('/pc/hello')
-def pc_hello(name: str = Form(''), starting: bool = Form(False), x_antics_key: str = Header(None)):
+def pc_hello(name: str = Form(''), starting: bool = Form(False), x_antics_key: str = Header(None),
+             can: str = Form(None), vram: str = Form(None), ram_gb: str = Form(None), torch: str = Form(None),
+             driver: str = Form(None), until: str = Form(None), utc_offset: str = Form(None),
+             session: str = Form(None)):
     check(x_antics_key)
+    if session:  # (Sing: helper v14) this run of the helper: a long poll an earlier run left open takes nothing
+        with pc_cond:
+            pc['session'] = str(session)[:40]
+    extra = {}
+    if sing and can is not None:  # (Sing) what the helper can do (can=sing: it takes sing tasks), its GPU and RAM
+        pc_seen(name)
+        extra = sing.pc_hello({'can': can, 'vram': vram, 'ram_gb': ram_gb, 'torch': torch, 'driver': driver,
+                               'until': until, 'utc_offset': utc_offset}) or {}
+    elif starting:
+        pc['can'] = []  # (a helper that doesn't say what it can: an older one, which never gets sing tasks)
     pc_seen(name)
     if starting:  # a restarted helper won't finish what it was making before
         with pc_cond:
@@ -3685,18 +3982,22 @@ def pc_hello(name: str = Form(''), starting: bool = Form(False), x_antics_key: s
                     task['status'] = 'waiting'
             pc_cond.notify_all()
         wake_waiting(now_anyway=True)
-    return {'ok': True}
+    return {'ok': True, **extra}  # (Sing: sing_until, the owner's stop time for the PC)
 
 
 @app.get('/pc/next')
-def pc_next(wait: float = Query(25), x_antics_key: str = Header(None)):
-    """Long poll: the next clip for the PC to make, or nothing after `wait` seconds."""
+def pc_next(wait: float = Query(25), x_antics_key: str = Header(None), session: str = Query(None)):
+    """Long poll: the next clip for the PC to make, or nothing after `wait` seconds. session (helper v14): a poll
+    from an earlier run of the helper (closed while its poll was open) gets nothing."""
     check(x_antics_key)
     pc_seen()
     deadline = time.time() + max(0.0, min(wait, 50.0))
     with pc_cond:
         while True:
-            task = next((t for t in pc_tasks.values() if t['status'] == 'waiting'), None)
+            if session and pc.get('session') and str(session)[:40] != pc['session']:  # (Sing: helper v14)
+                return {'task': None}
+            task = next((t for t in pc_tasks.values() if t['status'] == 'waiting'
+                         and (not sing or sing.pc_offer(t))), None)  # (Sing: sing tasks only to can=sing helpers)
             if task:
                 task['status'] = 'claimed'
                 break
@@ -3705,6 +4006,8 @@ def pc_next(wait: float = Query(25), x_antics_key: str = Header(None)):
                 return {'task': None}
             pc_cond.wait(left)
     pc_seen()
+    if task.get('kind') == 'sing' and sing:  # (Sing)
+        return {'task': sing.pc_task_view(task)}
     return {'task': {'id': task['id'], 'prompt': task['prompt'], 'seconds': task['seconds']}}
 
 
@@ -3713,6 +4016,74 @@ def pc_task_image(task_id: str, x_antics_key: str = Header(None)):
     check(x_antics_key)
     picture = pc_task(task_id)['picture']
     return FileResponse(picture, media_type='image/png' if picture.endswith('.png') else 'image/jpeg')
+
+
+@app.get('/pc/tasks/{task_id}/audio')
+def pc_task_audio(task_id: str, n: int = Query(0), x_antics_key: str = Header(None)):
+    """(Sing) A sing task's vocal track n (16 kHz mono wav: that singer's lines of the original vocal)."""
+    check(x_antics_key)
+    task = pc_task(task_id)
+    files = task.get('audio') or []
+    if not 0 <= n < len(files):
+        raise HTTPException(404, 'No such track')
+    return FileResponse(files[n], media_type='audio/wav')
+
+
+@app.get('/pc/tasks/{task_id}/mask')
+def pc_task_mask(task_id: str, n: int = Query(0), x_antics_key: str = Header(None)):
+    """(Sing) A duet task's mask n (which half of the picture each singer is in)."""
+    check(x_antics_key)
+    task = pc_task(task_id)
+    files = task.get('masks') or []
+    if not 0 <= n < len(files):
+        raise HTTPException(404, 'No such mask')
+    return FileResponse(files[n], media_type='image/png')
+
+
+@app.post('/pc/tasks/{task_id}/part')
+def pc_task_part(task_id: str, n: int = Query(...), video: UploadFile = File(...), motion: UploadFile = File(None),
+                 x_antics_key: str = Header(None)):
+    """(Sing) One finished chunk of a sing task (and its last frames), kept so a restarted helper goes on from there."""
+    check(x_antics_key)
+    pc_seen()
+    task = pc_task(task_id)
+    if task.get('kind') != 'sing' or not sing:
+        raise HTTPException(400, 'Only sing tasks come in parts')
+    return sing.pc_part(task, n, video, motion)
+
+
+@app.get('/pc/tasks/{task_id}/part')
+def pc_task_part_get(task_id: str, n: int = Query(...), x_antics_key: str = Header(None)):
+    """(Sing) A chunk's last frames back (the helper restarted: it carries on from chunk n + 1)."""
+    check(x_antics_key)
+    task = pc_task(task_id)
+    got = (task.get('parts') or {}).get(str(n)) or {}
+    if not got.get('motion'):
+        raise HTTPException(404, 'No such part')
+    return FileResponse(got['motion'], media_type='image/png')
+
+
+@app.get('/pc/tasks/{task_id}/part_video')
+def pc_task_part_video(task_id: str, n: int = Query(...), x_antics_key: str = Header(None)):
+    """(Sing) A chunk's video back (the helper lost its own copy: it takes the worker's instead of making it again)."""
+    check(x_antics_key)
+    task = pc_task(task_id)
+    got = (task.get('parts') or {}).get(str(n)) or {}
+    if not got.get('video'):
+        raise HTTPException(404, 'No such part')
+    return FileResponse(got['video'], media_type='video/webm')
+
+
+@app.post('/pc/tasks/{task_id}/progress')
+def pc_task_progress(task_id: str, chunk_s: float = Form(None), peak_vram: str = Form(None),
+                     peak_ram: str = Form(None), size: str = Form(None), x_antics_key: str = Header(None)):
+    """(Sing) The helper's measurements: seconds per chunk, peak VRAM and RAM (the time line uses the median)."""
+    check(x_antics_key)
+    pc_seen()
+    pc_task(task_id)
+    if not sing:
+        raise HTTPException(400, 'Only sing tasks report progress')
+    return sing.pc_progress({'chunk_s': chunk_s, 'peak_vram': peak_vram, 'peak_ram': peak_ram, 'size': size})
 
 
 @app.post('/pc/tasks/{task_id}/done')
