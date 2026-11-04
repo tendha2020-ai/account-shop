@@ -218,24 +218,39 @@ function fromB64url(text) {
   return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
 }
 
+// antics' public home. The old test address (raw.githack.com) sends everyone there, still connected.
+const HOME_URL = 'https://tendha2020-ai.github.io/account-shop/animals/';
+const onTestAddress = () => location.hostname === 'raw.githack.com';
+const pageBase = () => (onTestAddress() ? HOME_URL : `${location.origin}${location.pathname}`);
+
+// On the old test address: a banner with a link to the new home that carries this device's connection.
+function renderMoved() {
+  const banner = $('#movedBanner');
+  if (!banner) return;
+  banner.hidden = !onTestAddress();
+  if (banner.hidden) return;
+  const w = state.worker;
+  $('#movedLink').href = !w ? HOME_URL : w.guest ? myInviteLink() : appLink();
+}
+
 // The link a friend opens: this page plus #join=<the worker's address, their own key and name>.
 function inviteLink(guest) {
   const data = { w: state.worker.url, k: guest.key, n: guest.name, h: BRAND.name };
-  return `${location.origin}${location.pathname}#join=${toB64url(JSON.stringify(data))}`;
+  return `${pageBase()}#join=${toB64url(JSON.stringify(data))}`;
 }
 
 // The owner's own link, for the Home Screen app or another device: this page plus #app=<the worker's
 // address, the owner key and the Space's name>. It opens the owner's antics, so it stays private.
 function appLink() {
   const w = state.worker;
-  return `${location.origin}${location.pathname}#app=${toB64url(JSON.stringify({ w: w.url, k: w.key, s: w.space }))}`;
+  return `${pageBase()}#app=${toB64url(JSON.stringify({ w: w.url, k: w.key, s: w.space }))}`;
 }
 
 // A friend's own invite link again, for the Home Screen app or another phone.
 function myInviteLink() {
   const w = state.worker;
   const data = { w: w.url, k: w.key, n: (state.me && state.me.name) || w.name || '', h: hostName() };
-  return `${location.origin}${location.pathname}#join=${toB64url(JSON.stringify(data))}`;
+  return `${pageBase()}#join=${toB64url(JSON.stringify(data))}`;
 }
 
 // What an antics link holds: { kind: 'join' | 'app', worker }, with worker null when the link is broken.
@@ -377,6 +392,7 @@ function renderRole() {
   $('#subLine').textContent = sub;
   $('#brandLine').hidden = guest;
   renderExtras();
+  renderMoved();
 }
 
 // ---------- One-time setup: create the user's worker Space ----------
@@ -4429,6 +4445,7 @@ function init() {
   if (state.extras.voice !== 'off') state.extras.voicePick = state.extras.voice; // the voice in use is the pick
   readInvite();
   openFromLink(location.hash, false);
+  renderMoved();
   $('#idea').value = load(KEYS.idea, '');
   $('#animalOpt').value = load(KEYS.animal, '');
   buildVoices($('#voiceSeg'), (v) => {
