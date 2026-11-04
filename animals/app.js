@@ -218,6 +218,9 @@ function fromB64url(text) {
   return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
 }
 
+// The only Hugging Face accounts that may set up or update a worker from this page (lowercase).
+const OWNER_ACCOUNTS = ['tendha'];
+
 // antics' public home. The old test address (raw.githack.com) sends everyone there, still connected.
 const HOME_URL = 'https://tendha2020-ai.github.io/account-shop/animals/';
 const onTestAddress = () => location.hostname === 'raw.githack.com';
@@ -462,6 +465,11 @@ async function setupWorker() {
       throw new Error('This key can only read. Make a new one and pick Write (step 2).');
     }
     const user = who.name;
+    // antics is TENDHA2's private tool: only the owner's Hugging Face account may set up or update a worker
+    // from this page. Friends use the owner's worker through their invite links.
+    if (!OWNER_ACCOUNTS.includes(String(user).toLowerCase())) {
+      throw new Error("antics is TENDHA2's private tool, so it can't be set up with this account. Got an invite link? Open that link instead.");
+    }
     const space = updating ? state.worker.space : `${user}/${SPACE_NAME}`;
     if (updating && space.split('/')[0].toLowerCase() !== user.toLowerCase()) {
       throw new Error(`This key belongs to ${user}, but your worker is ${space}. Use a key from that account.`);
@@ -4378,6 +4386,7 @@ function renderSettings() {
   const guest = isGuest();
   $('#guestPane').hidden = !guest;
   $('#setupLinkLine').hidden = !(standalone() && !state.worker); // the Home Screen app: the link is quicker
+  $('#privateLine').hidden = Boolean(state.worker); // only for a device that isn't connected yet
   // Notifications and the Home Screen app sit near the top: the owner's after the worker line, a friend's
   // before Leave this invite.
   if (guest) $('#guestPane').insertBefore($('#appBoxes'), $('#guestPane > .row'));
