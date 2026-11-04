@@ -35,6 +35,11 @@
   </header>
 
   <div class="banner-wrap">
+    <!-- Only on the old test address: antics now lives at its own home (the link keeps this device connected) -->
+    <p id="movedBanner" class="note banner" hidden>
+      <span>antics has a new home. Open it there, then add that one to your Home Screen.</span>
+      <a id="movedLink" class="plain" href="https://tendha2020-ai.github.io/account-shop/animals/">Open the new antics</a>
+    </p>
     <p id="updateBanner" class="note banner" hidden>
       <span id="updateText">A new version of antics is ready, with more options.</span>
       <button type="button" id="updateBtnMain" class="plain">Update my worker</button>
@@ -516,6 +521,7 @@
       <div id="setupPane">
         <h2 id="setupTitle">One-time setup</h2>
         <p id="setupLinkLine" class="note" hidden>Already use antics in your browser? <button type="button" id="toConnect" class="link-btn">Paste your antics link instead</button></p>
+        <p id="privateLine" class="note">antics is TENDHA2's private tool. Friends: open the invite link TENDHA2 sent you.</p>
         <p id="setupIntro">Your videos are made on your own free Hugging Face worker, so it keeps going when your phone is locked.</p>
         <ol class="how">
           <li>Open <a href="https://huggingface.co/settings/tokens/new?tokenType=write" target="_blank" rel="noopener">this page</a> (sign in if asked).</li>

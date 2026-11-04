@@ -219,24 +219,42 @@ function fromB64url(text) {
   return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
 }
 
+// The only Hugging Face accounts that may set up or update a worker from this page (lowercase).
+const OWNER_ACCOUNTS = ['tendha'];
+
+// antics' public home. The old test address (raw.githack.com) sends everyone there, still connected.
+const HOME_URL = 'https://tendha2020-ai.github.io/account-shop/animals/';
+const onTestAddress = () => location.hostname === 'raw.githack.com';
+const pageBase = () => (onTestAddress() ? HOME_URL : `${location.origin}${location.pathname}`);
+
+// On the old test address: a banner with a link to the new home that carries this device's connection.
+function renderMoved() {
+  const banner = $('#movedBanner');
+  if (!banner) return;
+  banner.hidden = !onTestAddress();
+  if (banner.hidden) return;
+  const w = state.worker;
+  $('#movedLink').href = !w ? HOME_URL : w.guest ? myInviteLink() : appLink();
+}
+
 // The link a friend opens: this page plus #join=<the worker's address, their own key and name>.
 function inviteLink(guest) {
   const data = { w: state.worker.url, k: guest.key, n: guest.name, h: BRAND.name };
-  return `${location.origin}${location.pathname}#join=${toB64url(JSON.stringify(data))}`;
+  return `${pageBase()}#join=${toB64url(JSON.stringify(data))}`;
 }
 
 // The owner's own link, for the Home Screen app or another device: this page plus #app=<the worker's
 // address, the owner key and the Space's name>. It opens the owner's antics, so it stays private.
 function appLink() {
   const w = state.worker;
-  return `${location.origin}${location.pathname}#app=${toB64url(JSON.stringify({ w: w.url, k: w.key, s: w.space }))}`;
+  return `${pageBase()}#app=${toB64url(JSON.stringify({ w: w.url, k: w.key, s: w.space }))}`;
 }
 
 // A friend's own invite link again, for the Home Screen app or another phone.
 function myInviteLink() {
   const w = state.worker;
   const data = { w: w.url, k: w.key, n: (state.me && state.me.name) || w.name || '', h: hostName() };
-  return `${location.origin}${location.pathname}#join=${toB64url(JSON.stringify(data))}`;
+  return `${pageBase()}#join=${toB64url(JSON.stringify(data))}`;
 }
 
 // What an antics link holds: { kind: 'join' | 'app', worker }, with worker null when the link is broken.
@@ -378,6 +396,7 @@ function renderRole() {
   $('#subLine').textContent = sub;
   $('#brandLine').hidden = guest;
   renderExtras();
+  renderMoved();
 }
 
 // ---------- One-time setup: create the user's worker Space ----------
@@ -447,6 +466,11 @@ async function setupWorker() {
       throw new Error('This key can only read. Make a new one and pick Write (step 2).');
     }
     const user = who.name;
+    // antics is TENDHA2's private tool: only the owner's Hugging Face account may set up or update a worker
+    // from this page. Friends use the owner's worker through their invite links.
+    if (!OWNER_ACCOUNTS.includes(String(user).toLowerCase())) {
+      throw new Error("antics is TENDHA2's private tool, so it can't be set up with this account. Got an invite link? Open that link instead.");
+    }
     const space = updating ? state.worker.space : `${user}/${SPACE_NAME}`;
     if (updating && space.split('/')[0].toLowerCase() !== user.toLowerCase()) {
       throw new Error(`This key belongs to ${user}, but your worker is ${space}. Use a key from that account.`);
@@ -4411,6 +4435,7 @@ function renderSettings() {
   const guest = isGuest();
   $('#guestPane').hidden = !guest;
   $('#setupLinkLine').hidden = !(standalone() && !state.worker); // the Home Screen app: the link is quicker
+  $('#privateLine').hidden = Boolean(state.worker); // only for a device that isn't connected yet
   // Notifications and the Home Screen app sit near the top: the owner's after the worker line, a friend's
   // before Leave this invite.
   if (guest) $('#guestPane').insertBefore($('#appBoxes'), $('#guestPane > .row'));
@@ -4478,6 +4503,7 @@ function init() {
   if (state.extras.voice !== 'off') state.extras.voicePick = state.extras.voice; // the voice in use is the pick
   readInvite();
   openFromLink(location.hash, false);
+  renderMoved();
   $('#idea').value = load(KEYS.idea, '');
   $('#animalOpt').value = load(KEYS.animal, '');
   buildVoices($('#voiceSeg'), (v) => {
