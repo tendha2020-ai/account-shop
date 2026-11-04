@@ -4298,7 +4298,11 @@ async function refreshHealth() {
     return; // asleep or offline: keep the last known state
   }
   if (state.worker !== asked) return; // a link put another worker here meanwhile: its own answer is on the way
+  const alertOf = (h) => Boolean(h && h.gpu && h.gpu.alert);
+  const alertChanged = alertOf(state.health) !== alertOf(health);
   state.health = health;
+  // Together: a picture check says when it moves, which the GPU guard's stop changes (the cards came before this)
+  if (alertChanged && state.jobs && state.jobs.length) renderJobs();
   if (!canDo('songs')) state.songs = null;
   else if (!state.songs) loadSongs();
   if (!canPlan()) resetPlan();

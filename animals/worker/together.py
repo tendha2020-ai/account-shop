@@ -371,8 +371,10 @@ DEFAULT_SCENE = 'normal'
 NOTES = {  # the fallback notes shown on the job card
     'turns': "The AI couldn't put them in one picture this time, so each one got its own moment.",
     'pc': 'The free AI time is used up, so your PC made each animal its own part.',
+    'pc_stopped': 'AI work is stopped (Hugging Face started charging), so your PC made each animal its own part.',
     'offline': 'The free AI is offline right now, so here they are {how}.',
 }
+PC_REASONS = {'quota': 'pc', 'stopped': 'pc_stopped'}  # (QuotaError reasons the PC takes over for: their note)
 HOW = {'split': 'side by side', 'vs': 'in a VS screen', 'grid': 'side by side', 'cuts': 'in quick cuts'}
 TAGS = '#funnyanimals #petsoftiktok #aivideo #fyp #viral'
 TEXT_OK = set('’‘“”…–—•')
@@ -1584,8 +1586,10 @@ def has_picture(job):
 def compose(job, w):
     """The start picture of one scene (input_0.jpg): all the animals in it, from the first composer that makes it,
     with one more try on the plain sofa picture if it was refused. True when it is made; False when it couldn't
-    be (then each animal gets its own part, with a note). Out of free time: the job waits (raised), or with the
-    user's PC on it goes one by one there (the PC animates for free; it can't make the picture)."""
+    be (then each animal gets its own part, with a note). Out of free time (or AI work stopped by the GPU guard): the
+    job waits (raised), or with the user's PC on it goes one by one there (the PC animates for free; it can't make
+    the picture). The guard's short waits (the quota can't be read for a moment, the worker is starting, its note
+    couldn't be saved) are always raised: the job waits a few minutes, then makes its picture."""
     folder = w.job_dir(job['id'])
     cast = job['cast']
     pics = {i: w.local_file(job, c['pic']) for i, c in enumerate(cast)}
@@ -1598,10 +1602,16 @@ def compose(job, w):
         started = time.time()
         try:
             got = compose_picture(refs, prompt, folder / 'input_0.new.jpg', w)
-        except w.QuotaError:
-            if not w.pc_online():
+        except w.QuotaError as e:
+            # The PC (free, but it can't make the picture) takes over only when there really is no free AI time for
+            # a long while: out of today's free time, or AI work stopped until the owner's Resume. The guard's short
+            # waits ('unreadable', 'loading', 'saving': a few minutes) let the video wait and then make its picture.
+            reason = getattr(e, 'reason', 'quota')
+            if reason not in PC_REASONS or not w.pc_online():
                 raise
-            w.update(job, note=NOTES['pc'], compose={'error': 'out of free GPU time', 'tries': tries})
+            w.update(job, note=NOTES[PC_REASONS[reason]],
+                     compose={'error': 'AI work stopped' if reason == 'stopped' else 'out of free GPU time',
+                              'tries': tries})
             return False
         except ComposeError as e:
             w.log.warning('%s: the picture could not be made (try %d): %s', job['id'], tries, e)

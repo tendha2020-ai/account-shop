@@ -810,11 +810,21 @@
     return list;
   }
 
+  // The GPU guard stopped all AI work (Hugging Face started charging): /health's gpu.alert, which the worker gives
+  // the owner and friends alike. A picture then only moves after the owner's Resume, whatever its clock says.
+  const aiStopped = () => Boolean(state.health && state.health.gpu && state.health.gpu.alert === 'billed');
+  const whenItMoves = (job) => (!aiStopped() ? `It starts moving by itself at ${clockAt(job)}.`
+    : isGuest() ? `It moves once ${hostName()} checks their worker.` : 'It moves once you tap Resume in Settings.');
+
   function stageText(job) {
     if (job.status !== 'waiting') return '';
-    if (job.picture_check) return `Here's the picture. It starts moving by itself at ${clockAt(job)}.`;
+    if (job.picture_check) return `Here's the picture. ${whenItMoves(job)}`;
     if (/out of free/i.test(job.stage || '')) return `Out of free AI time today. It makes itself around ${clockAt(job)}.`;
-    if (/busy/i.test(job.stage || '')) return `The free GPUs are all busy right now. It makes itself around ${clockAt(job)}.`;
+    // (only the free GPUs being busy; "Hugging Face is busy" (the GPU guard's note couldn't be saved) and the guard's
+    // other waits keep the words app.js gives them, the same as a one-animal card's)
+    if (!job.gpu_wait && /free gpus.*busy/i.test(job.stage || '')) {
+      return `The free GPUs are all busy right now. It makes itself around ${clockAt(job)}.`;
+    }
     return '';
   }
 
@@ -858,10 +868,12 @@
     unlockSound();
     await retryJob(job);
     state.watchAfter = { id: job.id, rev: job.rev || 0 };
-    // (the GPU guard stopped all AI work: it waits for the owner's Resume, so the toast doesn't promise it now)
-    const g = typeof gpuInfo === 'function' ? gpuInfo() : null;
-    if (g && g.alert === 'billed') toast('AI work is stopped, so it animates once you tap Resume.');
-    else toast(nb(`Animating it now (${clipTime()} a part). It opens when it's ready.`));
+    // (the GPU guard stopped all AI work: it waits for the owner's Resume, so the toast doesn't promise it now; a
+    // friend's page knows it too, from the worker's /health)
+    if (aiStopped()) {
+      toast(isGuest() ? `AI work is paused, so it animates once ${hostName()} checks their worker.`
+        : 'AI work is stopped, so it animates once you tap Resume.');
+    } else toast(nb(`Animating it now (${clipTime()} a part). It opens when it's ready.`));
   }
 
   async function editNow(job, fields, done) {
@@ -923,7 +935,7 @@
     img.hidden = false;
     const kind = $('#playerKind');
     kind.hidden = false;
-    kind.textContent = `Here's the picture. Is every animal in it and looking right? It starts moving by itself at ${clockAt(job)}.`;
+    kind.textContent = `Here's the picture. Is every animal in it and looking right? ${whenItMoves(job)}`;
     for (const id of ['finishBtn', 'saveBtn', 'editBtn', 'capBox']) $(`#${id}`).hidden = true;
     const row = $('#playerCheck');
     row.innerHTML = '';

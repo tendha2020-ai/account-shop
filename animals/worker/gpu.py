@@ -16,7 +16,8 @@
 #    container may still be running for a moment).
 #  - A call never leaves a job behind: wait_job() waits for it, and on a timeout cancels it (a job still queued in the
 #    Space is removed) and keeps the lock until it is closed. Upstream can't be confirmed, so its request stays
-#    booked for HOLD.
+#    booked for HOLD. The same for any error that doesn't say the Space is done with it (only gradio_client's AppError
+#    and ValidationError do): a read timeout on the queue/join POST, a proxy's 502 page, a dropped stream.
 #  - After a call: the quota again. If any paid seconds were used (also paid seconds already there at the first
 #    reading, with no earlier reading to compare with), every GPU call stops. The stop is kept in gpu.json in the
 #    dataset (a restart keeps it), /health says alert 'billed', and only the owner's Resume (POST /gpu/resume) starts
@@ -532,27 +533,61 @@ def _refused(engine, request, message):
             led['start'] = led['ends'] - WINDOW
 
 
+SETTLED = ('AppError', 'ValidationError')  # gradio_client's errors that say the Space is done with the event
+
+
+def settled(error):
+    """True when a Space call's error says the Space is surely done with it: gradio_client's AppError (the Space's
+    own error, sent after the event ran: a refusal, no GPU free, a failure) or ValidationError (the input was refused
+    before the event was queued). Anything else (httpx's ReadTimeout when the Space answers the queue/join POST late,
+    a proxy's 502/504 page that isn't JSON, a dropped stream, "Server stopped") may have left the event queued or
+    running in the Space. (By name and module, so a test's stand-in gradio_client can raise them too.)"""
+    return any(c.__name__ in SETTLED and c.__module__.split('.')[0] == 'gradio_client' for c in type(error).__mro__)
+
+
+def _close(job, why):
+    """Cancels a job that may still be queued or running upstream (a job still queued in the Space is removed) and
+    waits up to CANCEL_WAIT real seconds for it to close; the caller keeps the lock meanwhile."""
+    try:
+        job.cancel()
+    except Exception as e:
+        log.warning('GPU guard: cancelling a job that %s failed: %s', why, e)
+    end = time.monotonic() + CANCEL_WAIT  # (real seconds)
+    while time.monotonic() < end:
+        try:
+            if job.done():
+                return
+        except Exception:
+            return
+        sleep(0.2)
+
+
 def wait_job(job, timeout):
     """Waits for a gradio_client job submitted inside gpu_call (use it for every Space call). It never leaves the job
-    running upstream: on a timeout it is cancelled (a job still queued in the Space is removed) and the lock is kept
-    until it is closed; as upstream can't be confirmed, its request stays booked for HOLD."""
+    running upstream unbooked: on a timeout, and on any error that doesn't say the Space is done with it (settled()),
+    it is cancelled (a job still queued in the Space is removed) and the lock is kept until it is closed; as upstream
+    can't be confirmed, its request stays booked for HOLD, so the next engine (or a retry) is admitted only with it
+    counted. A timeout raises TimeoutError; any other error is raised again as it was."""
     call = getattr(_local, 'call', None)
     if call is not None:
         call['submitted'] = True
     try:
         return job.result(timeout=timeout)
     except TimeoutError:
-        pass
+        failed = None
+    except Exception as e:
+        if settled(e):
+            raise
+        failed = e
     if call is not None:
         call['abandoned'] = True
-    try:
-        job.cancel()
-    except Exception as e:
-        log.warning('GPU guard: cancelling a job that took too long failed: %s', e)
-    end = time.monotonic() + CANCEL_WAIT  # (real seconds)
-    while not job.done() and time.monotonic() < end:
-        sleep(0.2)
     name = call['engine'] if call else 'The Space'
+    if failed is not None:
+        log.warning('GPU guard: %s failed in a way that may leave it running upstream (%s: %s): cancelled, its '
+                    'request stays booked', name, type(failed).__name__, str(failed)[:200])
+    _close(job, 'took too long' if failed is None else 'failed')
+    if failed is not None:
+        raise failed
     raise TimeoutError(f'{name} took more than {timeout:.0f} s, so it was cancelled')
 
 
