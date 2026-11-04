@@ -499,6 +499,14 @@ body.dragging .drop-overlay { display: grid; }
 @media (min-width: 1200px) {
   .app { grid-template-columns: minmax(0, 1fr) 560px; }
 }
+@media (min-width: 360px) and (max-width: 409px) {
+  /* two narrow track columns: give the names a little more room */
+  .track { gap: 8px; padding: 8px 8px 8px 7px; }
+  .track.sel { padding: 7.5px 7.5px 7.5px 6.5px; }
+  .track-play { width: 38px; height: 38px; border-radius: 11px; }
+  .track-play.busy::after { inset: 10px; }
+  .track-name { font-size: 13.5px; }
+}
 @media (max-width: 359px) {
   .seg-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .tracks { grid-template-columns: minmax(0, 1fr); }

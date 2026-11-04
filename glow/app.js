@@ -120,7 +120,8 @@
       master.gain.value = S.volume;
       master.connect(actx.destination);
     }
-    if (actx.state === 'suspended' && actx.resume) { try { actx.resume().catch(function () {}); } catch (e) { /* ignore */ } }
+    // 'suspended' (autoplay policy) or iOS 'interrupted' (call, app switch): resume on the next gesture
+    if (actx.state !== 'running' && actx.state !== 'closed' && actx.resume) { try { actx.resume().catch(function () {}); } catch (e) { /* ignore */ } }
     return actx;
   }
   ['pointerdown', 'touchend', 'keydown', 'click'].forEach(function (ev) {
@@ -182,6 +183,9 @@
     return c;
   }
   function releaseCanvas(c) { if (c && c.width) { c.width = 1; c.height = 1; } }
+  // Free a scene's cached canvases right away (iOS Safari has a hard cap on total canvas memory and
+  // reclaims it lazily). dispose() is optional on scenes; templates never keep the source photos.
+  function disposeScene(sc) { if (sc && sc !== S.scene && typeof sc.dispose === 'function') { try { sc.dispose(); } catch (e) { /* ignore */ } } }
 
   function decodeFile(file, maxSide) {
     return (async function () {
@@ -313,6 +317,9 @@
     var p = S.photos.splice(i, 1)[0];
     if (!p.demo) { releaseCanvas(p.src); if (p.small && p.small !== p.src) releaseCanvas(p.small); }
     photosChanged({ autoplay: S.playing });
+    // keep keyboard / screen-reader focus in the tray instead of dropping it on <body>
+    var next = el.tray.querySelectorAll('.ph .ph-x')[Math.min(i, S.photos.length - 1)];
+    try { (next || el.btnAdd).focus({ preventScroll: true }); } catch (e) { /* ignore */ }
     if (!S.photos.length) toast('All photos removed');
   }
   function movePhoto(id, dir) {
@@ -475,7 +482,9 @@
     if (!S.photos.length) {
       autoplayNext = false;
       S.playing = false; stopSource(); cancelAnimationFrame(raf);
+      var gone = S.scene;
       S.scene = null; S.buffer = null; S.building = false; S.offset = 0;
+      disposeScene(gone);
       try { pvCtx.clearRect(0, 0, el.pv.width, el.pv.height); } catch (e) { /* ignore */ }
       updatePlayUI(); setStage(); updateTimeUI(); updateCta();
       return;
@@ -487,25 +496,27 @@
     }
     var playAfter = autoplayNext;
     S.building = true; setStage();
-    var track = trackById(S.trackId), size = previewSize(S.aspect);
+    var track = trackById(S.trackId), size = previewSize(S.aspect), scene = null;
     try {
       await fontsReady();
       if (g !== S.gen) return;
-      var scene = await FX.createScene({
+      scene = await FX.createScene({
         templateId: S.templateId,
         photos: S.photos.map(function (p) { return p.src; }),
         width: size[0], height: size[1],
         bpm: track ? track.bpm : 120
       });
-      if (g !== S.gen) return;
+      if (g !== S.gen) { disposeScene(scene); return; }
       if (!scene || typeof scene.render !== 'function' || !(scene.duration > 0)) throw new Error('Template returned an invalid scene');
       var buffer = null;
       if (track) {
         try { buffer = await getMusic(track.id, scene.duration); }
         catch (e) { console.warn('[glow] music failed', e); if (g === S.gen) toast('Couldn’t make the music — the preview will play silently.', 'warn'); }
       }
-      if (g !== S.gen) return;
+      if (g !== S.gen) { disposeScene(scene); return; }
+      var prev = S.scene;
       S.scene = scene; S.buffer = buffer; S.renderErr = false;
+      disposeScene(prev);
       S.offset = 0;
       if (el.pv.width !== size[0] || el.pv.height !== size[1]) { el.pv.width = size[0]; el.pv.height = size[1]; }
       S.building = false; autoplayNext = false;
@@ -513,6 +524,7 @@
       setStage(); updateTimeUI(); updateCta();
       if (playAfter && !S.exporting) play();
     } catch (e) {
+      disposeScene(scene);
       if (g !== S.gen) return;
       console.warn('[glow] scene build failed', e);
       S.building = false; autoplayNext = false;
@@ -619,19 +631,31 @@
 
   /* posters — sequential background generation with small yields */
   var posterGen = 0, posterTimer = 0, demoSmall = null, posterKey = '';
+  var POSTER_MAX = 5;
   function posterSetKey() {
-    var user = S.photos.filter(function (p) { return !p.demo; }).slice(0, 4);
+    var user = S.photos.filter(function (p) { return !p.demo; }).slice(0, POSTER_MAX);
     return user.length ? user.map(function (p) { return p.id; }).join(',') : 'demo';
   }
-  function posterPhotos() {
+  async function posterPhotos() {
     var user = S.photos.filter(function (p) { return !p.demo; });
-    if (user.length) return user.slice(0, 4).map(smallOf);
+    if (user.length) return user.slice(0, POSTER_MAX).map(smallOf);
     if (!demoSmall) {
       var d = [];
-      try { d = (FX && FX.demoPhotos) ? FX.demoPhotos(4) || [] : []; } catch (e) { console.warn(e); d = []; }
+      // GlowFX caches demo paintings, so asking for one more each time paints a single photo per task
+      // (~30-90 ms) instead of blocking the page for all of them at once.
+      try { for (var k = 1; k <= POSTER_MAX && FX && FX.demoPhotos; k++) { d = FX.demoPhotos(k) || []; await nextTick(); } } catch (e) { console.warn(e); d = []; }
       demoSmall = d.filter(function (c) { return c && c.width; }).map(function (c) { return scaledCopy(c, c.width, c.height, POSTER_PHOTO_MAX); });
     }
     return demoSmall;
+  }
+  // Each poster leads with a different photo so the cards don't all show the same picture (demo order:
+  // 0 sunset beach, 1 neon city, 2 flower field, 3 misty mountains, 4 party lights). Neighbours in the
+  // mobile scroll row and in the desktop 4-column grid never share a photo. Card-pile templates get a few.
+  var POSTER_LEAD = { glowup: 0, neon: 1, golden: 2, cinema: 3, vhs: 4, beat: 0, polaroid: 3, dreamy: 1, cover: 0, comic: 2, glitch: 1, party: 4 };
+  var POSTER_COUNT = { polaroid: 3, comic: 3 };
+  function posterSet(photos, t, i) {
+    var n = photos.length, k = (POSTER_LEAD[t.id] != null ? POSTER_LEAD[t.id] : i) % n;
+    return photos.slice(k).concat(photos.slice(0, k)).slice(0, POSTER_COUNT[t.id] || 1);
   }
   function posterTimes(sc) {
     var beat = 60 / (sc.bpm || 120), d = sc.duration;
@@ -667,7 +691,7 @@
   async function runPosters(g) {
     if (!FX || typeof FX.createScene !== 'function') return;
     await fontsReady();
-    var photos = posterPhotos();
+    var photos = await posterPhotos();
     if (!photos.length || g !== posterGen) return;
     var order = templates.slice();
     var sel = order.findIndex(function (t) { return t.id === S.templateId; });
@@ -679,8 +703,8 @@
       if (!card) continue;
       try {
         var tr = trackById(t.track);
-        var sc = await FX.createScene({ templateId: t.id, photos: photos, width: POSTER_W, height: POSTER_H, bpm: tr ? tr.bpm : 120 });
-        if (g !== posterGen) return;
+        var sc = await FX.createScene({ templateId: t.id, photos: posterSet(photos, t, i), width: POSTER_W, height: POSTER_H, bpm: tr ? tr.bpm : 120 });
+        if (g !== posterGen) { disposeScene(sc); return; }
         var off = makeCanvas(POSTER_W, POSTER_H), offCx = off.getContext('2d');
         var best = null, bestScore = -1e9, times = posterTimes(sc);
         for (var k = 0; k < times.length; k++) {
@@ -693,6 +717,7 @@
         cx.clearRect(0, 0, POSTER_W, POSTER_H);
         cx.drawImage(off, 0, 0);
         releaseCanvas(off);
+        disposeScene(sc);
         card.btn.classList.add('ready');
       } catch (e) {
         console.warn('[glow] poster failed for', t.id, e);
@@ -901,14 +926,14 @@
     el.exLeft.textContent = left || '';
   }
 
-  async function exportPhotos() {
+  async function exportPhotos(maxSide) {
     // Re-decode user photos at full quality (long side <= 2048) for the export; demo photos are used as-is.
     var out = [], made = [];
     for (var i = 0; i < S.photos.length; i++) {
       var p = S.photos[i];
       if (EX.cancelled) break;
       if (p.demo || !p.file) { out.push(p.src); continue; }
-      try { var c = await decodeFile(p.file, 2048); out.push(c); made.push(c); }
+      try { var c = await decodeFile(p.file, maxSide || 2048); out.push(c); made.push(c); }
       catch (e) { out.push(p.src); }
       el.exPrepT.textContent = 'Preparing photos… ' + (i + 1) + ' / ' + S.photos.length;
       await nextTick();
@@ -916,8 +941,27 @@
     return { list: out, made: made };
   }
 
-  async function startExport() {
-    if (S.exporting) return;
+  var exportRun = null, exportQueued = false;
+  function startExport() {
+    if (S.exporting) {
+      // A cancelled export can still be finishing its preparation (building the full-size scene). Don't drop
+      // the tap: start the new export as soon as the old one has wound down.
+      if (EX.cancelled && exportRun && !exportQueued) {
+        exportQueued = true;
+        setExport('prep', 'Getting ready…', 0, '');
+        openModal(el.exModal);
+        el.cancel.focus();
+        exportRun.then(function () {
+          if (!exportQueued) return; // cancelled again while waiting
+          exportQueued = false;
+          startExport();
+        });
+      }
+      return;
+    }
+    exportRun = runExport().catch(function (e) { console.warn('[glow] export', e); });
+  }
+  async function runExport() {
     if (!S.photos.length) {
       toast('Add a few photos first — or tap “Try demo photos”.', 'warn');
       el.cardPhotos.classList.remove('attention'); void el.cardPhotos.offsetWidth; el.cardPhotos.classList.add('attention');
@@ -932,7 +976,7 @@
     var ctx = ensureAudio();
     pause(); stopTrackPreview();
     S.exporting = true;
-    EX.cancelled = false; EX.hiddenWarned = false;
+    EX.cancelled = false; EX.hiddenWarned = false; EX.stalled = false;
     el.exWarn.hidden = true;
     var aspect = aspectById(S.aspect), size = aspect.out[S.quality] || aspect.out['1080'];
     var fresh = el.exCanvas.cloneNode(false);
@@ -943,15 +987,18 @@
     setExport('prep', 'Preparing full-quality frames…', 0, '');
     openModal(el.exModal);
     el.cancel.focus();
-    var made = [];
+    var made = [], scene = null;
     try {
       await fontsReady();
-      var ph = await exportPhotos();
+      // 1080p needs ~2048 px sources (cover crop + zooms); 720p looks identical from 1536 px and uses ~45% less memory
+      var ph = await exportPhotos(Math.max(size[0], size[1]) > 1500 ? 2048 : 1536);
       made = ph.made;
       if (EX.cancelled) return;
       el.exPrepT.textContent = 'Preparing full-quality frames…';
       var track = trackById(S.trackId);
-      var scene = await FX.createScene({ templateId: S.templateId, photos: ph.list, width: size[0], height: size[1], bpm: track ? track.bpm : 120 });
+      scene = await FX.createScene({ templateId: S.templateId, photos: ph.list, width: size[0], height: size[1], bpm: track ? track.bpm : 120 });
+      // The scene keeps its own graded copies, so the big decoded sources can go before recording starts.
+      made.forEach(releaseCanvas); made = [];
       if (EX.cancelled) return;
       if (!scene || typeof scene.render !== 'function' || !(scene.duration > 0)) throw new Error('invalid scene');
       el.exPrepT.textContent = 'Mixing the music…';
@@ -962,10 +1009,13 @@
         toast('Music couldn’t be created — your video will be silent.', 'warn');
         buffer = ctx.createBuffer(2, Math.max(1, Math.round(scene.duration * ctx.sampleRate)), ctx.sampleRate);
       }
+      if (ctx && ctx.state !== 'running' && ctx.resume) { try { await Promise.race([ctx.resume(), wait(1200)]); } catch (e) { /* ignore */ } }
+      if (EX.cancelled) return;
       var res = await record(scene, buffer, size[0], size[1]);
       if (!res) return; // cancelled
       closeModal(el.exModal);
       showResult(res, scene.duration, size);
+      if (EX.stalled) toast('The sound was interrupted while recording, so part of the video may be silent. Keep Glow Studio on screen and try again.', 'warn', 7000);
     } catch (e) {
       console.warn('[glow] export failed', e);
       if (!EX.cancelled) {
@@ -975,7 +1025,8 @@
     } finally {
       S.exporting = false;
       made.forEach(releaseCanvas);
-      if (!el.exModal.hidden) closeModal(el.exModal);
+      disposeScene(scene);
+      if (!el.exModal.hidden && !exportQueued) closeModal(el.exModal);
       drawPreview();
       setStage();
     }
@@ -986,11 +1037,27 @@
       var cx = el.exCanvas.getContext('2d', { alpha: false }) || el.exCanvas.getContext('2d');
       var text = textObj(), dur = scene.duration, ctx = actx;
       var LEAD = 0.05, TAIL = 0.1;
-      var settled = false, src = null, vStream = null, dest = null, rec = null, t0 = 0, recStartCtx = 0, recStartPerf = 0;
+      var settled = false, stopping = false, src = null, vStream = null, dest = null, rec = null, t0 = 0, watchdog = 0;
       try { scene.render(cx, 0, text); } catch (e) { reject(e); return; }
+
+      // Recording clock: the audio clock (so picture and music stay locked). If it freezes (context suspended or
+      // interrupted by the OS), carry on with the wall clock from that point so the export always completes.
+      var useCtx = !!ctx, lastCt = -1, lastCtAt = 0, base = -LEAD, baseAt = 0;
+      function clock() {
+        var now = performance.now();
+        if (useCtx) {
+          var ct = ctx.currentTime;
+          if (ct !== lastCt) { lastCt = ct; lastCtAt = now; return ct - t0; }
+          if (now - lastCtAt < 800) return ct - t0;
+          useCtx = false; base = ct - t0; baseAt = lastCtAt; EX.stalled = true;
+          console.warn('[glow] audio clock stalled during export; continuing on the wall clock');
+        }
+        return base + (now - baseAt) / 1000;
+      }
 
       function cleanup() {
         cancelAnimationFrame(EX.raf);
+        clearInterval(watchdog);
         if (src) { try { src.stop(); } catch (e) { /* ignore */ } try { src.disconnect(); } catch (e) { /* ignore */ } }
         if (EX.gain) { try { EX.gain.disconnect(); } catch (e) { /* ignore */ } }
         if (EX.monitor) { try { EX.monitor.disconnect(); } catch (e) { /* ignore */ } }
@@ -1028,14 +1095,14 @@
       rec.onerror = function (e) { fail((e && e.error) || new Error('recorder error')); };
 
       function finish() {
-        if (settled) return;
-        var stoppedCtx = ctx ? ctx.currentTime : 0, stoppedPerf = performance.now();
+        if (settled || stopping) return;
+        stopping = true;
+        var recDur = clock() + LEAD; // the recorder started LEAD seconds before scene time 0
         rec.onstop = function () {
           if (settled) return;
           settled = true;
           var type = (rec.mimeType || opts.mimeType || 'video/webm').split(';')[0] || 'video/webm';
           var blob = new Blob(chunks, { type: type });
-          var recDur = ctx ? (stoppedCtx - recStartCtx) : (stoppedPerf - recStartPerf) / 1000;
           cleanup();
           if (!blob.size) { reject(new Error('empty recording')); return; }
           if (/webm/i.test(type)) {
@@ -1058,14 +1125,16 @@
       function begin() {
         if (started || settled) return;
         started = true;
-        recStartCtx = ctx ? ctx.currentTime : 0; recStartPerf = performance.now();
+        baseAt = lastCtAt = performance.now();
         t0 = ctx ? ctx.currentTime + LEAD : 0;
-        var p0 = performance.now() + LEAD * 1000;
+        if (ctx) lastCt = ctx.currentTime;
         if (src) { try { src.start(t0); } catch (e) { fail(e); return; } }
         setExport('rec', '', 0, fmt(dur) + ' left');
+        // rAF pauses in background tabs; this keeps the clock checked so the recording still ends on time
+        watchdog = setInterval(function () { if (!settled && clock() >= dur + TAIL) finish(); }, 250);
         var tick = function () {
-          if (settled) return;
-          var t = ctx ? ctx.currentTime - t0 : (performance.now() - p0) / 1000;
+          if (settled || stopping) return;
+          var t = clock();
           var tc = clamp(t, 0, dur);
           try { scene.render(cx, tc, text); } catch (e) { fail(e); return; }
           setExport('rec', '', tc / dur, Math.max(0, Math.ceil(dur - tc)) + ' s left');
@@ -1081,6 +1150,7 @@
   }
 
   function cancelExport() {
+    if (exportQueued) { exportQueued = false; closeModal(el.exModal); toast('Export cancelled'); return; }
     if (!S.exporting) { closeModal(el.exModal); return; }
     EX.cancelled = true;
     if (EX.cleanup) EX.cleanup();
