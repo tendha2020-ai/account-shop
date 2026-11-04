@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#fff3dc">
+  <title>TENDHA2 · antics</title>
+  <link rel="icon" type="image/png" href="brand/favicon-64.png">
+  <link rel="apple-touch-icon" href="brand/icon-180.png">
+  <link rel="manifest" href="manifest.json">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="antics">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&display=swap">
+  <link rel="stylesheet" href="style.css">
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <header class="bar">
+    <div class="brand">
+      <img class="avatar" src="brand/tendha2.png" alt="" width="60" height="60">
+      <div class="brand-text">
+        <span class="logo">TENDHA<b>2</b><span class="app-tag">antics</span></span>
+        <span class="sub" id="subLine">animals doing human stuff</span>
+      </div>
+    </div>
+    <button type="button" id="openSettings" class="icon-btn" aria-label="Settings">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Zm8.4-2.1.1-1.4-.1-1.4 2-1.6-2-3.4-2.4 1a8 8 0 0 0-2.4-1.4L15.2 2h-4l-.4 2.6a8 8 0 0 0-2.4 1.4l-2.4-1-2 3.4 2 1.6-.1 1.4.1 1.4-2 1.6 2 3.4 2.4-1a8 8 0 0 0 2.4 1.4l.4 2.6h4l.4-2.6a8 8 0 0 0 2.4-1.4l2.4 1 2-3.4-2-1.6Z"/></svg>
+      <span id="workerDot" class="dot"></span>
+    </button>
+  </header>
+
+  <div class="banner-wrap">
+    <!-- Only on the old test address: antics now lives at its own home (the link keeps this device connected) -->
+    <p id="movedBanner" class="note banner" hidden>
+      <span>antics has a new home. Open it there, then add that one to your Home Screen.</span>
+      <a id="movedLink" class="plain" href="https://tendha2020-ai.github.io/account-shop/animals/">Open the new antics</a>
+    </p>
+    <p id="updateBanner" class="note banner" hidden>
+      <span id="updateText">A new version of antics is ready, with more options.</span>
+      <button type="button" id="updateBtnMain" class="plain">Update my worker</button>
+    </p>
+    <!-- The worker's GPU guard stopped all AI work because Hugging Face started charging credits (owner only) -->
+    <p id="gpuBanner" class="note banner alert" hidden>
+      <span>Hugging Face started charging your credits, so antics stopped all AI work. Check
+        <a href="https://huggingface.co/settings/billing" target="_blank" rel="noopener">huggingface.co/settings/billing</a>.</span>
+      <button type="button" id="gpuResumeMain" class="plain">Resume</button>
+    </p>
+    <!-- The Home Screen app starts without a worker on an iPhone (it has its own storage): one link connects it -->
+    <section id="connectBox" class="block connect" hidden>
+      <h2 class="step-title">Connect this app</h2>
+      <div class="field">
+        <input type="url" id="connectLink" inputmode="url" placeholder="Paste your antics link" aria-label="Your antics link"
+               autocomplete="off" spellcheck="false">
+        <button type="button" id="connectPaste" class="mini">Paste</button>
+      </div>
+      <button type="button" id="connectBtn" class="go small">Connect</button>
+      <p id="connectNote" class="note" hidden></p>
+      <p class="fine">Get it in your browser: open antics, tap ⚙, then <b>Copy app link</b>. From a friend? Paste the invite link they sent you.</p>
+      <p class="fine">New to antics? <button type="button" id="connectSetup" class="link-btn">Set it up</button></p>
+    </section>
+  </div>
+
+  <main class="layout">
+    <a href="#videos" id="jumpVideos" class="jump" hidden></a>
+
+    <form id="makeForm" class="maker" autocomplete="off">
+      <div class="maker-a">
+        <section class="block step" id="step1">
+          <h2 class="step-title"><span class="step-num" aria-hidden="true">1</span>Your video</h2>
+          <div class="field" id="linkField">
+            <input type="url" id="link" inputmode="url" placeholder="Paste a video link" aria-label="Video link">
+            <button type="button" id="pasteBtn" class="mini">Paste</button>
+          </div>
+          <div class="file-chip" id="fileChip" hidden>
+            <span id="fileName"></span>
+            <button type="button" id="clearFile" class="mini" aria-label="Remove">✕</button>
+          </div>
+          <p class="or" aria-hidden="true">or</p>
+          <div class="alt">
+            <label class="tile">
+              <input type="file" id="file" accept="video/*,image/*">
+              <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M12 15V4m0 0L7.5 8.5M12 4l4.5 4.5M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+              <span>Upload a video<small>or a photo</small></span>
+            </label>
+            <button type="button" id="surpriseBtn" class="tile surprise">
+              <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path fill="currentColor" d="M10 2.5l2 5.6 5.6 2-5.6 2-2 5.6-2-5.6-5.6-2 5.6-2zM18.5 14l1 2.7 2.7 1-2.7 1-1 2.7-1-2.7-2.7-1 2.7-1z"/></svg>
+              <span>Surprise me<small>no video needed</small></span>
+            </button>
+          </div>
+        </section>
+
+        <section class="block step" id="step2">
+          <h2 class="step-title"><span class="step-num" aria-hidden="true">2</span>What happens <span class="tag-opt">optional</span></h2>
+          <div class="idea-wrap">
+            <textarea id="idea" class="idea" rows="3" maxlength="160"
+                      placeholder="e.g. The cat plays the drums like a rock star, then falls off the chair"></textarea>
+            <button type="button" class="mic" data-for="idea">🎤 Speak</button>
+          </div>
+          <p class="heard" id="ideaHeard" hidden><span class="heard-text"></span> <button type="button" class="link-btn heard-undo">Undo</button></p>
+          <p class="fine">Empty? antics picks a funny idea. You can also say the song and length.</p>
+          <h3 class="sub-label">Style</h3>
+          <div class="chips-wrap" id="styleRow"></div>
+        </section>
+      </div>
+
+      <div class="maker-b">
+        <section class="block step" id="step3">
+          <h2 class="step-title"><span class="step-num" aria-hidden="true">3</span>Music</h2>
+          <!-- My songs (workers with 'songs'): the owner's saved songs first, each with ▶ to hear its meme part -->
+          <div id="mySongs" class="my-songs" hidden>
+            <div class="song-tiles" id="mySongRow" role="group" aria-label="My songs"></div>
+          </div>
+          <div class="chips-wrap" id="musicRow"></div>
+          <label class="link-btn add-song-link" id="addSongLink" hidden>
+            <input type="file" id="addSongFile" accept="audio/*,video/*,.mp3,.m4a,.wav,.aac,.ogg,.mp4,.mov">
+            + Add a song
+          </label>
+          <div id="songList" class="song-list" hidden></div>
+          <div id="songUpload" class="song-upload" hidden>
+            <label class="plain">
+              <input type="file" id="songFile" accept="audio/*,.mp3,.m4a,.wav,.aac,.ogg">
+              Choose a song file
+            </label>
+            <span id="songName" class="fine">No song chosen yet</span>
+          </div>
+          <div class="opt-line" id="partLine">
+            <span>Song part</span>
+            <div class="seg" id="partSeg">
+              <button type="button" data-v="auto">Auto</button>
+              <button type="button" data-v="start">Start</button>
+              <button type="button" data-v="drop">Drop</button>
+              <button type="button" data-v="custom">Choose</button>
+            </div>
+          </div>
+          <div id="partPick" class="part-pick" hidden>
+            <input type="range" id="songStart" min="0" max="180" step="0.5" value="0" aria-label="Where the song starts">
+            <div class="part-pick-row">
+              <span>Starts at <b id="songStartLabel">0:00</b> <span id="songLength" class="fine"></span></span>
+              <button type="button" id="hearPart" class="plain">▶ Hear this part</button>
+            </div>
+          </div>
+          <p class="fine" id="musicHelp"></p>
+          <p id="musicNote" class="fine" hidden>TikTok may mute songs it has no rights to. Its own sounds are safest.</p>
+        </section>
+
+        <details class="block extras" id="extras">
+          <summary>
+            <span class="extras-head">Extras <span class="tag-opt">optional</span></span>
+            <span class="extras-sum" id="extrasSum"></span>
+          </summary>
+          <div class="extras-body">
+            <div class="toggles">
+              <label class="opt-line switch-line" id="voiceLine">
+                <span>Pet voice<small>The animal says the text</small></span>
+                <input type="checkbox" id="voiceOpt" class="sw-input"><span class="sw" aria-hidden="true"></span>
+              </label>
+              <div class="voice-pick" id="voicePick" hidden>
+                <div class="voices" id="voiceSeg" role="group" aria-label="Which voice"></div>
+                <p class="fine">Auto picks one that fits the animal. Tap ▶ to listen.</p>
+              </div>
+              <label class="opt-line switch-line" id="memeLine">
+                <span>Meme effects<small>Zooms and sound effects</small></span>
+                <input type="checkbox" id="memeOpt" class="sw-input" checked><span class="sw" aria-hidden="true"></span>
+              </label>
+              <label class="opt-line switch-line" id="openingLine">
+                <span>Real → AI opening<small>Starts with your real clip</small></span>
+                <input type="checkbox" id="openingOpt" class="sw-input"><span class="sw" aria-hidden="true"></span>
+              </label>
+              <label class="opt-line switch-line" id="outroLine">
+                <span>Follow me ending<small>Ends with “Follow @TENDHA2”</small></span>
+                <input type="checkbox" id="outroOpt" class="sw-input" checked><span class="sw" aria-hidden="true"></span>
+              </label>
+              <label class="opt-line switch-line">
+                <span>Text on video<small>A funny line on the video</small></span>
+                <input type="checkbox" id="captionsOpt" class="sw-input" checked><span class="sw" aria-hidden="true"></span>
+              </label>
+              <label class="opt-line switch-line" id="brandLine">
+                <span>My name on video<small>The @TENDHA2 badge</small></span>
+                <input type="checkbox" id="brandOpt" class="sw-input" checked><span class="sw" aria-hidden="true"></span>
+              </label>
+            </div>
+            <div class="opt-line">
+              <span>Speed</span>
+              <div class="seg" id="speedSeg">
+                <button type="button" data-v="slow">Slow-mo</button>
+                <button type="button" data-v="normal">Normal</button>
+                <button type="button" data-v="fast">Fast</button>
+              </div>
+            </div>
+            <label class="opt-line">
+              <span>Animal</span>
+              <input type="text" id="animalOpt" class="small-input" maxlength="30" placeholder="auto, e.g. cat">
+            </label>
+          </div>
+        </details>
+
+        <section class="block step" id="step4">
+          <h2 class="step-title"><span class="step-num" aria-hidden="true">4</span>Make it</h2>
+          <div class="opt-line">
+            <span>Length</span>
+            <div class="seg" id="videoSeg">
+              <button type="button" data-v="5">5 s</button>
+              <button type="button" data-v="10">10 s</button>
+              <button type="button" data-v="15">15 s</button>
+            </div>
+          </div>
+          <div class="opt-line">
+            <span>How many</span>
+            <div class="seg" id="countSeg">
+              <button type="button" data-v="1">1</button>
+              <button type="button" data-v="2">2</button>
+              <button type="button" data-v="3">3</button>
+              <button type="button" data-v="5">5</button>
+            </div>
+          </div>
+          <label class="opt-line switch-line" id="previewLine">
+            <span>Quick preview first<small id="previewSub">See the first 5 s fast. Finish adds the rest.</small></span>
+            <input type="checkbox" id="previewOpt" class="sw-input" checked><span class="sw" aria-hidden="true"></span>
+          </label>
+          <p class="fine" id="exportHelp"></p>
+        </section>
+
+        <div class="make-bar">
+          <p id="note" class="note" hidden></p>
+          <button type="submit" id="makeBtn" class="go">Make it</button>
+        </div>
+      </div>
+    </form>
+
+    <section class="list" id="videos" aria-label="Your videos">
+      <!-- Posting plan (workers with 'plan', the owner only): what's next, and a shortcut to post -->
+      <div id="planStrip" class="plan-strip" hidden>
+        <button type="button" id="planStripMain" class="plan-strip-main"></button>
+        <button type="button" id="planStripAct" class="plan-strip-act" hidden></button>
+      </div>
+      <div class="list-head">
+        <h2>Your videos <span id="pcChip" class="pc-chip" hidden>made on your PC</span></h2>
+        <button type="button" id="finishAll" class="plain" hidden>Finish all previews</button>
+      </div>
+      <p id="wakeNote" class="wake" hidden>Waking up your worker…</p>
+      <div id="pingNudge" class="note ping-nudge" hidden>
+        <span id="pingNudgeText">🔔 Get a notification when it's ready? Then you can close antics.</span>
+        <button type="button" id="pingNudgeBtn" class="plain">Yes, notify me</button>
+        <button type="button" id="pingNudgeNo" class="link-btn">No thanks</button>
+      </div>
+      <div id="jobs"></div>
+      <p id="emptyNote" class="empty">Your videos show up here. You can close the app while they're made.</p>
+    </section>
+  </main>
+
+  <!-- Player -->
+  <dialog id="player" class="player">
+    <div class="player-body">
+      <video id="playerVideo" playsinline controls loop></video>
+      <div class="player-info">
+        <p id="playerKind" class="player-kind" hidden></p>
+        <div class="row player-acts">
+          <button type="button" id="finishBtn" class="go small" hidden>Finish video</button>
+          <button type="button" id="saveBtn" class="go small">Save video</button>
+          <button type="button" id="editBtn" class="plain" hidden>Edit</button>
+        </div>
+        <div class="cap-box">
+          <div class="cap-head"><span>Caption for TikTok</span><button type="button" id="copyBtn" class="mini">Copy</button></div>
+          <p id="playerCaption" class="caption-text"></p>
+        </div>
+        <ul class="tip" id="playerTip"></ul>
+        <button type="button" id="closePlayer" class="plain close">Close</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Edit a video: change it, see the new version, repeat until it's right -->
+  <dialog id="editor" class="sheet editor">
+    <div class="sheet-body">
+      <h2>Edit video</h2>
+      <p class="fine edit-legend" id="editIntro"><span class="lg"><span class="kind fast">fast</span> ready in seconds</span> <span class="lg"><span class="kind slow">new animation</span> 1–2 min a part</span></p>
+
+      <h3 class="edit-label">Text on each 5 s part <span class="kind fast">fast</span></h3>
+      <div id="editTexts" class="edit-texts"></div>
+      <p class="fine" id="editRedoHelp">↻ = a new idea and animation for that part.</p>
+
+      <h3 class="edit-label">Music <span class="kind fast">fast</span></h3>
+      <div class="music-pick">
+        <select id="editMusic" aria-label="Music"></select>
+        <button type="button" id="editHear" class="mini" aria-label="Play this song">▶</button>
+      </div>
+      <div id="editSongUpload" class="song-upload" hidden>
+        <label class="plain">
+          <input type="file" id="editSongFile" accept="audio/*,.mp3,.m4a,.wav,.aac,.ogg">
+          Choose a song file
+        </label>
+        <span id="editSongName" class="fine">No song chosen yet</span>
+      </div>
+      <div class="opt-line" id="editPartLine">
+        <span>Song part</span>
+        <div class="seg" id="editPartSeg">
+          <button type="button" data-v="auto">Auto</button>
+          <button type="button" data-v="start">Start</button>
+          <button type="button" data-v="drop">Drop</button>
+          <button type="button" data-v="custom">Choose</button>
+        </div>
+      </div>
+      <div id="editPartPick" class="part-pick" hidden>
+        <input type="range" id="editSongStart" min="0" max="180" step="0.5" value="0" aria-label="Where the song starts">
+        <div class="part-pick-row">
+          <span>Starts at <b id="editSongStartLabel">0:00</b> <span id="editSongLength" class="fine"></span></span>
+          <button type="button" id="editHearPart" class="plain">▶ Hear this part</button>
+        </div>
+      </div>
+
+      <h3 class="edit-label">Length, speed, extras <span class="kind fast">fast</span></h3>
+      <div class="opt-line">
+        <span>Length</span>
+        <div class="seg" id="editLenSeg">
+          <button type="button" data-v="1">5 s</button>
+          <button type="button" data-v="2">10 s</button>
+          <button type="button" data-v="3">15 s</button>
+        </div>
+      </div>
+      <div class="opt-line">
+        <span>Speed</span>
+        <div class="seg" id="editSpeedSeg">
+          <button type="button" data-v="slow">Slow-mo</button>
+          <button type="button" data-v="normal">Normal</button>
+          <button type="button" data-v="fast">Fast</button>
+        </div>
+      </div>
+      <div class="toggles">
+        <label class="opt-line switch-line" id="editVoiceLine">
+          <span>Pet voice</span>
+          <input type="checkbox" id="editVoice" class="sw-input"><span class="sw" aria-hidden="true"></span>
+        </label>
+        <div class="voice-pick" id="editVoicePick" hidden>
+          <div class="voices" id="editVoiceSeg" role="group" aria-label="Which voice"></div>
+          <p class="fine">Auto picks one that fits the animal. Tap ▶ to listen.</p>
+        </div>
+        <label class="opt-line switch-line" id="editMemeLine">
+          <span>Meme effects</span>
+          <input type="checkbox" id="editMeme" class="sw-input"><span class="sw" aria-hidden="true"></span>
+        </label>
+        <label class="opt-line switch-line" id="editOpeningLine">
+          <span>Real → AI opening</span>
+          <input type="checkbox" id="editOpening" class="sw-input"><span class="sw" aria-hidden="true"></span>
+        </label>
+        <label class="opt-line switch-line" id="editOutroLine">
+          <span>Follow me ending</span>
+          <input type="checkbox" id="editOutro" class="sw-input"><span class="sw" aria-hidden="true"></span>
+        </label>
+        <label class="opt-line switch-line">
+          <span>Text on video</span>
+          <input type="checkbox" id="editCaptions" class="sw-input"><span class="sw" aria-hidden="true"></span>
+        </label>
+        <label class="opt-line switch-line" id="editBrandLine">
+          <span>My name on video</span>
+          <input type="checkbox" id="editBrand" class="sw-input"><span class="sw" aria-hidden="true"></span>
+        </label>
+      </div>
+
+      <h3 class="edit-label">Story and style <span class="kind slow">new animation</span></h3>
+      <div class="idea-wrap">
+        <textarea id="editIdea" class="idea" rows="2" maxlength="160"
+                  placeholder="e.g. The dog dances on the table, then slips"></textarea>
+        <button type="button" class="mic" data-for="editIdea">🎤 Speak</button>
+      </div>
+      <p class="heard" id="editIdeaHeard" hidden><span class="heard-text"></span> <button type="button" class="link-btn heard-undo">Undo</button></p>
+      <div class="chips-wrap edit-style" id="editStyle"></div>
+      <label class="opt-line" id="editAnimalLine">
+        <span>Animal</span>
+        <input type="text" id="editAnimal" class="small-input" maxlength="30" placeholder="e.g. cat">
+      </label>
+
+      <div class="edit-foot">
+        <p id="editNote" class="note" hidden></p>
+        <div class="row">
+          <button type="button" id="editSave" class="go small">Show new version</button>
+          <button type="button" id="editCancel" class="plain">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Post on TikTok (Posting plan): the video, its caption, and three numbered steps -->
+  <dialog id="postDialog" class="sheet post">
+    <div class="sheet-body">
+      <!-- (it takes the focus when the screen opens: the top shows first, and no keyboard pops up) -->
+      <h2 tabindex="-1" autofocus>Post on TikTok</h2>
+      <p class="fine post-sub" id="postSub"></p>
+      <div class="post-grid">
+        <div class="post-media">
+          <video id="postVideo" playsinline controls loop preload="metadata"></video>
+          <p id="postWait" class="post-wait" hidden>Getting the TikTok version ready…</p>
+        </div>
+        <div class="post-steps">
+          <p id="postCutNote" class="fine post-cut-note" hidden>🔇 No song in this version, so TikTok won't mute it. You add the song in TikTok.</p>
+          <p id="postCutFail" class="fine post-cut-note" hidden>Couldn't take the song out this time, so this is your video with its song. TikTok may mute it.</p>
+          <label class="opt-line switch-line post-song" id="postSongLine" hidden>
+            <span>Use the video with the song<small>TikTok may mute songs inside a video. Off is safer: add the sound in TikTok.</small></span>
+            <input type="checkbox" id="postSongOpt" class="sw-input"><span class="sw" aria-hidden="true"></span>
+          </label>
+          <div class="post-cap">
+            <div class="cap-head">
+              <label for="postCaption">Caption</label>
+              <button type="button" id="postReset" class="link-btn" hidden>Reset</button>
+            </div>
+            <textarea id="postCaption" class="idea" rows="4" maxlength="2200" aria-label="Caption for TikTok"></textarea>
+          </div>
+          <button type="button" id="postCopy" class="go post-btn">1 · Copy caption</button>
+          <button type="button" id="postShare" class="go post-btn">2 · Share to TikTok</button>
+          <a id="postSave" class="go post-btn" download="antics.mp4" target="_blank" rel="noopener" hidden>2 · Save video</a>
+          <p class="post-alt" id="postAltLine" hidden><button type="button" id="postSaveAlt" class="link-btn">or save the video</button></p>
+          <div class="post-check">
+            <p class="post-check-head">In TikTok:</p>
+            <ul id="postList"></ul>
+          </div>
+          <button type="button" id="postDone" class="go post-btn">3 · I posted it ✓</button>
+          <p class="post-links">
+            <button type="button" id="postSkip" class="link-btn">Skip this one</button>
+            <button type="button" id="postLater" class="link-btn">Remind me later</button>
+          </p>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Setup / settings -->
+  <dialog id="settings" class="sheet">
+    <div class="sheet-body">
+      <div id="setupPane">
+        <h2 id="setupTitle">One-time setup</h2>
+        <p id="setupLinkLine" class="note" hidden>Already use antics in your browser? <button type="button" id="toConnect" class="link-btn">Paste your antics link instead</button></p>
+        <p id="setupIntro">Your videos are made on your own free Hugging Face worker, so it keeps going when your phone is locked.</p>
+        <ol class="how">
+          <li>Open <a href="https://huggingface.co/settings/tokens/new?tokenType=write" target="_blank" rel="noopener">this page</a> (sign in if asked).</li>
+          <li>Pick <b>Write</b>, type any name, tap <b>Create token</b>, copy it.</li>
+          <li>Paste it here:</li>
+        </ol>
+        <input type="password" id="token" placeholder="hf_…" autocomplete="off" spellcheck="false" aria-label="Hugging Face key">
+        <button type="button" id="setupBtn" class="go small">Set up my worker</button>
+        <ul id="steps" class="steps" hidden>
+          <li data-step="key">Checking your key</li>
+          <li data-step="create">Creating your worker</li>
+          <li data-step="build">Building it (2–5 min, only once)</li>
+          <li data-step="ready">Ready</li>
+        </ul>
+        <p id="setupNote" class="note" hidden></p>
+        <p class="fine">The key is stored inside your worker as a secret, not on this phone.</p>
+      </div>
+
+      <div id="optionsPane" hidden>
+        <h2>Settings</h2>
+        <p class="worker-line">Worker: <a id="workerLink" target="_blank" rel="noopener"></a> <span id="workerState"></span></p>
+        <!-- Workers with 'gpu': today's free AI time, and the stop when Hugging Face started charging credits -->
+        <p id="gpuLine" class="gpu-line" hidden></p>
+        <p id="gpuAlert" class="note bad gpu-alert" hidden>
+          <span>Hugging Face started charging your credits, so antics stopped all AI work. Check
+            <a href="https://huggingface.co/settings/billing" target="_blank" rel="noopener">huggingface.co/settings/billing</a>.</span>
+          <button type="button" id="gpuResume" class="plain">Resume</button>
+        </p>
+        <p class="fine">Free Hugging Face time makes about 3–5 clips a day. When it runs out, unfinished videos wait and finish by themselves.</p>
+        <p id="updateNote" class="note bad" hidden>A new version is ready. <button type="button" id="updateBtn" class="plain">Update my worker</button></p>
+
+        <!-- Posting plan (workers with 'plan'): finished videos wait in line, and at each time antics reminds you
+             to post the next one, with its caption and hashtags ready -->
+        <div class="friends-box plan-box" id="planBox" hidden>
+          <label class="opt switch-line plan-on">
+            <span>Posting plan<small id="planState"></small></span>
+            <input type="checkbox" id="planOn" class="sw-input"><span class="sw" aria-hidden="true"></span>
+          </label>
+          <p class="fine">At each time you get a reminder with the next video and its caption ready. You post it in TikTok with one tap.</p>
+          <div id="planNotify" class="note bad plan-notify" hidden>
+            <span>Turn on notifications to get reminders</span>
+            <button type="button" id="planNotifyBtn" class="plain">Turn on notifications</button>
+          </div>
+          <div class="opt-line">
+            <span>Posts a day</span>
+            <div class="seg" id="planPerDay" aria-label="Posts a day">
+              <button type="button" data-v="1">1</button>
+              <button type="button" data-v="2">2</button>
+              <button type="button" data-v="3">3</button>
+            </div>
+          </div>
+          <div id="planTimes" class="plan-times"></div>
+          <p class="fine" id="planTz"></p>
+          <h3 class="sub-label">Hashtags</h3>
+          <div id="planTags" class="tag-chips"></div>
+          <div class="plan-tag-add">
+            <input type="text" id="planTagInput" class="small-input" maxlength="120" placeholder="#hashtag" aria-label="New hashtag"
+                   autocomplete="off" autocapitalize="off" spellcheck="false">
+            <button type="button" id="planTagAdd" class="plain">Add</button>
+          </div>
+          <p class="fine" id="planTagHelp"></p>
+          <h3 class="sub-label" id="planQueueHead">Up next</h3>
+          <div id="planQueue" class="plan-queue"></div>
+          <p class="fine" id="planEmpty">No videos yet. Tap <b>+ Plan</b> on a finished video.</p>
+          <p class="fine" id="planUntil" hidden></p>
+          <p id="planMissed" class="note plan-missed" hidden></p>
+          <div id="planDone" class="plan-done" hidden></div>
+        </div>
+
+        <!-- My songs: full songs, each cut to its meme part (found by the worker, adjustable) -->
+        <div class="friends-box songs-box" id="songsBox" hidden>
+          <div class="opt">
+            <span>My songs</span>
+            <span id="songsCount" class="fine"></span>
+          </div>
+          <p class="fine">Add a full song. antics finds its meme part, and every video with it starts right there. Your friends can use your songs too.</p>
+          <div id="songAdd" class="song-add" hidden>
+            <p class="song-add-head" id="songAddHead">Finding the meme part…</p>
+            <div id="songAddBody" hidden>
+              <div class="part-pick">
+                <input type="range" id="songAddStart" min="0" max="180" step="0.1" value="0" aria-label="Where the meme part starts">
+                <div class="part-pick-row">
+                  <span>Starts at <b id="songAddStartLabel">0:00</b> <span id="songAddLength" class="fine"></span></span>
+                  <button type="button" id="songAddHear" class="plain">▶ Hear</button>
+                </div>
+                <div class="chips-wrap song-cands" id="songAddCands"></div>
+              </div>
+              <label class="opt-line">
+                <span>Name</span>
+                <input type="text" id="songAddName" class="small-input" maxlength="60" aria-label="Song name">
+              </label>
+              <label class="opt-line switch-line">
+                <span>Use for every video<small>New videos start with this song</small></span>
+                <input type="checkbox" id="songAddDefault" class="sw-input" checked><span class="sw" aria-hidden="true"></span>
+              </label>
+              <div class="row">
+                <button type="button" id="songAddSave" class="go small">Save</button>
+              </div>
+            </div>
+          </div>
+          <div id="songRows" class="friend-list song-rows"></div>
+          <div class="row">
+            <label class="plain add-song-btn" id="songAddBtn">
+              <input type="file" id="songAddFile" accept="audio/*,video/*,.mp3,.m4a,.wav,.aac,.ogg,.mp4,.mov">
+              + Add a song
+            </label>
+          </div>
+          <p id="songsNote" class="note" hidden></p>
+        </div>
+
+        <div class="friends-box">
+          <div class="opt">
+            <span>Friends</span>
+            <span id="friendsCount" class="fine"></span>
+          </div>
+          <p class="fine">Give a friend their own link with a few videos. They only see their own videos, and theirs use your free time.</p>
+          <div id="friendAdd" class="friend-add">
+            <input type="text" id="friendName" class="small-input" maxlength="30" placeholder="Friend's name" aria-label="Friend's name">
+            <div class="seg" id="friendUsesSeg" aria-label="How many videos">
+              <button type="button" data-v="5">5</button>
+              <button type="button" data-v="6">6</button>
+              <button type="button" data-v="10">10</button>
+            </div>
+            <button type="button" id="addFriend" class="plain">Create link</button>
+          </div>
+          <div id="friendList" class="friend-list"></div>
+          <p id="friendNote" class="note" hidden></p>
+        </div>
+
+        <div class="pc-box">
+          <div class="opt">
+            <span>Use my PC</span>
+            <span id="pcState" class="pc-state">not connected</span>
+          </div>
+          <p class="fine">Unlimited free videos on your own NVIDIA graphics card. When the PC is off, the free online time is used instead.</p>
+          <div class="row">
+            <a class="plain" href="pc.html" target="_blank" rel="noopener">How to set up my PC</a>
+            <button type="button" id="pairBtn" class="plain">Get connect code</button>
+          </div>
+          <div id="pairBox" class="pair" hidden>
+            <p>When the helper on your PC asks, type:</p>
+            <p>Username: <b id="pairUser"></b></p>
+            <p>Code: <b id="pairCode" class="code"></b> <span class="fine">(works for 10 minutes)</span></p>
+          </div>
+        </div>
+
+        <div class="row">
+          <button type="button" id="redoSetup" class="plain">Set up again</button>
+          <button type="button" id="disconnect" class="plain danger">Disconnect</button>
+        </div>
+      </div>
+      <div id="guestPane" hidden>
+        <h2>Your invite</h2>
+        <p id="guestInfo"></p>
+        <p class="fine" id="guestFine"></p>
+        <div class="row">
+          <button type="button" id="leaveInvite" class="plain danger">Leave this invite</button>
+        </div>
+      </div>
+      <!-- Notifications and the Home Screen app: moved into the owner's or the friend's Settings (renderSettings) -->
+      <div id="appBoxes">
+        <div id="pingBox" class="pc-box" hidden>
+          <div class="opt">
+            <span>Notify me when a video is ready</span>
+            <span id="pingState" class="pc-state">off</span>
+          </div>
+          <p class="fine" id="pingHelp"></p>
+          <div class="row" id="pingRow">
+            <button type="button" id="pingBtn" class="plain">Turn on</button>
+            <button type="button" id="pingTest" class="plain" hidden>Send a test</button>
+          </div>
+        </div>
+        <div id="appBox" class="pc-box" hidden>
+          <div class="opt">
+            <span>Home Screen app</span>
+          </div>
+          <ol class="how" id="appSteps" hidden>
+            <li>Tap <b id="appStepCopy">Copy app link</b> below.</li>
+            <li>Tap <b>Share</b>, then <b>Add to Home Screen</b>.</li>
+            <li>Open antics from your Home Screen and paste the link.</li>
+          </ol>
+          <p class="fine" id="installHelp" hidden></p>
+          <div class="row">
+            <button type="button" id="installBtn" class="plain" hidden>📲 Add to Home Screen</button>
+            <button type="button" id="copyAppLink" class="plain" hidden>Copy app link</button>
+            <button type="button" id="copyInvite" class="plain" hidden>Copy my invite link</button>
+          </div>
+          <p class="fine" id="appLinkHelp" hidden></p>
+        </div>
+      </div>
+      <button type="button" id="closeSettings" class="plain close">Close</button>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

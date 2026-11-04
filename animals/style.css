@@ -1,0 +1,2542 @@
+/* style.css: antics */
+:root {
+  --paper: #fff3dc;
+  --card: #ffffff;
+  --ink: #161310;
+  --soft: #6d6257;
+  --tomato: #ff5a36;
+  --lime: #c9f04a;
+  --sky: #9fd8ff;
+  --grape: #8159e6; /* the purple of the TENDHA2 picture */
+  --line: 2.5px solid var(--ink);
+  --pop: 4px 4px 0 var(--ink);
+  --round: 14px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Bricolage Grotesque", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 17px;
+  line-height: 1.4;
+  -webkit-tap-highlight-color: transparent;
+}
+
+a {
+  color: var(--ink);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+/* Header */
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 560px;
+  margin: 0 auto;
+  padding: calc(14px + env(safe-area-inset-top)) 18px 6px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.avatar {
+  flex: 0 0 auto;
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  border: var(--line);
+  box-shadow: 3px 3px 0 var(--ink);
+  background: var(--lime);
+}
+
+.brand-text {
+  display: grid;
+  min-width: 0;
+}
+
+.logo {
+  font-size: 2.2rem;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.logo b {
+  color: var(--grape);
+}
+
+.app-tag {
+  display: inline-block;
+  margin-left: 8px;
+  vertical-align: middle;
+  font-size: 0.8rem;
+  letter-spacing: 0;
+  background: var(--grape);
+  color: #fff;
+  border: 2px solid var(--ink);
+  border-radius: 99px;
+  padding: 1px 9px 2px;
+}
+
+.sub {
+  color: var(--soft);
+  font-size: 0.95rem;
+}
+
+.icon-btn {
+  position: relative;
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border: var(--line);
+  border-radius: 50%;
+  background: var(--card);
+  box-shadow: 3px 3px 0 var(--ink);
+  cursor: pointer;
+}
+
+.dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--ink);
+  background: var(--tomato);
+}
+
+.dot.on {
+  background: var(--lime);
+}
+
+main {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 10px 18px calc(40px + env(safe-area-inset-bottom));
+}
+
+/* Maker */
+.maker {
+  margin-top: 14px;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--card);
+  border: var(--line);
+  border-radius: var(--round);
+  box-shadow: var(--pop);
+  padding: 6px 6px 6px 14px;
+}
+
+.field input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 17px;
+  padding: 12px 0;
+  color: var(--ink);
+}
+
+.field input::placeholder {
+  color: #9b9086;
+}
+
+.mini {
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  background: var(--sky);
+  font-weight: 700;
+  font-size: 0.9rem;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.file-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--sky);
+  border: var(--line);
+  border-radius: var(--round);
+  box-shadow: var(--pop);
+  padding: 10px 10px 10px 14px;
+  font-weight: 700;
+}
+
+.file-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-chip .mini {
+  background: var(--card);
+}
+
+.alt {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 0 14px;
+  color: var(--soft);
+}
+
+.link-btn {
+  position: relative;
+  border: 0;
+  background: none;
+  padding: 4px 2px;
+  font-weight: 700;
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+  cursor: pointer;
+}
+
+.link-btn input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.go {
+  display: block;
+  width: 100%;
+  border: var(--line);
+  border-radius: var(--round);
+  background: var(--tomato);
+  color: var(--ink);
+  box-shadow: var(--pop);
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  padding: 16px;
+  cursor: pointer;
+  transition: transform 0.06s ease, box-shadow 0.06s ease;
+}
+
+.go:active {
+  transform: translate(3px, 3px);
+  box-shadow: 1px 1px 0 var(--ink);
+}
+
+.go:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.go.small {
+  font-size: 1.05rem;
+  padding: 12px 16px;
+}
+
+.plain {
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: var(--card);
+  font-weight: 700;
+  padding: 11px 14px;
+  cursor: pointer;
+}
+
+.plain.danger {
+  color: #b3261e;
+}
+
+.note {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 2px solid var(--ink);
+  background: var(--card);
+  font-size: 0.95rem;
+}
+
+.note.bad {
+  background: #ffd9cf;
+}
+
+.note.good {
+  background: #eaffc2;
+}
+
+/* Job list */
+.list {
+  margin-top: 34px;
+}
+
+.list h2 {
+  font-size: 1.35rem;
+  margin: 0 0 12px;
+  letter-spacing: -0.02em;
+}
+
+.empty,
+.wake {
+  color: var(--soft);
+}
+
+#jobs {
+  display: grid;
+  gap: 14px;
+}
+
+#jobs:not(:empty) + .empty {
+  display: none;
+}
+
+.job {
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  gap: 12px;
+  background: var(--card);
+  border: var(--line);
+  border-radius: var(--round);
+  box-shadow: var(--pop);
+  padding: 10px;
+}
+
+.thumb {
+  position: relative;
+  width: 84px;
+  aspect-ratio: 9 / 16;
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  overflow: hidden;
+  background: repeating-linear-gradient(-45deg, #ffe2a8 0 10px, #ffd27a 10px 20px);
+  padding: 0;
+  cursor: default;
+}
+
+.thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.job.working .thumb,
+.job.queued .thumb {
+  background-size: 28px 28px;
+  animation: slide 1s linear infinite;
+}
+
+@keyframes slide {
+  to {
+    background-position: 28px 0;
+  }
+}
+
+.job.done .thumb {
+  cursor: pointer;
+}
+
+.play {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+.play span {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--lime);
+  border: 2px solid var(--ink);
+  display: grid;
+  place-items: center;
+}
+
+.job-body {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.job-title {
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.job-stage {
+  color: var(--soft);
+  font-size: 0.93rem;
+}
+
+.job.failed .job-stage {
+  color: #b3261e;
+}
+
+.meter {
+  height: 8px;
+  border: 2px solid var(--ink);
+  border-radius: 99px;
+  overflow: hidden;
+  background: var(--paper);
+  margin-top: 4px;
+}
+
+.meter span {
+  display: block;
+  height: 100%;
+  background: var(--tomato);
+  transition: width 0.4s ease;
+}
+
+.job-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.job-actions .plain {
+  padding: 7px 11px;
+  font-size: 0.9rem;
+}
+
+.job-actions .open {
+  background: var(--lime);
+}
+
+/* Dialogs */
+dialog {
+  border: var(--line);
+  border-radius: 18px;
+  box-shadow: 6px 6px 0 var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+  padding: 0;
+  width: min(520px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+}
+
+dialog::backdrop {
+  background: rgba(22, 19, 16, 0.55);
+}
+
+.sheet-body,
+.player-info {
+  padding: 18px;
+}
+
+.sheet-body h2 {
+  margin: 0 0 8px;
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+}
+
+.sheet-body p {
+  margin: 0 0 10px;
+}
+
+.how {
+  padding-left: 1.2em;
+  margin: 0 0 12px;
+  display: grid;
+  gap: 4px;
+}
+
+.sheet-body input[type="password"] {
+  width: 100%;
+  border: var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  font: inherit;
+  font-size: 17px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.steps {
+  list-style: none;
+  padding: 0;
+  margin: 14px 0 0;
+  display: grid;
+  gap: 6px;
+}
+
+.steps li {
+  padding-left: 30px;
+  position: relative;
+  color: var(--soft);
+}
+
+.steps li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 2px;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--soft);
+  border-radius: 50%;
+}
+
+.steps li.active {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.steps li.active::before {
+  border-color: var(--ink);
+  border-top-color: transparent;
+  animation: spin 0.8s linear infinite;
+}
+
+.steps li.done {
+  color: var(--ink);
+}
+
+.steps li.done::before {
+  border-color: var(--ink);
+  background: var(--lime);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.fine {
+  color: var(--soft);
+  font-size: 0.88rem;
+}
+
+.worker-line {
+  word-break: break-all;
+}
+
+.opt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 2px dashed rgba(22, 19, 16, 0.2);
+  font-weight: 700;
+}
+
+.opt input[type="checkbox"] {
+  width: 24px;
+  height: 24px;
+  accent-color: var(--tomato);
+}
+
+.seg {
+  display: flex;
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.seg button {
+  border: 0;
+  border-left: 2px solid var(--ink);
+  background: var(--card);
+  padding: 6px 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.seg button:first-child {
+  border-left: 0;
+}
+
+.seg button[aria-pressed="true"] {
+  background: var(--tomato);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.close {
+  width: 100%;
+  margin-top: 14px;
+}
+
+/* Player */
+.player {
+  width: min(420px, calc(100vw - 24px));
+  overflow-y: auto;
+}
+
+.player video {
+  display: block;
+  width: 100%;
+  max-height: 62vh;
+  background: #000;
+  border-bottom: var(--line);
+}
+
+.caption-text {
+  margin: 0;
+  font-weight: 700;
+  word-break: break-word;
+}
+
+.tip {
+  color: var(--soft);
+  font-size: 0.9rem;
+  margin: 12px 0 0;
+}
+
+/* Toast */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(18px + env(safe-area-inset-bottom));
+  transform: translate(-50%, 160%);
+  background: var(--ink);
+  color: var(--paper);
+  font-weight: 700;
+  padding: 10px 16px;
+  border-radius: 12px;
+  transition: transform 0.25s ease, visibility 0.25s;
+  max-width: calc(100vw - 32px);
+  text-align: center;
+  z-index: 10;
+  visibility: hidden;
+}
+
+.toast.show {
+  transform: translate(-50%, 0);
+  visibility: visible;
+}
+
+/* "Get a notification when it's ready?" under Your videos */
+.ping-nudge {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin: 0 0 12px;
+}
+
+.ping-nudge span {
+  flex: 1 1 100%;
+}
+
+/* The Home Screen app with no worker yet: one box to paste the antics link */
+.connect {
+  margin: 12px 0 0;
+}
+
+.connect .go {
+  margin-top: 12px;
+}
+
+.connect.nudge {
+  animation: nudge 0.5s ease 2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .connect.nudge {
+    animation: none;
+    outline: 3px solid var(--tomato);
+  }
+}
+
+@media (min-width: 960px) {
+  .connect {
+    max-width: 560px;
+  }
+}
+
+/* Use my PC */
+.pc-box {
+  margin-top: 14px;
+  padding: 4px 14px 14px;
+  border: 2px solid var(--ink);
+  border-radius: var(--round);
+  background: var(--card);
+}
+
+.pc-box .opt {
+  border-bottom: 0;
+}
+
+.pc-state {
+  font-weight: 700;
+  color: var(--soft);
+}
+
+.pc-state.on {
+  color: var(--ink);
+  background: var(--lime);
+  border: 2px solid var(--ink);
+  border-radius: 99px;
+  padding: 2px 10px;
+}
+
+.pair {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 2px dashed var(--ink);
+  border-radius: 12px;
+  background: var(--paper);
+}
+
+.pair p {
+  margin: 0 0 4px;
+}
+
+.code {
+  font-size: 1.6rem;
+  letter-spacing: 0.12em;
+}
+
+.pc-chip {
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 6px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  background: var(--lime);
+  border: 2px solid var(--ink);
+  border-radius: 99px;
+  padding: 2px 10px;
+}
+
+/* PC setup guide */
+.guide ol {
+  padding-left: 1.3em;
+  display: grid;
+  gap: 18px;
+}
+
+.guide li p {
+  margin: 4px 0;
+}
+
+.cmd {
+  display: block;
+  margin: 8px 0;
+  padding: 12px;
+  border: var(--line);
+  border-radius: 12px;
+  background: var(--ink);
+  color: var(--lime);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.85rem;
+  word-break: break-all;
+}
+
+.need {
+  background: var(--card);
+  border: var(--line);
+  border-radius: var(--round);
+  box-shadow: var(--pop);
+  padding: 4px 16px;
+}
+
+/* Option blocks: everything visible, nothing hidden off-screen */
+.block {
+  background: var(--card);
+  border: var(--line);
+  border-radius: var(--round);
+  box-shadow: var(--pop);
+  padding: 14px;
+  margin-bottom: 18px;
+}
+
+.block-title {
+  font-size: 1.05rem;
+  margin: 0 0 10px;
+  letter-spacing: -0.01em;
+}
+
+.block .field,
+.block .file-chip {
+  box-shadow: none;
+}
+
+.block .alt {
+  margin: 12px 0 0;
+  flex-wrap: wrap;
+}
+
+.block .fine {
+  margin: 8px 0 0;
+}
+
+.tag-opt {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--soft);
+  border: 1.5px solid var(--soft);
+  border-radius: 99px;
+  padding: 1px 8px;
+  vertical-align: middle;
+}
+
+.idea {
+  width: 100%;
+  border: var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 16px;
+  resize: vertical;
+  background: var(--paper);
+}
+
+.chips-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chips-wrap button,
+.song button.pick-song {
+  border: 2px solid var(--ink);
+  border-radius: 99px;
+  background: var(--card);
+  font-weight: 700;
+  font-size: 0.92rem;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+
+.chips-wrap button[aria-pressed="true"],
+.song[aria-current="true"] button.pick-song {
+  background: var(--lime);
+  box-shadow: 2px 2px 0 var(--ink);
+}
+
+.song-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.song {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.song button.pick-song {
+  flex: 1;
+  text-align: left;
+  border-radius: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.song .play-song {
+  flex: 0 0 36px;
+  height: 36px;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background: var(--sky);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+.song-upload {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.song-upload label {
+  position: relative;
+}
+
+.song-upload input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.song-upload .fine {
+  margin: 0;
+}
+
+.opt-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 10px 0;
+  border-bottom: 2px dashed rgba(22, 19, 16, 0.15);
+  font-weight: 700;
+}
+
+.opt-line:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.opt-line input[type="checkbox"] {
+  width: 24px;
+  height: 24px;
+  accent-color: var(--tomato);
+}
+
+.small-input {
+  width: 150px;
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 16px;
+}
+
+/* Two columns on a computer: options on the left, your videos on the right */
+@media (min-width: 960px) {
+  .bar,
+  main.layout {
+    max-width: 1180px;
+  }
+
+  main.layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+    gap: 36px;
+    align-items: start;
+  }
+
+  main.layout .list {
+    margin-top: 14px;
+    position: sticky;
+    top: 16px;
+  }
+}
+
+/* "New version ready" banner */
+.banner-wrap {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 0 18px;
+}
+
+.banner {
+  background: var(--sky);
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* The GPU guard stopped all AI work (Hugging Face started charging credits) */
+.banner.alert {
+  background: #ffb8aa;
+}
+
+.banner.alert a,
+.gpu-alert a {
+  overflow-wrap: anywhere;
+}
+
+.gpu-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-weight: 700;
+}
+
+.gpu-line {
+  margin: 6px 0 0;
+  font-weight: 700;
+}
+
+.gpu-line.bad {
+  color: #b3261e;
+}
+
+@media (min-width: 960px) {
+  .banner-wrap {
+    max-width: 1180px;
+  }
+}
+
+/* Song part: Pick myself */
+.part-pick {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 2px dashed var(--ink);
+  border-radius: 12px;
+  background: var(--paper);
+}
+
+.part-pick input[type="range"] {
+  width: 100%;
+  accent-color: var(--grape);
+}
+
+.part-pick-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+  font-weight: 700;
+}
+
+.part-pick-row .plain {
+  padding: 7px 12px;
+  font-size: 0.9rem;
+}
+
+.seg button[hidden] {
+  display: none !important;
+}
+
+/* Export, previews and editing */
+.list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+}
+
+.list-head h2 {
+  margin: 0;
+}
+
+.list-head .plain {
+  padding: 7px 12px;
+  font-size: 0.9rem;
+  background: var(--lime);
+}
+
+.seg button:disabled {
+  color: #b5aba1;
+  cursor: not-allowed;
+}
+
+.chip {
+  display: inline-block;
+  vertical-align: 1px;
+  margin-left: 6px;
+  font-size: 0.75rem;
+  font-weight: 800;
+  border: 2px solid var(--ink);
+  border-radius: 99px;
+  padding: 0 8px;
+  background: var(--sky);
+}
+
+.chip.by-friend {
+  background: #e7dcff;
+}
+
+.job-actions .finish {
+  background: var(--tomato);
+}
+
+.sheet {
+  overflow-y: auto;
+}
+
+.edit-label {
+  font-size: 1rem;
+  margin: 16px 0 8px;
+  letter-spacing: -0.01em;
+}
+
+.edit-texts {
+  display: grid;
+  gap: 8px;
+}
+
+.edit-text {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.edit-text .num {
+  font-weight: 800;
+  min-width: 1.4em;
+  text-align: center;
+}
+
+.edit-text input {
+  min-width: 0;
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  padding: 9px 10px;
+  font: inherit;
+  font-size: 16px;
+  background: var(--card);
+}
+
+.edit-text .still {
+  grid-column: 2 / 4;
+  margin-top: -4px;
+  font-size: 0.8rem;
+  color: var(--soft);
+}
+
+.redo {
+  width: 42px;
+  height: 42px;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background: var(--card);
+  font-size: 1.15rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.redo[aria-pressed="true"] {
+  background: var(--grape);
+  color: #fff;
+}
+
+.redo:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.music-pick {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.music-pick select {
+  flex: 1;
+  min-width: 0;
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  padding: 9px 10px;
+  font: inherit;
+  font-size: 16px;
+  background: var(--card);
+  color: var(--ink);
+}
+
+.editor .opt-line:last-of-type {
+  border-bottom: 2px dashed rgba(22, 19, 16, 0.15);
+}
+
+/* Friends */
+.friends-box {
+  margin-top: 14px;
+  padding: 4px 14px 14px;
+  border: 2px solid var(--ink);
+  border-radius: var(--round);
+  background: var(--card);
+}
+
+.friends-box .opt {
+  border-bottom: 0;
+}
+
+.friend-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.friend-add .small-input {
+  flex: 1 1 140px;
+}
+
+.friend-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.friend-list:empty {
+  display: none;
+}
+
+.friend-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 10px;
+  padding: 8px 10px;
+  border: 2px dashed var(--ink);
+  border-radius: 12px;
+  background: var(--paper);
+}
+
+.friend-row b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.friend-row .acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.friend-row .plain {
+  padding: 5px 10px;
+  font-size: 0.85rem;
+}
+
+.job-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.job-tags .chip {
+  margin-left: 0;
+}
+
+.job.playable .thumb {
+  cursor: pointer;
+}
+
+/* Speak instead of typing */
+.idea-wrap {
+  position: relative;
+}
+
+.idea-wrap .idea {
+  display: block;
+  padding-bottom: 50px;
+}
+
+.mic {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  border: 2px solid var(--ink);
+  border-radius: 99px;
+  background: var(--sky);
+  font-weight: 800;
+  font-size: 0.9rem;
+  padding: 6px 13px;
+  cursor: pointer;
+}
+
+.mic.on {
+  background: var(--tomato);
+  animation: listening 1.1s ease-in-out infinite;
+}
+
+.mic:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+@keyframes listening {
+  50% {
+    box-shadow: 0 0 0 6px rgba(255, 90, 54, 0.28);
+  }
+}
+
+/* "Got it: Twerk · Sneaky Snitch · 15 sec" after speaking */
+.heard {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 10px;
+  margin: 8px 0 0;
+  padding: 7px 10px;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: #eaffc2;
+  font-weight: 700;
+  font-size: 0.92rem;
+}
+
+.heard .link-btn {
+  padding: 0 2px;
+  font-size: 0.9rem;
+}
+
+/* ===================== Simple main screen (v10): 4 numbered steps ===================== */
+
+/* Phone: jump to your videos (they sit below the form) */
+.jump {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 8px 0 0;
+  padding: 7px 12px;
+  font-size: 0.92rem;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: var(--lime);
+  color: var(--ink);
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.jump::after {
+  content: "↓";
+}
+
+/* The wrappers only matter on a wide PC screen (two form columns) */
+.maker-a,
+.maker-b {
+  display: contents;
+}
+
+.step-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin: 0 0 12px;
+  font-size: 1.2rem;
+  letter-spacing: -0.015em;
+}
+
+.step-num {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background: var(--grape);
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+/* Step 1 done (link, file or surprise chosen): its number turns into a tick */
+.step.done .step-num {
+  background: var(--lime);
+  color: var(--ink);
+  font-size: 0;
+}
+
+.step.done .step-num::after {
+  content: "✓";
+  font-size: 1rem;
+}
+
+.step.nudge {
+  animation: nudge 0.5s ease 2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .step.nudge {
+    animation: none;
+    outline: 3px solid var(--tomato);
+  }
+}
+
+@keyframes nudge {
+  25% { transform: translateX(-5px); }
+  75% { transform: translateX(5px); }
+}
+
+.sub-label {
+  margin: 14px 0 8px;
+  font-size: 0.95rem;
+}
+
+/* Step 1: link, or one of two big tiles */
+.or {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+  color: var(--soft);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.or::before,
+.or::after {
+  content: "";
+  flex: 1;
+  border-top: 2px dashed rgba(22, 19, 16, 0.18);
+}
+
+.step .alt {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 0;
+  color: var(--ink);
+}
+
+.tile {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 62px;
+  padding: 10px 12px;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: var(--sky);
+  color: var(--ink);
+  font-weight: 800;
+  line-height: 1.15;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tile.surprise {
+  background: #e7dcff;
+}
+
+.tile svg {
+  flex: 0 0 auto;
+}
+
+.tile small {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  opacity: 0.75;
+}
+
+.tile input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.tile:focus-within,
+.tile:focus-visible {
+  outline: 3px solid var(--grape);
+  outline-offset: 2px;
+}
+
+.tile:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* A file or a surprise is chosen: only its chip (with ✕) shows */
+#fileChip:not([hidden]) ~ .or,
+#fileChip:not([hidden]) ~ .alt {
+  display: none;
+}
+
+/* On/off switches (a real checkbox underneath) */
+.switch-line {
+  position: relative;
+  cursor: pointer;
+  flex-wrap: nowrap;
+}
+
+.switch-line > span:first-child {
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.switch-line small {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--soft);
+}
+
+.sw-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+}
+
+.sw {
+  flex: 0 0 auto;
+  position: relative;
+  width: 46px;
+  height: 28px;
+  border: 2px solid var(--ink);
+  border-radius: 99px;
+  background: #eadfce;
+  transition: background-color 0.15s ease;
+}
+
+.sw::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  box-sizing: border-box;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background: var(--card);
+  transition: transform 0.15s ease;
+}
+
+.sw-input:checked + .sw {
+  background: var(--lime);
+}
+
+.sw-input:checked + .sw::after {
+  transform: translateX(18px);
+}
+
+.sw-input:focus-visible + .sw {
+  outline: 3px solid var(--grape);
+  outline-offset: 2px;
+}
+
+.sw-input:disabled + .sw {
+  opacity: 0.4;
+}
+
+.switch-line:has(.sw-input:disabled) {
+  color: var(--soft);
+  cursor: not-allowed;
+}
+
+.toggles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
+  column-gap: 20px;
+}
+
+.toggles .opt-line,
+.toggles .opt-line:last-child {
+  padding: 9px 0;
+  border-bottom: 2px dashed rgba(22, 19, 16, 0.15);
+}
+
+/* Pet voice: which voice (shown while the switch is on), each with ▶ to hear it. It takes a whole row of
+   switches; the switches after it fill the row it leaves (dense). */
+.toggles {
+  grid-auto-flow: row dense;
+}
+
+.voice-pick {
+  grid-column: 1 / -1;
+  padding: 2px 0 10px;
+  border-bottom: 2px dashed rgba(22, 19, 16, 0.15);
+}
+
+.voices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.voice {
+  display: flex;
+  min-width: 0;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--card);
+}
+
+.voice.on {
+  background: var(--lime);
+  box-shadow: 2px 2px 0 var(--ink);
+}
+
+.voice-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 40px;
+  border: 0;
+  background: none;
+  padding: 6px 10px;
+  font-size: 0.92rem;
+  font-weight: 800;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.voice .hear {
+  flex: 0 0 40px;
+  border: 0;
+  border-left: 2px solid var(--ink);
+  background: var(--sky);
+  padding: 0;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.voice button:focus-visible {
+  outline: 3px solid var(--grape);
+  outline-offset: -3px;
+}
+
+.voice-pick .fine {
+  margin: 8px 0 0;
+  font-size: 0.8rem;
+}
+
+/* Small phones: room for the whole name next to ▶ */
+@media (max-width: 360px) {
+  .voice-name {
+    padding: 6px 7px;
+  }
+
+  .voice .hear {
+    flex-basis: 34px;
+  }
+}
+
+/* Extras: optional, clearly secondary. Folded on a phone (with a summary), open on a PC. */
+.extras {
+  padding: 0;
+  background: rgba(255, 255, 255, 0.6);
+  border-style: dashed;
+  box-shadow: none;
+}
+
+.extras > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.extras > summary::-webkit-details-marker {
+  display: none;
+}
+
+.extras > summary::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  margin: -5px 4px 0 0;
+  border-right: 2.5px solid var(--ink);
+  border-bottom: 2.5px solid var(--ink);
+  transform: rotate(45deg);
+}
+
+.extras[open] > summary::after {
+  margin-top: 5px;
+  transform: rotate(-135deg);
+}
+
+.extras-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.05rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.extras-sum {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--soft);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.extras[open] .extras-sum {
+  visibility: hidden;
+}
+
+.extras-body {
+  padding: 0 14px 12px;
+}
+
+/* Step 4 */
+#exportHelp:empty {
+  display: none;
+}
+
+/* The Make button stays in reach while you scroll the steps */
+.make-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  margin: -6px -18px 0;
+  padding: 16px 18px calc(12px + env(safe-area-inset-bottom));
+  background: linear-gradient(to bottom, rgba(255, 243, 220, 0), var(--paper) 16px);
+}
+
+.make-bar .note {
+  margin: 0 0 10px;
+}
+
+/* Job cards */
+.job-hint {
+  margin: 2px 0 0;
+  font-size: 0.86rem;
+  line-height: 1.3;
+}
+
+.job-actions .del {
+  margin-left: auto;
+  padding: 7px 2px;
+  border: 0;
+  background: none;
+  color: #b3261e;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+/* Player */
+.player-kind {
+  margin: 0 0 12px;
+  padding: 9px 11px;
+  border: 2px dashed var(--ink);
+  border-radius: 12px;
+  background: #fff6e0;
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.player-acts {
+  margin-top: 0;
+}
+
+.player-acts .go {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+.cap-box {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.cap-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+  color: var(--soft);
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+
+.cap-head .mini {
+  padding: 5px 12px;
+}
+
+.cap-box .caption-text {
+  font-size: 0.92rem;
+  font-weight: 600;
+  white-space: pre-line;
+}
+
+ul.tip {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+ul.tip li {
+  position: relative;
+  padding-left: 18px;
+}
+
+ul.tip li::before {
+  content: "";
+  position: absolute;
+  top: 0.5em;
+  left: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--grape);
+}
+
+/* Chrome caps modal dialogs at 100% - 2em - 6px (350px on a 390px phone): use the width set above */
+dialog {
+  max-width: calc(100vw - 24px);
+}
+
+/* Edit dialog: "fast" changes vs "new animation" */
+.kind {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 7px;
+  border: 1.5px solid var(--ink);
+  border-radius: 99px;
+  color: var(--ink);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  vertical-align: 2px;
+}
+
+.kind.fast {
+  background: var(--lime);
+}
+
+.kind.slow {
+  background: #e7dcff;
+}
+
+.edit-legend .kind {
+  margin: 0 4px 0 0;
+}
+
+.edit-legend .lg {
+  display: inline-block;
+  margin-right: 12px;
+  white-space: nowrap;
+}
+
+.edit-style {
+  margin-top: 10px;
+}
+
+.edit-foot {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin: 8px -18px -18px;
+  padding: 16px 18px 18px;
+  background: linear-gradient(to bottom, rgba(255, 243, 220, 0), var(--paper) 16px);
+}
+
+.edit-foot .note {
+  margin: 0 0 4px;
+}
+
+.edit-foot .row {
+  flex-wrap: nowrap;
+  margin-top: 6px;
+}
+
+.edit-foot .go {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+/* PC */
+@media (min-width: 960px) {
+  .jump {
+    display: none !important;
+  }
+
+  .make-bar {
+    margin: -6px 0 0;
+    padding: 16px 0 14px;
+  }
+
+  /* Your videos scroll on their own, so the newest stay next to the form */
+  main.layout .list {
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    padding: 0 8px 8px 0;
+  }
+}
+
+/* Wide PC: the four steps in two columns, your videos on the right */
+@media (min-width: 1240px) {
+  .bar,
+  main.layout,
+  .banner-wrap {
+    max-width: 1400px;
+  }
+
+  main.layout {
+    grid-template-columns: minmax(0, 2.2fr) minmax(320px, 1fr);
+    gap: 28px;
+  }
+
+  /* Steps 1–2 on the left; 3, 4 and Make it on the right; Extras across the bottom */
+  .maker {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      "a s3"
+      "a s4"
+      "a mk"
+      "ex ex";
+    column-gap: 20px;
+    align-items: start;
+  }
+
+  .maker-a {
+    display: block;
+    grid-area: a;
+  }
+
+  #step3 {
+    grid-area: s3;
+  }
+
+  #step4 {
+    grid-area: s4;
+  }
+
+  .make-bar {
+    grid-area: mk;
+    margin: -6px 0 18px;
+    padding: 0;
+    background: none;
+  }
+
+  .extras {
+    grid-area: ex;
+  }
+
+  .extras .toggles {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .extras .voices {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .extras-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 20px;
+  }
+
+  .extras-body .toggles {
+    grid-column: 1 / -1;
+  }
+
+  .extras-body > .opt-line {
+    border-bottom: 0;
+  }
+
+  /* The song list scrolls inside step 3, so Make it stays on the first screen */
+  .song-list {
+    max-height: 220px;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+}
+
+/* Narrow phones: the two tiles stack icon over text */
+@media (max-width: 520px) {
+  .tile {
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
+    min-height: 84px;
+    text-align: center;
+  }
+}
+
+.chips-wrap button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* My songs: in Music, the saved songs come first as tiles (the name picks it, ▶ hears its meme part) */
+.my-songs {
+  margin-bottom: 10px;
+}
+
+.song-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.add-song-link {
+  display: inline-block;
+  margin-top: 10px;
+  font-size: 0.95rem;
+}
+
+/* Settings: My songs (the box looks like Friends) */
+.add-song-btn {
+  position: relative;
+  display: inline-block;
+}
+
+.add-song-btn input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.songs-box .row {
+  margin-top: 12px;
+}
+
+.song-add {
+  margin-top: 12px;
+  padding: 12px;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: var(--paper);
+}
+
+.song-add-head {
+  margin: 0 0 4px;
+  font-weight: 800;
+}
+
+.song-add .part-pick {
+  background: var(--card);
+}
+
+.song-cands {
+  margin-top: 8px;
+}
+
+.song-cands button {
+  font-size: 0.8rem;
+  padding: 5px 10px;
+}
+
+.song-add .opt-line .small-input {
+  flex: 1 1 160px;
+}
+
+.song-add .row {
+  margin-top: 8px;
+}
+
+.song-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border: 2px solid var(--ink);
+  border-radius: 99px;
+  background: var(--lime);
+  font-size: 0.75rem;
+  font-weight: 800;
+  vertical-align: 1px;
+}
+
+.song-row > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* (inside the add panel the slider needs no frame of its own: more room on a phone) */
+.song-add .part-pick {
+  margin-top: 4px;
+  padding: 4px 0 0;
+  border: 0;
+  background: none;
+}
+
+/* ===================== Posting plan (v12) ===================== */
+
+/* The strip above Your videos: "📅 Next post: today 18:30 · 3 waiting" (tap: the plan in Settings) */
+.plan-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 4px;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: #e7dcff;
+}
+
+.plan-strip.ready {
+  background: var(--lime);
+  box-shadow: 3px 3px 0 var(--ink);
+}
+
+.plan-strip-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: none;
+  padding: 6px 4px 6px 8px;
+  text-align: left;
+  font-size: 0.92rem;
+  font-weight: 800;
+  line-height: 1.25;
+  cursor: pointer;
+}
+
+.plan-strip-act {
+  flex: 0 0 auto;
+  border: 2px solid var(--ink);
+  border-radius: 99px;
+  background: var(--tomato);
+  padding: 7px 13px;
+  font-size: 0.9rem;
+  font-weight: 800;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* On the video cards: + Plan, or the 📅 In plan chip (opens the Post screen) */
+.job-actions .plan-add {
+  background: #e7dcff;
+}
+
+.job-actions .plan-in {
+  border-radius: 99px;
+  background: var(--lime);
+}
+
+/* Settings: the Posting plan box (looks like My songs and Friends) */
+.plan-box .plan-on {
+  border-bottom: 0;
+}
+
+.plan-box .plan-on small {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--soft);
+}
+
+.plan-notify {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 4px 0 6px;
+  font-weight: 700;
+}
+
+.plan-notify .plain {
+  padding: 7px 12px;
+  font-size: 0.9rem;
+}
+
+.plan-times .opt-line {
+  padding: 7px 0;
+}
+
+.plan-time {
+  width: 140px;
+}
+
+.plan-box #planTz {
+  margin: 6px 0 0;
+}
+
+.tag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-width: 0;
+  border: 2px solid var(--ink);
+  border-radius: 99px;
+  background: var(--paper);
+  padding: 0 2px 0 11px;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.tag-chip > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.tag-chip button {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  background: none;
+  font-size: 0.8rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.plan-tag-add {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.plan-tag-add .small-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+
+.plan-tag-add .plain {
+  padding: 7px 14px;
+}
+
+.plan-tag-add .plain:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.plan-queue {
+  display: grid;
+  gap: 8px;
+}
+
+.plan-queue:empty {
+  display: none;
+}
+
+/* [picture] Its name
+             Today 18:30        ▲ ▼ ✕ */
+.plan-item {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  grid-template-areas: "thumb name name" "thumb when acts";
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 2px;
+  padding: 6px 6px 6px 8px;
+  border: 2px dashed var(--ink);
+  border-radius: 12px;
+  background: var(--paper);
+}
+
+.plan-item.ready {
+  border-style: solid;
+  background: #eaffc2;
+}
+
+.plan-thumb {
+  grid-area: thumb;
+  align-self: center;
+  width: 38px;
+  aspect-ratio: 9 / 16;
+  border: 2px solid var(--ink);
+  border-radius: 7px;
+  overflow: hidden;
+  padding: 0;
+  background: repeating-linear-gradient(-45deg, #ffe2a8 0 6px, #ffd27a 6px 12px);
+  cursor: pointer;
+}
+
+.plan-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.plan-name {
+  grid-area: name;
+  min-width: 0;
+  border: 0;
+  background: none;
+  padding: 2px 0 0;
+  overflow: hidden;
+  font-weight: 800;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.plan-when {
+  grid-area: when;
+  min-width: 0;
+  color: var(--soft);
+  font-size: 0.84rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.plan-item.ready .plan-when {
+  color: var(--ink);
+}
+
+.plan-acts {
+  grid-area: acts;
+  display: flex;
+  gap: 4px;
+}
+
+.plan-acts button {
+  width: 38px;
+  height: 38px;
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  background: var(--card);
+  padding: 0;
+  font-size: 0.85rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.plan-acts button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.plan-acts .del {
+  margin-left: 4px;
+  color: #b3261e;
+}
+
+.plan-box #planUntil {
+  margin: 8px 0 0;
+}
+
+.plan-missed {
+  margin: 10px 0 0;
+  background: #fff6e0;
+  font-weight: 700;
+}
+
+.plan-done {
+  margin-top: 10px;
+}
+
+.plan-box .plan-done-item {
+  margin: 0 0 2px;
+  overflow: hidden;
+  color: var(--soft);
+  font-size: 0.86rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-box .plan-done-item.posted {
+  color: var(--ink);
+}
+
+/* The Post screen: the video, the caption, and three big numbered steps */
+.post .sheet-body h2 {
+  margin-bottom: 2px;
+}
+
+.post-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.post-media {
+  margin: 0 0 12px;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #000;
+}
+
+.post-media video {
+  display: block;
+  width: 100%;
+  max-height: 34vh;
+  background: #000;
+}
+
+.post-wait {
+  margin: 0;
+  padding: 34px 16px;
+  color: #fff;
+  font-weight: 800;
+  text-align: center;
+}
+
+.post-wait::before {
+  content: "";
+  display: block;
+  width: 26px;
+  height: 26px;
+  margin: 0 auto 10px;
+  border: 3px solid #fff;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.post-song {
+  margin-bottom: 8px;
+  padding-top: 0;
+}
+
+.post-cap .cap-head {
+  margin-bottom: 4px;
+}
+
+.post-cap .link-btn {
+  padding: 0 2px;
+  font-size: 0.85rem;
+}
+
+.post-cap .idea {
+  font-size: 15px;
+}
+
+.post-btn {
+  margin-top: 10px;
+  padding: 14px 16px;
+  font-size: 1.15rem;
+  text-align: left;
+  text-decoration: none;
+}
+
+#postCopy {
+  background: var(--sky);
+}
+
+#postDone {
+  background: var(--lime);
+}
+
+#postDone.next {
+  outline: 3px solid var(--grape);
+  outline-offset: 2px;
+}
+
+a.post-btn.off {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.post-alt {
+  margin: 6px 0 0;
+  text-align: right;
+}
+
+.post-alt .link-btn {
+  font-size: 0.88rem;
+}
+
+.post-check {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 2px dashed var(--ink);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.sheet-body .post-check-head {
+  margin: 0 0 4px;
+  font-weight: 800;
+}
+
+.post-check ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 1.2em;
+  font-size: 0.95rem;
+}
+
+.post-check li {
+  overflow-wrap: anywhere;
+}
+
+.post-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px 14px;
+  margin: 14px 0 0;
+}
+
+.post-links .link-btn {
+  font-size: 0.92rem;
+}
+
+/* A computer: the video next to the steps */
+@media (min-width: 760px) {
+  dialog.post {
+    width: min(780px, calc(100vw - 48px));
+  }
+
+  .post-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr);
+    gap: 20px;
+    align-items: start;
+  }
+
+  .post-media video {
+    max-height: 68vh;
+  }
+}
+
+.post h2:focus {
+  outline: none;
+}
+
+.sheet-body .post-cut-note {
+  margin: 0 0 6px;
+  font-weight: 700;
+}

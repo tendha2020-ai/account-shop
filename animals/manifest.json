@@ -1,0 +1,19 @@
+{
+  "id": "tendha2-antics",
+  "name": "TENDHA2 antics",
+  "short_name": "antics",
+  "description": "Turn animal videos into funny clips of animals acting like humans.",
+  "lang": "en",
+  "start_url": "index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#fff3dc",
+  "theme_color": "#fff3dc",
+  "icons": [
+    { "src": "brand/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "brand/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "brand/icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "brand/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
