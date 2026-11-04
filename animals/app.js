@@ -483,7 +483,22 @@ async function setupWorker() {
     // is deleted, and its keys, connections and videos stay. The worker is made again from scratch only
     // when its own Hugging Face key stopped working, or when the page doesn't know its connection key.
     // Videos live in the dataset and are kept either way.
+    // Every worker file is read first, so a file the site can't serve stops the setup before anything
+    // on Hugging Face is touched.
+    const summary = updating ? 'Update the Animal Antics worker' : 'Set up the Animal Antics worker';
+    const lines = [{ key: 'header', value: { summary, description: '' } }];
+    for (const name of WORKER_FILES) {
+      const res = await fetch(`worker/${name}`, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Could not read worker/${name} (${res.status}). Nothing was changed. Try again in a few minutes.`);
+      lines.push({ key: 'file', value: { content: base64(await res.text()), path: name, encoding: 'base64' } });
+    }
     const existing = await hf(`/api/spaces/${space}`, token);
+    // A device that isn't connected doesn't know the worker's connection key, so setting up here makes the
+    // worker again. Videos, songs and friends are kept (they live in the dataset), but other devices then
+    // need the new app link: say so first.
+    if (existing.ok && !updating && !confirm(`You already have a worker (${space}). Setting it up again here makes it new: your videos, songs and friends stay, but your other phones and computers will need the new app link afterwards.\n\nTip: on a device that already works, tap Settings, Copy app link, and open that link here instead.\n\nSet it up again?`)) {
+      throw new Error('Nothing was changed. On a device that already works, tap Settings, Copy app link, and open that link here.');
+    }
     const inPlace = existing.ok && updating && !keyBroken();
     const key = updating ? state.worker.key : randomKey();
     if (!inPlace) {
@@ -514,13 +529,6 @@ async function setupWorker() {
       if (!created.ok) throw new Error(await hfError(created));
     }
 
-    const summary = updating ? 'Update the Animal Antics worker' : 'Set up the Animal Antics worker';
-    const lines = [{ key: 'header', value: { summary, description: '' } }];
-    for (const name of WORKER_FILES) {
-      const res = await fetch(`worker/${name}`, { cache: 'no-store' });
-      if (!res.ok) throw new Error(`Could not read worker/${name} (${res.status})`);
-      lines.push({ key: 'file', value: { content: base64(await res.text()), path: name, encoding: 'base64' } });
-    }
     const commit = await hf(`/api/spaces/${space}/commit/main`, token, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-ndjson' },
