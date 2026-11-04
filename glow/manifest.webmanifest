@@ -1,0 +1,15 @@
+{
+  "name": "Glow Studio",
+  "short_name": "Glow",
+  "description": "Turn photos into beat-synced videos with built-in templates and original music. On-device, no watermark.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#07060d",
+  "theme_color": "#08060f",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
