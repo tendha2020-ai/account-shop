@@ -1524,7 +1524,8 @@ def call_engine(eid, picture, audio, prompt, seed, seconds, out):
 
 
 def pc_can_sing():
-    return W.pc_online() and 'sing' in (W.pc.get('can') or ())
+    # (W is None only before the worker binds this module: /health may be asked then, as by the guard's tests)
+    return W is not None and W.pc_online() and 'sing' in (W.pc.get('can') or ())
 
 
 def pc_share_waits(job, shot):
