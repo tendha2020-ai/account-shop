@@ -564,8 +564,14 @@
   el.btnPlay.addEventListener('click', togglePlay);
   el.bigPlay.addEventListener('click', play);
   el.pv.addEventListener('click', function () { if (el.screen.dataset.state === 'ready') togglePlay(); });
+  // AI Scenes (ai.js) shares this page; Photo Video stays quiet while the other mode is on screen.
+  function otherMode() { return document.body.getAttribute('data-mode') === 'ai'; }
+  document.addEventListener('glow:mode', function (e) {
+    if (e.detail && e.detail.mode !== 'photo') { pause(); stopTrackPreview(); }
+  });
   document.addEventListener('keydown', function (e) {
     if (e.code !== 'Space' && e.key !== ' ') return;
+    if (otherMode()) return;
     var a = document.activeElement;
     if (a && a !== document.body) return;
     if (!el.exModal.hidden || !el.resModal.hidden) return;
@@ -1284,7 +1290,7 @@
 
   // drag & drop (desktop)
   var dragDepth = 0;
-  function hasFiles(e) { var dt = e.dataTransfer; return !!dt && Array.prototype.indexOf.call(dt.types || [], 'Files') >= 0; }
+  function hasFiles(e) { if (otherMode()) return false; var dt = e.dataTransfer; return !!dt && Array.prototype.indexOf.call(dt.types || [], 'Files') >= 0; }
   document.addEventListener('dragenter', function (e) { if (!hasFiles(e) || S.exporting) return; e.preventDefault(); dragDepth++; document.body.classList.add('dragging'); });
   document.addEventListener('dragover', function (e) { if (!hasFiles(e)) return; e.preventDefault(); try { e.dataTransfer.dropEffect = 'copy'; } catch (x) { /* ignore */ } });
   document.addEventListener('dragleave', function (e) { if (!hasFiles(e)) return; dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) document.body.classList.remove('dragging'); });
@@ -1312,6 +1318,7 @@
    * ------------------------------------------------------------------ */
   window.GlowApp = {
     lastResult: null,
+    util: { pickMime: pickMime, fixWebmDuration: fixWebmDuration },
     get state() {
       return {
         photos: S.photos.length, templateId: S.templateId, trackId: S.trackId, aspect: S.aspect, quality: S.quality,
