@@ -2540,3 +2540,643 @@ a.post-btn.off {
   margin: 0 0 6px;
   font-weight: 700;
 }
+
+
+/* ===================== Together (v13): several animals in one video (together.js) ===================== */
+
+/* Ideas to try: one row of small cards that scrolls sideways inside itself */
+.ideas-box {
+  margin: 0 0 18px;
+}
+
+.ideas-title {
+  margin: 0 0 8px;
+  font-size: 1.05rem;
+  letter-spacing: -0.01em;
+}
+
+.idea-cards {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  padding: 2px 4px 10px 2px;
+  scrollbar-width: thin;
+}
+
+.idea-card {
+  flex: 0 0 auto;
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  gap: 2px;
+  width: 132px;
+  min-height: 92px;
+  padding: 8px 10px;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: 2px 2px 0 var(--ink);
+  text-align: left;
+  cursor: pointer;
+  scroll-snap-align: start;
+}
+
+.idea-card.together {
+  background: #f1eaff;
+}
+
+.idea-card[aria-pressed="true"] {
+  background: var(--lime);
+}
+
+.idea-emoji {
+  font-size: 1.3rem;
+  line-height: 1.1;
+}
+
+.idea-name {
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.idea-card small {
+  color: var(--soft);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.recipe-line {
+  margin: 4px 0 0;
+}
+
+/* Step 1: One animal | Together */
+.mode-seg {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin: 0 0 12px;
+  border: 2.5px solid var(--ink);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--card);
+}
+
+.mode-seg button {
+  display: grid;
+  place-items: center;
+  min-height: 48px;
+  padding: 8px 6px;
+  border: 0;
+  background: var(--card);
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1.15;
+  cursor: pointer;
+}
+
+.mode-seg button + button {
+  border-left: 2.5px solid var(--ink);
+}
+
+.mode-seg button[aria-pressed="true"] {
+  background: var(--lime);
+}
+
+.mode-seg small {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #b3261e;
+}
+
+/* Step 1 in Together: the animals, in order (the first one is the star) */
+.cast-update {
+  margin: 0 0 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.cast {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.slot {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-width: 0;
+}
+
+.slot-pic {
+  position: relative;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  aspect-ratio: 3 / 4;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  overflow: hidden;
+  background: repeating-linear-gradient(-45deg, #ffe2a8 0 10px, #ffd27a 10px 20px);
+}
+
+.slot-pic img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.slot.from-link .slot-pic {
+  background: var(--sky);
+}
+
+.slot.from-surprise .slot-pic {
+  background: #e7dcff;
+}
+
+.slot-icon {
+  font-size: 1.8rem;
+  line-height: 1;
+}
+
+.slot-what {
+  max-width: 100%;
+  padding: 2px 6px 0;
+  font-size: 0.8rem;
+  font-weight: 800;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.slot-num {
+  position: absolute;
+  left: 5px;
+  top: 5px;
+  min-width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0 6px;
+  border-radius: 99px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+/* Who it is in the scene (the first one is the star): Driver, Passenger, Red corner... */
+.slot-role {
+  min-height: 1.1em;
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.1;
+  text-align: center;
+  color: var(--grape);
+  overflow-wrap: anywhere;
+}
+
+.slot-x {
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background: var(--card);
+  font-size: 0.85rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.slot-busy {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 4px;
+  background: rgba(22, 19, 16, 0.75);
+  color: var(--paper);
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.slot.busy .slot-pic {
+  animation: slide 1s linear infinite;
+  background-size: 28px 28px;
+}
+
+.slot-animal {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  padding: 4px 6px;
+  border: 2px solid var(--ink);
+  border-radius: 99px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 800;
+  text-align: center;
+  cursor: pointer;
+}
+
+.slot-name {
+  justify-self: center;
+  padding: 0 2px;
+  font-size: 0.8rem;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slot-add {
+  cursor: pointer;
+}
+
+.slot-add .slot-pic {
+  background: var(--paper);
+  border-style: dashed;
+}
+
+.slot-plus {
+  font-size: 2rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.cast-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin-top: 10px;
+}
+
+.cast-tools .plain {
+  padding: 7px 12px;
+  font-size: 0.9rem;
+}
+
+.cast-tools .fine {
+  margin: 0;
+}
+
+.step .alt.cast-add {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 12px;
+}
+
+.cast-add .tile {
+  min-height: 58px;
+}
+
+.cast-add .tile.lib {
+  background: #eaffc2;
+}
+
+.cast-add .tile.off,
+.cast-add .tile:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.cast-link {
+  margin-top: 10px;
+}
+
+.cast-rule {
+  font-weight: 600;
+}
+
+/* Step 2 in Together: scene cards (greyed when they aren't for this many animals) */
+.scene-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.scene-card {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 2px;
+  min-width: 0;
+  min-height: 76px;
+  padding: 8px 4px;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: var(--card);
+  font-weight: 800;
+  line-height: 1.15;
+  text-align: center;
+  cursor: pointer;
+}
+
+.scene-card[aria-pressed="true"] {
+  background: var(--lime);
+  box-shadow: 2px 2px 0 var(--ink);
+}
+
+.scene-card:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.scene-emoji {
+  font-size: 1.6rem;
+  line-height: 1.1;
+}
+
+.scene-name {
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.scene-card small {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--soft);
+}
+
+.scene-card small:empty {
+  display: none;
+}
+
+.scene-note {
+  margin: 0 0 10px !important;
+  font-weight: 700;
+}
+
+.scene-note.bad {
+  padding: 8px 10px;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: #ffd9cf;
+  color: var(--ink);
+}
+
+/* Step 4 in Together: the Look (the line under it says what it costs) */
+.look-line {
+  padding: 4px 0 10px;
+  border-bottom: 2px dashed rgba(22, 19, 16, 0.15);
+}
+
+.look-label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 700;
+}
+
+.look-seg {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.look-seg button {
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  min-width: 0;
+  min-height: 58px;
+  padding: 7px 5px;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: var(--card);
+  line-height: 1.15;
+  text-align: center;
+  cursor: pointer;
+}
+
+.look-seg button[aria-pressed="true"] {
+  background: var(--tomato);
+  box-shadow: 2px 2px 0 var(--ink);
+}
+
+.look-seg b {
+  font-size: 0.88rem;
+  overflow-wrap: anywhere;
+}
+
+.look-seg small {
+  font-size: 0.72rem;
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+.look-seg .nowrap {
+  white-space: nowrap;
+}
+
+/* The job card: Together's tag, and the picture check */
+.chip.together {
+  background: #e7dcff;
+}
+
+.job.checking .thumb {
+  cursor: pointer;
+  outline: 3px solid var(--lime);
+  outline-offset: 1px;
+}
+
+.play.look span {
+  font-size: 1rem;
+}
+
+/* The player during the picture check: the picture instead of the video */
+.player-picture {
+  display: block;
+  width: 100%;
+  max-height: 62vh;
+  object-fit: contain;
+  background: #000;
+  border-bottom: var(--line);
+}
+
+.player-check {
+  margin: 0 0 4px;
+}
+
+.player-check .go {
+  flex: 1 1 100%;
+  width: auto;
+}
+
+.player-check .plain {
+  flex: 1 1 auto;
+}
+
+/* Free clips */
+.lib-filters {
+  margin: 4px 0 12px;
+}
+
+.lib-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.lib-clip {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+  padding: 6px 6px 8px;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: var(--card);
+  text-align: left;
+  cursor: pointer;
+}
+
+.lib-clip[aria-pressed="true"] {
+  background: var(--lime);
+  box-shadow: 2px 2px 0 var(--ink);
+}
+
+.lib-pic {
+  position: relative;
+  display: block;
+  aspect-ratio: 16 / 10;
+  border: 2px solid var(--ink);
+  border-radius: 8px;
+  overflow: hidden;
+  background: repeating-linear-gradient(-45deg, #ffe2a8 0 10px, #ffd27a 10px 20px);
+}
+
+.lib-pic img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.lib-tick {
+  position: absolute;
+  right: 5px;
+  top: 5px;
+  display: none;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background: var(--lime);
+  font-weight: 800;
+}
+
+.lib-clip[aria-pressed="true"] .lib-tick {
+  display: grid;
+}
+
+.lib-name {
+  font-size: 0.86rem;
+  font-weight: 800;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.lib-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--soft);
+}
+
+.lib-lic {
+  padding: 0 6px;
+  border: 1.5px solid var(--ink);
+  border-radius: 99px;
+  background: var(--card);
+  color: var(--ink);
+}
+
+.lib-foot {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px -18px -18px;
+  padding: 14px 18px 18px;
+  background: linear-gradient(to bottom, rgba(255, 243, 220, 0), var(--paper) 14px);
+}
+
+.lib-foot .go {
+  width: auto;
+  flex: 0 0 auto;
+  min-width: 120px;
+}
+
+/* The editor's Scene and look box */
+.edit-together .sub-label {
+  margin: 14px 0 6px;
+  font-weight: 800;
+}
+
+.edit-cast-tools {
+  margin-top: 10px;
+}
+
+.edit-cast-tools .plain[aria-pressed="true"] {
+  background: var(--grape);
+  color: #fff;
+}
+
+.edit-cast {
+  display: grid;
+  gap: 6px;
+}
+
+.edit-cast-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 170px);
+  align-items: center;
+  gap: 4px 10px;
+  font-weight: 700;
+}
+
+.edit-cast-row .small-input {
+  width: 100%;
+  min-width: 0;
+}
+
+/* PC: 4 animals and 4 scene cards a row, 3 free clips a row */
+@media (min-width: 960px) {
+  .cast,
+  .scene-cards {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .lib-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .library {
+    width: min(720px, calc(100vw - 24px));
+  }
+}
+
+@media (max-width: 360px) {
+  .cast {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

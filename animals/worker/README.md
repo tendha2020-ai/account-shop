@@ -34,10 +34,23 @@ ZeroGPU use past the daily free time is billed to pre-paid credits by itself, so
 (one at a time) the worker reads your quota (`/api/spaces/zero-gpu/quota`, with your own key). A call goes only if
 what is left covers what the Space books for that picture plus 30 s. If paid seconds ever show up, all AI work stops
 until you tap Resume in Settings; the stop is kept in `gpu.json` in the same private dataset, with a note of the call
-running right now (a worker restarted mid-call waits for it). A call that takes too long is cancelled, never left
-running. If your key can't read the quota and your account could be charged (PRO, Team, Enterprise), the worker makes
-no AI calls until it can, and Settings says so; a free account goes on with an estimate.
+running right now (a worker restarted mid-call waits for it). A call that takes too long, or fails in a way that
+may leave it running in the Space (a slow answer, a proxy error page), is cancelled and stays counted for 30 min, so
+the next engine never runs next to it uncounted. If your key can't read the quota and your account could be charged
+(PRO, Team, Enterprise), the worker makes no AI calls until it can, and Settings says so; a free account goes on with
+an estimate.
 
 If one of these files (`guests.json`, `push.json`, `songs.json`, `posting.json`, `gpu.json`, or a video's `job.json`) can't be
 read from the Hub when the worker starts, it is never saved over, and the worker reads it again every minute.
 Meanwhile the friends, notifications, songs or plan answer "still loading" (503), and that video doesn't show yet.
+
+Together videos (together.py): 2-4 animals in one video. Their pictures are put into one start picture by a free
+composer Space (FLUX 3 Image Klein, FLUX Kommunity License: free for creators under US$5M revenue when each picture
+is checked before posting and the video is labelled as AI; else FLUX.2 klein 4B, Apache-2.0), then animated as usual.
+The composer is a ZeroGPU call like the clips, so it goes through the GPU guard too, booked at what that Space
+books for those pictures; when the free time is used up the video waits, and its card offers the free look now.
+The free looks (side by side, VS screen, grid, quick cuts) are made on this Space's CPU from the real clips. The free
+clip library (library.json) lists only CC0, public domain and CC BY clips; their credit lines go in the caption
+("Clip (edited): ..." for CC BY, as the licence asks).
+A Together video in the posting plan carries its clips' credit lines in its caption too (also when the owner
+writes their own), and #aivideo only when AI made any of it.
