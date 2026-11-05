@@ -7,6 +7,9 @@ RUN apt-get update \
 RUN useradd -m -u 1000 user
 USER user
 ENV HOME=/home/user PATH=/home/user/.local/bin:$PATH PYTHONUNBUFFERED=1
+# (made by the user itself, so the app folder is the user's with any builder: the classic builder makes a WORKDIR
+# as root, and then the steps below couldn't write their files into it)
+RUN mkdir -p /home/user/app
 WORKDIR /home/user/app
 
 COPY --chown=user requirements.txt .
@@ -56,10 +59,11 @@ RUN mkdir -p /home/user/.cache/antics-models && cd /home/user/.cache/antics-mode
 # 913 MB checkpoint downloads on first use. Without it, songs keep the quick split. audio-separator needs diffq,
 # which has no wheel: built with g++, which goes again in the same step (as for pyworld). torch and torchvision are
 # the CPU builds, pinned to each other (no resolver backtracking). [cpu] names onnxruntime, which its Separator
-# imports (faster-whisper brought it already: the same version is kept).
+# imports (faster-whisper brought it already: the same version is kept); audioread too (audio-separator imports it,
+# and librosa 1.0 no longer brings it).
 USER root
 RUN (apt-get update && apt-get install -y --no-install-recommends g++ \
-     && su user -c 'timeout 2400 pip install --no-cache-dir --user -c /tmp/worker-packages.txt --extra-index-url https://download.pytorch.org/whl/cpu "torch==2.5.1+cpu" "torchvision==0.20.1+cpu" "audio-separator[cpu]==0.48.0"'; \
+     && su user -c 'timeout 2400 pip install --no-cache-dir --user -c /tmp/worker-packages.txt --extra-index-url https://download.pytorch.org/whl/cpu "torch==2.5.1+cpu" "torchvision==0.20.1+cpu" "audio-separator[cpu]==0.48.0" audioread==3.1.0'; \
      apt-get purge -y g++ && apt-get autoremove -y; rm -rf /var/lib/apt/lists/*) || true
 USER user
 COPY --chown=user . .
