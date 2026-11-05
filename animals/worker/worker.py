@@ -31,6 +31,8 @@
 # if Hugging Face ever bills credits (PRO accounts go past the free time on pre-paid credits by themselves).
 # Sing (sing.py, sing_audio.py): 1-2 animals sing a song from My songs, mouth and body moving with the singing, in
 # sharp stage shots cut like a music video, each in its own voice; long songs as TikTok parts of 59 s or less.
+# (Access) Ask for access (access.py): a stranger who opens the page asks the owner for access with their name; the
+# owner gets a notification and taps Approve (5, 6 or 10 videos) or Deny; Approve makes them a friend.
 
 import collections
 import copy
@@ -103,8 +105,13 @@ try:  # (Sing) animals singing a song; if its files or their packages are missin
 except Exception as e:
     logging.getLogger('antics').warning('no Sing videos: %s', e)
     sing = None
+try:  # (Access) strangers ask the owner for access; if its file is missing or broken, the worker runs without it
+    import access  # (the page then says "Ask TENDHA2 for an invite link")
+except Exception as e:
+    logging.getLogger('antics').warning('no Ask for access: %s', e)
+    access = None
 
-VERSION = '14'  # (Sing)
+VERSION = '15'  # (Access)
 HF_TOKEN = os.environ.get('HF_TOKEN') or None
 ANTICS_KEY = os.environ.get('ANTICS_KEY', '')
 DATASET = os.environ.get('ANTICS_DATASET', '')
@@ -655,6 +662,8 @@ def load_jobs():
             loaders['posting.json'] = load_plan
         if sing:  # (Sing) its share of the day, the engines' test results, the PC's measurements
             loaders[sing.SETTINGS_FILE] = sing.load_settings
+        if access:  # (Access) the requests for access
+            loaders[access.FILE] = access.load
         for name in names:
             if name in loaders:
                 read_hub(name, loaders[name])
@@ -674,6 +683,8 @@ def load_jobs():
             load_plan((DATA / 'posting.json').read_text())
         if (DATA / 'gpu.json').exists():
             gpu.load((DATA / 'gpu.json').read_text())
+        if access and (DATA / access.FILE).exists():  # (Access)
+            access.load((DATA / access.FILE).read_text())
     have = set(names) if names is not None else None
     for job in jobs.values():  # (a TikTok cut that is gone, e.g. deleted after it was posted: cut again if needed)
         if job.get('tiktok_rev') is None:
@@ -2391,7 +2402,7 @@ def scheduler_loop():
     failed. None can stop the others, or the loop."""
     while True:
         time.sleep(SCHEDULER_EVERY)
-        for step in (read_again, wake_waiting, posting_tick, gpu.flush):
+        for step in (read_again, wake_waiting, posting_tick, gpu.flush) + ((access.tick,) if access else ()):  # (Access)
             try:
                 step()
             except Exception as e:
@@ -2553,12 +2564,14 @@ def features():
     order/names). library: the free clip library (library.json, by id in a Together video's cast).
     (Sing) sing: Sing videos (mode 'sing' of POST /jobs, /songs/{id}/sing, /songs/{id}/voice, /gpu, /settings,
     /jobs/{id}/test, /jobs/{id}/shots/{k}/redo), only when sing.py, sing_audio.py and a voice/music split import
-    here; sing_duet: two singers; sing_best: the best split (RoFormer); gpu_guard: the free-for-sure GPU guard."""
+    here; sing_duet: two singers; sing_best: the best split (RoFormer); gpu_guard: the free-for-sure GPU guard.
+    (Access) access: Ask for access (POST /access/request, GET /access/status: public; GET /access/requests,
+    POST /access/requests/{id}: the owner's Approve / Deny), only when access.py imports here."""
     return (['chain'] + (['meme'] if meme and sfx else []) + ['opening', 'outro']
             + (['voice'] if pet_voice and pet_voice.ready() else []) + (['push'] if webpush else []) + ['songs']
             + (['plan'] if posting else []) + ['gpu']
             + (['together'] if together else []) + (['library'] if together and together.load_library() else [])
-            + (sing.features() if sing else []))
+            + (sing.features() if sing else []) + (['access'] if access else []))
 
 
 @app.get('/health')
@@ -3275,16 +3288,21 @@ def list_guests(x_antics_key: str = Header(None)):
         return {'guests': sorted((guest_view(g) for g in guests.values()), key=lambda g: g['created'])}
 
 
-@app.post('/guests')
-def add_guest(name: str = Form(''), uses: int = Form(5), host: str = Form(''), x_antics_key: str = Header(None)):
-    check(x_antics_key)
-    need_read('guests.json', 'Your friends list is')
+def make_guest(name, uses, host):
+    """A new friend with their own invite key and `uses` videos, saved. (Access) Also a stranger the owner let in."""
     guest = {'id': secrets.token_hex(4), 'name': clean_name(name) or 'Friend', 'key': secrets.token_hex(16),
              'uses_left': max(1, min(100, uses)), 'used': 0, 'created': time.time(), 'host': clean_name(host)}
     with guests_lock:
         guests[guest['id']] = guest
     save_guests()
-    return guest_view(guest)
+    return guest
+
+
+@app.post('/guests')
+def add_guest(name: str = Form(''), uses: int = Form(5), host: str = Form(''), x_antics_key: str = Header(None)):
+    check(x_antics_key)
+    need_read('guests.json', 'Your friends list is')
+    return guest_view(make_guest(name, uses, host))
 
 
 @app.post('/guests/{guest_id}')
@@ -3311,7 +3329,12 @@ def remove_guest(guest_id: str, x_antics_key: str = Header(None)):
         dropped = push['subs'].pop(guest_id, None)
     if dropped is not None:
         save_push()
-    return {'ok': True}
+    return {'ok': True}  # (Access) a request that made this friend then answers 'unknown': its invite is gone
+
+
+if access:  # (Access) Ask for access: its routes (access.py), bound to this worker's friends, notifications and storage
+    access.attach(THIS)
+    app.include_router(access.router)
 
 
 # ---------- My songs ----------

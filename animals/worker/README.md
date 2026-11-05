@@ -40,9 +40,21 @@ the next engine never runs next to it uncounted. If your key can't read the quot
 (PRO, Team, Enterprise), the worker makes no AI calls until it can, and Settings says so; a free account goes on with
 an estimate.
 
-If one of these files (`guests.json`, `push.json`, `songs.json`, `posting.json`, `gpu.json`, or a video's `job.json`) can't be
+If one of these files (`guests.json`, `push.json`, `songs.json`, `posting.json`, `gpu.json`, `access.json`, or a video's `job.json`) can't be
 read from the Hub when the worker starts, it is never saved over, and the worker reads it again every minute.
-Meanwhile the friends, notifications, songs or plan answer "still loading" (503), and that video doesn't show yet.
+Meanwhile the friends, notifications, songs, plan or access requests answer "still loading" (503), and that video doesn't show yet.
+
+Ask for access (access.py): antics is the owner's private tool. A stranger who opens the page can only ask for access
+with their name and a short note (`POST /access/request`, only from antics' own page when a browser sends it). Limits:
+3 a day from one place (counted by the first and by the last public X-Forwarded-For address, IPv6 by its /48), 10 new
+requests a day in all, 20 waiting in all; each refusal says why. The owner gets a notification (at most one every 10
+minutes: requests that come meanwhile are sent together) and taps Approve (5, 6 or 10 videos: they become a friend, on
+the owner's free AI time only), Deny, or "Say no to all". The same person asking again from the same place with the same
+name is the same request; a request named like one of the friends can be let in as that friend again. The requests are
+kept in `access.json` in the same private dataset: the name, the note, the time, the answer, the sha256 of the
+requester's secret token(s), and a salted hash of where the request came from (never the address; kept only a day, or
+until a waiting request is dropped). A waiting request is dropped after 3 days, a decided one after 14 days (an approved
+one stays while its friend does). The Space's log never shows a token, a key or a visitor's address.
 
 Together videos (together.py): 2-4 animals in one video. Their pictures are put into one start picture by a free
 composer Space (FLUX 3 Image Klein, FLUX Kommunity License: free for creators under US$5M revenue when each picture

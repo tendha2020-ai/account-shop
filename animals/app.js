@@ -8,8 +8,9 @@ const DATASET_NAME = 'antics-videos';
 const WORKER_FILES = ['Dockerfile', 'README.md', 'requirements.txt', 'worker.py', 'ideas.py', 'beats.py', 'meme.py', 'sfx.py',
   'voice.py', 'webpush.py', 'chorus.py', 'posting.py', 'gpu.py',
   'together.py', 'library.json', // Together (v13): several animals in one video, and the free clips
-  'sing.py', 'sing_audio.py']; // (Sing) v14: animals sing a song (the song's voice and music, the lip-sync AIs)
-const WORKER_VERSION = '14'; // bump with VERSION in worker/worker.py
+  'sing.py', 'sing_audio.py', // (Sing) v14: animals sing a song (its voice and music, the lip-sync AIs)
+  'access.py']; // (Access) v15: strangers ask for access on the locked screen, the owner lets them in
+const WORKER_VERSION = '15'; // bump with VERSION in worker/worker.py
 const KEYS = {
   worker: 'antics.worker', clips: 'antics.clips', captions: 'antics.captions', style: 'antics.style', music: 'antics.music',
   track: 'antics.track', part: 'antics.part', seconds: 'antics.seconds', speed: 'antics.speed', animal: 'antics.animal',
@@ -336,6 +337,7 @@ function renderConnect() {
   const show = standalone() && !state.worker;
   $('#connectBox').hidden = !show;
   if (!show) note($('#connectNote'), '');
+  if (window.Access) Access.render(); // (Access) the locked screen on a device that isn't connected (access.js)
 }
 
 // quiet: typing or pasting into the box connects as soon as a whole link is in; only Connect explains.
@@ -344,7 +346,8 @@ function connectWith(text, quiet = false) {
   if (!link || !link.worker) {
     if (!quiet) {
       note($('#connectNote'), link ? 'That link is broken. Copy it again.'
-        : "That isn't an antics link. In your browser: open antics, tap ⚙, then Copy app link.", 'bad');
+        : (window.Access && Access.badLinkText()) // (Access) the locked screen has no ⚙ to tap
+          || "That isn't an antics link. In your browser: open antics, tap ⚙, then Copy app link.", 'bad');
     }
     return;
   }
@@ -364,8 +367,9 @@ function askForLink() {
   box.classList.add('nudge');
 }
 
-function leaveInvite() {
-  if (!confirm('Leave this invite? Your videos stay. Open the invite link again to come back.')) return;
+async function leaveInvite() {
+  const ask = window.Access ? await Access.leaveQuestion() : ''; // (Access) a let-in friend's link is copied first
+  if (!confirm(ask || 'Leave this invite? Your videos stay. Open the invite link again to come back.')) return;
   if (pings.on) turnOffPings(state.worker); // this phone stops getting that worker's notifications
   const backup = load(KEYS.ownerBackup, null);
   state.worker = backup;
@@ -1474,6 +1478,7 @@ async function refreshJobs() {
     renderWorkerDot(false);
     $('#wakeNote').hidden = false;
     if (isGuest() && e.status === 401) {
+      if (window.Access && Access.inviteEnded()) return; // (Access) TENDHA2 removed this friend: the locked screen again
       $('#wakeNote').textContent = `This invite doesn't work anymore. Ask ${hostName()} for a new link.`;
       schedulePoll(120000);
       return;
@@ -2973,6 +2978,7 @@ async function startApp() {
       if (msg.type === 'antics-ready') { // (a video is ready, or it's time to post one)
         refreshJobs();
         loadPlan();
+        if (window.Access) Access.pinged(); // (Access) or someone asked for access
       }
       if (msg.type === 'antics-open') openFromLink(msg.url);
     });
@@ -3229,6 +3235,7 @@ function chime() {
 // index.html#post=<plan item> (the Post screen) or index.html#plan (the posting plan): they open once the plan is in.
 function openFromLink(url, refresh = true) {
   const text = String(url || '');
+  if (window.Access && Access.fromLink(text)) return; // (Access) '#access' (a request's notification): the Requests box
   const toPost = text.match(/#post=([\w-]+)/);
   if (toPost || /#plan$/.test(text)) {
     if (toPost) state.openPost = toPost[1];
@@ -3269,6 +3276,7 @@ function openSettings() {
   note($('#setupNote'), state.pending ? 'One quick setup first, then your video starts by itself.' : '');
   openDialog($('#settings'));
   if (state.worker && !isGuest()) loadFriends();
+  if (window.Access) Access.settingsOpened(); // (Access) the owner's Requests box (in Friends)
   if (state.worker && !isGuest() && canDo('songs')) loadSongs();
   if (canPlan()) {
     syncPlanTz(); // (the times are for where this phone is)
@@ -4383,6 +4391,7 @@ async function refreshHealth() {
   renderPings();
   syncPings();
   if (window.Sing) Sing.healthChanged(); // (Sing) the singing AIs' test results, the song's state
+  if (window.Access) Access.healthChanged(); // (Access) the owner's requests now and then, the gear's badge
 }
 
 // The GPU guard (workers with 'gpu', owner only): the free AI time left today in Settings, and a red banner with

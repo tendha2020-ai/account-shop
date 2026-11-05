@@ -3595,3 +3595,296 @@ a.post-btn.off {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* (Access) The locked screen: a device that isn't connected sees only this (access.js). index.html marks it
+   (html.locked) before anything shows; the app's header, banners and steps are not shown behind it. */
+#lockScreen {
+  display: none;
+}
+
+html.locked #lockScreen {
+  display: block;
+}
+
+html.locked body > .bar,
+html.locked body > .banner-wrap,
+html.locked body > main {
+  display: none !important;
+}
+
+.lock {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: calc(26px + env(safe-area-inset-top)) 18px calc(40px + env(safe-area-inset-bottom));
+}
+
+.lock-card {
+  background: var(--card);
+  border: var(--line);
+  border-radius: var(--round);
+  box-shadow: var(--pop);
+  padding: 24px 18px 18px;
+  text-align: center;
+}
+
+.lock-avatar {
+  display: block;
+  width: 104px;
+  height: 104px;
+  margin: 0 auto;
+  border-radius: 50%;
+  border: var(--line);
+  box-shadow: 3px 3px 0 var(--ink);
+  background: var(--lime);
+}
+
+.lock-title {
+  margin: 16px 0 8px;
+  font-size: 1.65rem;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+
+.lock-sub {
+  margin: 0 0 18px;
+  color: var(--soft);
+}
+
+.lock-fine {
+  margin: 10px 0 0;
+}
+
+.lock-big {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  text-align: left;
+}
+
+.lock .note {
+  text-align: left;
+}
+
+.lock-only {
+  font-weight: 700;
+}
+
+.lock-form {
+  display: grid;
+  gap: 6px;
+  text-align: left;
+}
+
+.lock-label {
+  margin-top: 4px;
+  font-weight: 700;
+}
+
+.lock-form input[type="text"],
+.lock-form textarea {
+  width: 100%;
+  border: var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: 17px;
+  padding: 12px;
+}
+
+.lock-form textarea {
+  min-height: 70px;
+  resize: vertical;
+}
+
+.lock-form .go {
+  margin-top: 10px;
+}
+
+.lock-back {
+  justify-self: center;
+}
+
+/* (a honeypot: off screen, never focused) */
+.lock-hp {
+  position: absolute;
+  left: -10000px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+.lock-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 22px;
+  margin: 18px 0 0;
+}
+
+#lockMoved {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 700;
+}
+
+#lockMoved[hidden] {
+  display: none;
+}
+
+.connect.in-lock {
+  margin: 16px 0 0;
+  box-shadow: none;
+  text-align: left;
+}
+
+.connect.in-lock #connectSetup,
+.connect.in-lock .fine:last-child {
+  display: none;
+}
+
+/* (Access) the owner's gear: how many people wait for an answer */
+.access-badge {
+  position: absolute;
+  bottom: -7px;
+  left: -7px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  border: 2px solid var(--ink);
+  border-radius: 99px;
+  background: var(--grape);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 800;
+  line-height: 18px;
+  text-align: center;
+}
+
+/* (Access) Settings, Friends: Requests */
+.access-box {
+  margin: 4px 0 6px;
+  padding-bottom: 10px;
+  border-bottom: 2px dashed rgba(22, 19, 16, 0.2);
+}
+
+.access-box .sub-label {
+  margin-top: 10px;
+}
+
+.access-box .fine {
+  margin: 6px 0 0;
+}
+
+/* (Access) while someone waits: at the top of Settings, as a card of its own */
+.access-box.on-top {
+  margin: 10px 0 14px;
+  padding: 4px 14px 14px;
+  border: 2px solid var(--ink);
+  border-radius: var(--round);
+  background: var(--card);
+  box-shadow: 3px 3px 0 var(--grape);
+}
+
+.access-box.flash {
+  animation: nudge 0.5s ease 2;
+}
+
+.sheet-body .access-known {
+  margin: 4px 0 0;
+  font-size: 0.88rem;
+  color: var(--soft);
+  overflow-wrap: anywhere;
+}
+
+.access-row .access-again {
+  justify-self: start;
+  min-height: 40px;
+  padding: 6px 12px;
+  font-size: 0.9rem;
+}
+
+.access-box .access-all {
+  margin-top: 10px;
+  min-height: 40px;
+  padding: 6px 12px;
+  font-size: 0.9rem;
+}
+
+/* (Access) "Keep your invite link" (a friend just let in) */
+.keep-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.keep-link > span:first-child {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.keep-link-btns {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.access-row {
+  display: grid;
+  justify-content: stretch;
+}
+
+.access-who {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sheet-body .access-said {
+  margin: 2px 0 0;
+  font-size: 0.92rem;
+  overflow-wrap: anywhere;
+}
+
+.access-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.access-label {
+  font-weight: 700;
+  font-size: 0.92rem;
+}
+
+.access-acts .seg button {
+  min-width: 40px;
+  min-height: 40px;
+  padding: 6px 10px;
+}
+
+.access-acts .plain {
+  min-height: 40px;
+  margin-left: auto;
+  padding: 6px 10px;
+  font-size: 0.9rem;
+}
+
+.access-row.done {
+  display: block;
+  color: var(--soft);
+  font-size: 0.9rem;
+  background: var(--card);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .access-box.flash {
+    animation: none;
+    outline: 3px solid var(--tomato);
+  }
+}

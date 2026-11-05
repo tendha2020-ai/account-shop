@@ -20,8 +20,61 @@
   <script defer src="together.js"></script>
   <!-- (Sing) Sing: animals sing a song (loaded after together.js; app.js calls it through window.Sing) -->
   <script defer src="sing.js"></script>
+  <!-- (Access) Ask for access: the locked screen, the request, the owner's Requests box (loaded after sing.js;
+       app.js calls it through window.Access) -->
+  <script defer src="access.js"></script>
+  <!-- (Access) a device that isn't connected (no worker saved, no #join= or #app= link) sees only the locked screen:
+       marked here, before anything shows (access.js keeps it right afterwards) -->
+  <script>try { if (!JSON.parse(localStorage.getItem('antics.worker') || 'null') && !/#(join|app)=/.test(location.hash)) document.documentElement.classList.add('locked'); } catch (e) { /* access.js decides */ }</script>
 </head>
 <body>
+  <!-- (Access) the locked screen: antics is TENDHA2's private tool. Shown instead of the whole app on a device that
+       isn't connected (access.js): Ask for access, an invite link (the paste-a-link box comes here), or TENDHA2's setup -->
+  <section id="lockScreen" class="lock" aria-labelledby="lockTitle">
+    <div class="lock-card">
+      <img class="lock-avatar" src="brand/tendha2.png" alt="TENDHA2" width="104" height="104">
+      <h1 id="lockTitle" class="lock-title">antics is TENDHA2's private tool</h1>
+      <p class="lock-sub">TENDHA2 uses it to turn animal videos into funny AI videos for TikTok.</p>
+      <p id="lockGone" class="note" hidden>Your request ran out. Ask again.</p>
+      <div id="lockAsk">
+        <button type="button" id="lockAskBtn" class="go">Ask for access</button>
+        <p class="fine lock-fine">TENDHA2 gets your name and can let you in.</p>
+      </div>
+      <p id="lockOnly" class="note lock-only" hidden>Ask TENDHA2 for an invite link, then open it here.</p>
+      <form id="lockForm" class="lock-form" autocomplete="off" novalidate hidden>
+        <label class="lock-label" for="lockName">Your name</label>
+        <input type="text" id="lockName" maxlength="20" placeholder="Sam" autocomplete="nickname" autocapitalize="words" enterkeyhint="send">
+        <label class="lock-label" for="lockNote">A short note <span class="fine">(you can skip it)</span></label>
+        <textarea id="lockNote" maxlength="120" rows="2" placeholder="Hi! I follow you on TikTok"></textarea>
+        <!-- (a honeypot: people never see or fill it; a form robot does, and the worker then refuses the request) -->
+        <div class="lock-hp" aria-hidden="true">
+          <label for="lockWebsite">Website</label>
+          <input type="text" id="lockWebsite" name="website" tabindex="-1" autocomplete="off">
+        </div>
+        <button type="submit" id="lockSend" class="go">Send</button>
+        <button type="button" id="lockBack" class="link-btn lock-back">Back</button>
+        <p id="lockFormNote" class="note" hidden></p>
+      </form>
+      <div id="lockSent" hidden>
+        <p class="note good lock-big">Sent! TENDHA2 will let you in. You can close this page; come back later.</p>
+        <p class="fine lock-fine" id="lockSentFine"></p>
+      </div>
+      <div id="lockDenied" hidden>
+        <p class="note bad lock-big">Sorry, TENDHA2 said no this time.</p>
+        <p class="fine lock-fine" id="lockDeniedFine"></p>
+        <button type="button" id="lockAgain" class="go small" hidden>Ask again</button>
+      </div>
+      <!-- Only on the old test address -->
+      <p id="lockMoved" class="note" hidden>antics has a new home.
+        <a class="plain" href="https://tendha2020-ai.github.io/account-shop/animals/">Open the new antics</a></p>
+      <div id="lockLinkSlot"></div>
+      <p class="lock-links">
+        <button type="button" id="lockHaveLink" class="link-btn">I have an invite link</button>
+        <button type="button" id="lockOwner" class="link-btn">I'm TENDHA2</button>
+      </p>
+    </div>
+  </section>
+
   <header class="bar">
     <div class="brand">
       <img class="avatar" src="brand/tendha2.png" alt="" width="60" height="60">
@@ -33,10 +86,20 @@
     <button type="button" id="openSettings" class="icon-btn" aria-label="Settings">
       <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Zm8.4-2.1.1-1.4-.1-1.4 2-1.6-2-3.4-2.4 1a8 8 0 0 0-2.4-1.4L15.2 2h-4l-.4 2.6a8 8 0 0 0-2.4 1.4l-2.4-1-2 3.4 2 1.6-.1 1.4.1 1.4-2 1.6 2 3.4 2.4-1a8 8 0 0 0 2.4 1.4l.4 2.6h4l.4-2.6a8 8 0 0 0 2.4-1.4l2.4 1 2-3.4-2-1.6Z"/></svg>
       <span id="workerDot" class="dot"></span>
+      <!-- (Access) people waiting for TENDHA2's answer (owner only) -->
+      <span id="accessBadge" class="access-badge" aria-hidden="true" hidden></span>
     </button>
   </header>
 
   <div class="banner-wrap">
+    <!-- (Access) a friend TENDHA2 just let in (access.js): their invite link is how they come back -->
+    <p id="keepLink" class="note banner keep-link" hidden>
+      <span>Keep your invite link: you need it to open antics on another phone, in the Home Screen app, or after clearing this browser.</span>
+      <span class="keep-link-btns">
+        <button type="button" id="keepLinkCopy" class="plain">Copy my invite link</button>
+        <button type="button" id="keepLinkOk" class="link-btn">OK</button>
+      </span>
+    </p>
     <!-- Only on the old test address: antics now lives at its own home (the link keeps this device connected) -->
     <p id="movedBanner" class="note banner" hidden>
       <span>antics has a new home. Open it there, then add that one to your Home Screen.</span>
@@ -849,6 +912,15 @@
             <span id="friendsCount" class="fine"></span>
           </div>
           <p class="fine">Give a friend their own link with a few videos. They only see their own videos, and theirs use your free time.</p>
+          <!-- (Access) people who asked for access on the locked screen: Approve 5 · 6 · 10, or Deny (access.js; while
+               someone waits it moves to the top of Settings) -->
+          <div id="accessBox" class="access-box" hidden>
+            <h3 class="sub-label">Requests <span id="accessCount" class="fine"></span></h3>
+            <div id="accessRows" class="friend-list access-rows"></div>
+            <button type="button" id="accessDenyAll" class="plain danger access-all" hidden>Say no to all</button>
+            <p class="fine" id="accessEmpty">No one is waiting. When someone opens antics and asks for access, they show up here.</p>
+            <p id="accessNote" class="note" hidden></p>
+          </div>
           <div id="friendAdd" class="friend-add">
             <input type="text" id="friendName" class="small-input" maxlength="30" placeholder="Friend's name" aria-label="Friend's name">
             <div class="seg" id="friendUsesSeg" aria-label="How many videos">
