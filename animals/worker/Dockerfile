@@ -36,13 +36,13 @@ RUN pip download --no-deps --no-cache-dir -d /tmp/g2p g2p_en==2.1.0 \
 # when it would need another version of one of them, pip installs nothing for it and Sing goes on without that piece.
 # (setuptools is left out: WORLD needs one before 81. Written to a new file first, so a failed freeze keeps the list.)
 # Each install or download has a time limit (timeout), so one that hangs or backtracks ends as a failed optional step
-# instead of holding up the whole build.
+# instead of holding up the whole build; an install that fails (a download cut off) is tried once more.
 RUN pip freeze --exclude setuptools > /tmp/sing-packages.txt && mv /tmp/sing-packages.txt /tmp/worker-packages.txt || true
 # Singing voices: WORLD (pyworld 0.3.5, MIT) has no Linux wheel: built with g++, which goes again in the same step
 # (pyworld imports pkg_resources at run time, hence setuptools<81). Without it: Rubber Band (ffmpeg) voices.
 USER root
 RUN (apt-get update && apt-get install -y --no-install-recommends g++ \
-     && su user -c 'timeout 1200 pip install --no-cache-dir --user -c /tmp/worker-packages.txt "setuptools<81" pyworld==0.3.5'; \
+     && su user -c 'for i in 1 2; do timeout 1200 pip install --no-cache-dir --user -c /tmp/worker-packages.txt "setuptools<81" pyworld==0.3.5 && break; done'; \
      apt-get purge -y g++ && apt-get autoremove -y; rm -rf /var/lib/apt/lists/*) || true
 USER user
 # The sung lines: whisper-small (MIT, 463 MB; the base model loops on songs). If this fails, it downloads on first use.
@@ -50,7 +50,7 @@ RUN timeout 1200 python -c "from faster_whisper.utils import download_model; dow
 # The quick voice/music split: Spleeter 2-stems (MIT weights) through sherpa-onnx (Apache-2.0), 43 MB + its 75 MB
 # float32 model (downloaded here, or on first use). The model is unpacked aside and moved in whole, so a failed
 # download never leaves half a model folder (the worker would take it for the model and not download it again).
-RUN timeout 900 pip install --no-cache-dir --user -c /tmp/worker-packages.txt sherpa-onnx==2.0.1 || true
+RUN for i in 1 2; do timeout 900 pip install --no-cache-dir --user -c /tmp/worker-packages.txt sherpa-onnx==2.0.1 && break; done || true
 RUN mkdir -p /home/user/.cache/antics-models && cd /home/user/.cache/antics-models \
     && (timeout 900 python -c "import urllib.request as u; u.urlretrieve('https://github.com/k2-fsa/sherpa-onnx/releases/download/source-separation-models/sherpa-onnx-spleeter-2stems.tar.bz2', 's.tar.bz2')" \
         && python -c "import tarfile; tarfile.open('s.tar.bz2').extractall('unpack', filter='data')" \
@@ -63,7 +63,7 @@ RUN mkdir -p /home/user/.cache/antics-models && cd /home/user/.cache/antics-mode
 # and librosa 1.0 no longer brings it).
 USER root
 RUN (apt-get update && apt-get install -y --no-install-recommends g++ \
-     && su user -c 'timeout 2400 pip install --no-cache-dir --user -c /tmp/worker-packages.txt --extra-index-url https://download.pytorch.org/whl/cpu "torch==2.5.1+cpu" "torchvision==0.20.1+cpu" "audio-separator[cpu]==0.48.0" audioread==3.1.0'; \
+     && su user -c 'for i in 1 2; do timeout 1200 pip install --no-cache-dir --user -c /tmp/worker-packages.txt --extra-index-url https://download.pytorch.org/whl/cpu "torch==2.5.1+cpu" "torchvision==0.20.1+cpu" "audio-separator[cpu]==0.48.0" audioread==3.1.0 && break; done'; \
      apt-get purge -y g++ && apt-get autoremove -y; rm -rf /var/lib/apt/lists/*) || true
 USER user
 COPY --chown=user . .
