@@ -28,29 +28,38 @@ RUN pip download --no-deps --no-cache-dir -d /tmp/g2p g2p_en==2.1.0 \
     && python -c "import glob, zipfile; z = zipfile.ZipFile(glob.glob('/tmp/g2p/*.whl')[0]); open('oov_g2p.npz', 'wb').write(z.read('g2p_en/checkpoint20.npz')); open('oov_g2p.LICENSE', 'wb').write(z.read('g2p_en-2.1.0.dist-info/LICENSE.txt'))" \
     && rm -rf /tmp/g2p || true
 # (Sing) The singing side, each step on its own: if one fails, Sing runs without that piece (or isn't offered: the
-# page then says "Update needed"), and the build still works. Held to the versions installed above (-c).
+# page then says "Update needed"), and the build still works. Each is held to every version installed above (-c, a
+# fresh list that has the pet voice's packages too), so a Sing step can never change what the worker or the voice uses:
+# when it would need another version of one of them, pip installs nothing for it and Sing goes on without that piece.
+# (setuptools is left out: WORLD needs one before 81. Written to a new file first, so a failed freeze keeps the list.)
+# Each install or download has a time limit (timeout), so one that hangs or backtracks ends as a failed optional step
+# instead of holding up the whole build.
+RUN pip freeze --exclude setuptools > /tmp/sing-packages.txt && mv /tmp/sing-packages.txt /tmp/worker-packages.txt || true
 # Singing voices: WORLD (pyworld 0.3.5, MIT) has no Linux wheel: built with g++, which goes again in the same step
 # (pyworld imports pkg_resources at run time, hence setuptools<81). Without it: Rubber Band (ffmpeg) voices.
 USER root
 RUN (apt-get update && apt-get install -y --no-install-recommends g++ \
-     && su user -c 'pip install --no-cache-dir --user -c /tmp/worker-packages.txt "setuptools<81" pyworld==0.3.5'; \
+     && su user -c 'timeout 1200 pip install --no-cache-dir --user -c /tmp/worker-packages.txt "setuptools<81" pyworld==0.3.5'; \
      apt-get purge -y g++ && apt-get autoremove -y; rm -rf /var/lib/apt/lists/*) || true
 USER user
 # The sung lines: whisper-small (MIT, 463 MB; the base model loops on songs). If this fails, it downloads on first use.
-RUN python -c "from faster_whisper.utils import download_model; download_model('small')" || true
+RUN timeout 1200 python -c "from faster_whisper.utils import download_model; download_model('small')" || true
 # The quick voice/music split: Spleeter 2-stems (MIT weights) through sherpa-onnx (Apache-2.0), 43 MB + its 75 MB
-# float32 model (downloaded here, or on first use).
-RUN pip install --no-cache-dir --user -c /tmp/worker-packages.txt sherpa-onnx==2.0.1 || true
+# float32 model (downloaded here, or on first use). The model is unpacked aside and moved in whole, so a failed
+# download never leaves half a model folder (the worker would take it for the model and not download it again).
+RUN timeout 900 pip install --no-cache-dir --user -c /tmp/worker-packages.txt sherpa-onnx==2.0.1 || true
 RUN mkdir -p /home/user/.cache/antics-models && cd /home/user/.cache/antics-models \
-    && python -c "import urllib.request as u; u.urlretrieve('https://github.com/k2-fsa/sherpa-onnx/releases/download/source-separation-models/sherpa-onnx-spleeter-2stems.tar.bz2', 's.tar.bz2')" \
-    && python -c "import tarfile; tarfile.open('s.tar.bz2').extractall('.', filter='data')" && rm s.tar.bz2 || true
+    && (timeout 900 python -c "import urllib.request as u; u.urlretrieve('https://github.com/k2-fsa/sherpa-onnx/releases/download/source-separation-models/sherpa-onnx-spleeter-2stems.tar.bz2', 's.tar.bz2')" \
+        && python -c "import tarfile; tarfile.open('s.tar.bz2').extractall('unpack', filter='data')" \
+        && mv unpack/sherpa-onnx-spleeter-2stems .; rm -rf unpack s.tar.bz2) || true
 # The best split (optional, about 1.1 GB): Kim's Mel-Band RoFormer (MIT) through audio-separator on torch-cpu; its
 # 913 MB checkpoint downloads on first use. Without it, songs keep the quick split. audio-separator needs diffq,
 # which has no wheel: built with g++, which goes again in the same step (as for pyworld). torch and torchvision are
-# the CPU builds, pinned to each other (no resolver backtracking).
+# the CPU builds, pinned to each other (no resolver backtracking). [cpu] names onnxruntime, which its Separator
+# imports (faster-whisper brought it already: the same version is kept).
 USER root
 RUN (apt-get update && apt-get install -y --no-install-recommends g++ \
-     && su user -c 'pip install --no-cache-dir --user -c /tmp/worker-packages.txt --extra-index-url https://download.pytorch.org/whl/cpu "torch==2.5.1+cpu" "torchvision==0.20.1+cpu" audio-separator==0.48.0'; \
+     && su user -c 'timeout 2400 pip install --no-cache-dir --user -c /tmp/worker-packages.txt --extra-index-url https://download.pytorch.org/whl/cpu "torch==2.5.1+cpu" "torchvision==0.20.1+cpu" "audio-separator[cpu]==0.48.0"'; \
      apt-get purge -y g++ && apt-get autoremove -y; rm -rf /var/lib/apt/lists/*) || true
 USER user
 COPY --chown=user . .

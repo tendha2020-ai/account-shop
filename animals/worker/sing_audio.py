@@ -98,18 +98,28 @@ def resample(x, sr_from, sr_to):
 # ---------------------------------------------------------------------------------------------- 1. separation
 
 def model_file(name, cache_dir):
-    """The Spleeter model folder, downloaded once (the RoFormer's file is fetched by audio-separator itself)."""
+    """The Spleeter model folder, downloaded once (the RoFormer's file is fetched by audio-separator itself). It is
+    unpacked aside and moved in whole, so a download that failed half way is made again next time (never taken for
+    the model)."""
     os.makedirs(cache_dir, exist_ok=True)
     if name == 'spleeter':
         d = os.path.join(cache_dir, SPLEETER['dir'])
-        if not os.path.isdir(d):
+        if not all(os.path.isfile(os.path.join(d, f)) for f in ('vocals.onnx', 'accompaniment.onnx')):
+            import shutil
             import tarfile
             import urllib.request
-            tmp = os.path.join(cache_dir, 'spleeter.tar.bz2')
-            urllib.request.urlretrieve(SPLEETER['url'], tmp)
-            with tarfile.open(tmp) as t:
-                t.extractall(cache_dir, filter='data')
-            os.remove(tmp)
+            tmp, unpack = os.path.join(cache_dir, 'spleeter.tar.bz2'), os.path.join(cache_dir, 'spleeter.unpack')
+            shutil.rmtree(unpack, ignore_errors=True)
+            try:
+                urllib.request.urlretrieve(SPLEETER['url'], tmp)
+                with tarfile.open(tmp) as t:
+                    t.extractall(unpack, filter='data')
+                shutil.rmtree(d, ignore_errors=True)
+                os.replace(os.path.join(unpack, SPLEETER['dir']), d)
+            finally:
+                shutil.rmtree(unpack, ignore_errors=True)
+                if os.path.exists(tmp):
+                    os.remove(tmp)
         return d
     return cache_dir
 
@@ -189,7 +199,8 @@ def separate(song, out_dir, engine='roformer', start=0.0, seconds=None, cache_di
 
 def split_ready(engine):
     """True when this split can run here: 'spleeter' needs sherpa-onnx (its 75 MB model downloads on first use),
-    'roformer' torch + audio-separator (its 913 MB checkpoint downloads on first use)."""
+    'roformer' torch + audio-separator + onnxruntime (its Separator imports it; the 913 MB checkpoint downloads on
+    first use)."""
     try:
         if engine == 'spleeter':  # (small: imported to be sure it loads)
             importlib.import_module('sherpa_onnx')
@@ -197,7 +208,7 @@ def split_ready(engine):
         if engine != 'roformer':
             return False
         # (big: torch is only looked for here, and imported when a song is split)
-        return all(importlib.util.find_spec(name) is not None for name in ('torch', 'audio_separator'))
+        return all(importlib.util.find_spec(name) is not None for name in ('torch', 'audio_separator', 'onnxruntime'))
     except Exception:
         return False
 
