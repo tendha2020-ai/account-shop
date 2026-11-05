@@ -170,6 +170,12 @@ func (e *Engine) startEngine() error {
 	if !e.coreInstalledLocked() {
 		return friendly(nil, "The AI engine is not installed yet.")
 	}
+	if e.job != nil && e.job.Repair && e.job.state() == "running" {
+		return friendly(nil, "Glow Studio is checking the AI files. Please wait until it is finished.")
+	}
+	if err := e.lockDirLocked(e.installDir); err != nil {
+		return err
+	}
 	root := filepath.Join(e.installDir, portableDir)
 	preferred := preferredComfyPort
 	if v, err := strconv.Atoi(os.Getenv("GLOW_COMFY_PORT")); err == nil && v > 0 {
@@ -193,34 +199,53 @@ func (e *Engine) startEngine() error {
 	}
 	cmd.Env = comfyEnv()
 	hideWindow(cmd)
-	stdout, err := cmd.StdoutPipe()
+	// Our own pipe (not StdoutPipe): Wait must not close it while the last
+	// lines, which say why ComfyUI stopped, are still being read.
+	pr, pw, err := os.Pipe()
 	if err != nil {
 		return err
 	}
-	cmd.Stderr = cmd.Stdout // one ordered stream
+	cmd.Stdout, cmd.Stderr = pw, pw // one ordered stream
 	e.logs.openFile(filepath.Join(e.installDir, "logs"))
 	e.logs.addf("[launcher] starting the AI engine on 127.0.0.1:%d", port)
 	if err := cmd.Start(); err != nil {
-		e.state, e.engErr = "error", "The AI engine could not be started: "+err.Error()+". Try installing again (it only repairs what is missing)."
+		pr.Close()
+		pw.Close()
+		e.state, e.engErr = "error", "The AI engine could not be started ("+err.Error()+"). Press “Check & repair files”; if that does not help, your antivirus may be blocking it."
 		e.logs.addf("[launcher] start failed: %v", err)
 		return friendly(err, e.engErr)
 	}
+	pw.Close() // the child has its own copy
 	afterStart(cmd)
 	p := &comfyProc{cmd: cmd, port: port, done: make(chan struct{})}
 	e.proc, e.state, e.engErr, e.comfyPort, e.runningVersion, e.dynVRAM = p, "starting", "", port, "", nil
-	e.startedAt = time.Now()
+	e.startedAt, e.qBusy, e.qFailSince = time.Now(), false, time.Time{}
+	installDir := e.installDir
 
-	go e.logs.pump(stdout, func(line string) {
-		e.logs.add(line)
-		if strings.Contains(line, "DynamicVRAM support detected and enabled") {
-			e.mu.Lock()
-			t := true
-			e.dynVRAM = &t
-			e.mu.Unlock()
-		}
-	})
+	pumped := make(chan struct{})
+	go func() {
+		defer close(pumped)
+		defer pr.Close()
+		e.logs.pump(pr, func(line string) {
+			e.logs.add(line)
+			if strings.Contains(line, "DynamicVRAM support detected and enabled") {
+				e.mu.Lock()
+				t := true
+				e.dynVRAM = &t
+				e.mu.Unlock()
+			}
+		})
+	}()
 	go func() {
 		err := cmd.Wait()
+		// Everything ComfyUI printed is in the pipe now: read it to the end
+		// before explaining the crash. (A child process that inherited the
+		// pipe could keep it open, so do not wait for ever.)
+		select {
+		case <-pumped:
+		case <-time.After(5 * time.Second):
+		}
+		lines := e.logs.last(60)
 		e.mu.Lock()
 		close(p.done)
 		if e.proc == p {
@@ -231,8 +256,16 @@ func (e *Engine) startEngine() error {
 				e.state = "stopped"
 			} else {
 				e.state = "error"
-				e.engErr = explainCrash(e.logs.last(40), err, e.wasReadyLocked(p))
+				c10 := filepath.Join(installDir, portableDir, "python_embeded", "Lib", "site-packages", "torch", "lib", "c10.dll")
+				c10Missing := os.Getenv("GLOW_COMFY_CMD") == "" && !fileExists(c10)
+				msg, damaged := explainCrash(lines, err, e.wasReadyLocked(p), c10Missing)
+				e.engErr = msg
 				e.logs.addf("[launcher] the AI engine stopped: %v", err)
+				if damaged && samePath(installDir, e.installDir) {
+					// "Check & repair files" will unpack the engine again.
+					e.man.EngineSuspect = true
+					e.man.save(installDir)
+				}
 			}
 		}
 		e.mu.Unlock()
@@ -240,6 +273,8 @@ func (e *Engine) startEngine() error {
 	go e.waitReady(p)
 	return nil
 }
+
+func fileExists(p string) bool { _, err := os.Stat(p); return err == nil }
 
 func (e *Engine) wasReadyLocked(p *comfyProc) bool { return e.readyProc == p }
 
@@ -267,12 +302,16 @@ func (e *Engine) waitReady(p *comfyProc) {
 			continue
 		}
 		e.mu.Lock()
-		if e.proc == p && e.state == "starting" {
+		ready := e.proc == p && e.state == "starting"
+		if ready {
 			e.state, e.readyProc = "ready", p
 			e.runningVersion = stats.System.ComfyVersion
 			e.logs.addf("[launcher] the AI engine is ready (ComfyUI %s, started in %s)", stats.System.ComfyVersion, time.Since(e.startedAt).Round(time.Second))
 		}
 		e.mu.Unlock()
+		if ready {
+			go e.watchQueue(p)
+		}
 		return
 	}
 	e.mu.Lock()
@@ -314,47 +353,134 @@ func (e *Engine) stopEngine() {
 	e.mu.Unlock()
 }
 
-// comfyBusy reports whether ComfyUI has prompts running or queued.
-func (e *Engine) comfyBusy() bool {
-	e.mu.Lock()
-	port, state := e.comfyPort, e.state
-	e.mu.Unlock()
-	if port == 0 || state != "ready" {
-		return false
+// How long a ComfyUI that is alive but does not answer /queue still counts as
+// busy: while loading 14 GB of weights under memory pressure it can be slow to
+// answer for a while. After a "rendering" answer this is generous; after an
+// "idle" one it only covers a prompt that might have started since.
+const (
+	busyNoAnswerAfterBusy = 20 * time.Minute
+	busyNoAnswerAfterIdle = 2 * time.Minute
+)
+
+var busyLinger = 20 * time.Second // busy for this long after the last sign of work (tests shorten it)
+
+// watchQueue asks ComfyUI every few seconds (all the time, not only once the
+// window is closed) whether prompts are running or queued, so the idle exit has
+// a fresh answer and never kills a render.
+func (e *Engine) watchQueue(p *comfyProc) {
+	every := 5 * time.Second
+	if v, err := strconv.Atoi(os.Getenv("GLOW_QUEUE_POLL_MS")); err == nil && v > 0 {
+		every = time.Duration(v) * time.Millisecond
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	timeout := 2 * every
+	if timeout < 3*time.Second {
+		timeout = 3 * time.Second
+	}
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		busy, err := queueBusy(p.port, timeout)
+		e.mu.Lock()
+		if e.proc != p {
+			e.mu.Unlock()
+			return
+		}
+		if err != nil {
+			if e.qFailSince.IsZero() {
+				e.qFailSince = time.Now()
+			}
+		} else {
+			e.qFailSince, e.qBusy = time.Time{}, busy
+			if busy {
+				e.lastBusy = time.Now()
+			}
+		}
+		e.mu.Unlock()
+		select {
+		case <-p.done:
+			return
+		case <-t.C:
+		}
+	}
+}
+
+func queueBusy(port int, timeout time.Duration) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/queue", port), nil)
 	resp, err := localClient.Do(req)
 	if err != nil {
-		// ComfyUI's web server keeps answering while it renders; no answer
-		// right after a busy one is treated as still busy, once.
-		e.mu.Lock()
-		busy := time.Since(e.lastBusy) < 30*time.Second
-		e.mu.Unlock()
-		return busy
+		return false, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
 	var q struct {
 		Running []json.RawMessage `json:"queue_running"`
 		Pending []json.RawMessage `json:"queue_pending"`
 	}
-	if json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&q) != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&q); err != nil {
+		return false, err
+	}
+	return len(q.Running) > 0 || len(q.Pending) > 0, nil
+}
+
+// markBusy: a prompt was just posted through the proxy.
+func (e *Engine) markBusy() {
+	e.mu.Lock()
+	e.lastBusy = time.Now()
+	e.mu.Unlock()
+}
+
+// renderingNow asks ComfyUI itself whether a prompt is running or queued
+// (for decisions taken now, like a repair); if it does not answer, the
+// idle-exit view (comfyBusy) decides.
+func (e *Engine) renderingNow() bool {
+	e.mu.Lock()
+	port, ready := e.comfyPort, e.proc != nil && e.state == "ready"
+	e.mu.Unlock()
+	if !ready {
 		return false
 	}
-	busy := len(q.Running) > 0 || len(q.Pending) > 0
-	if busy {
-		e.mu.Lock()
-		e.lastBusy = time.Now()
-		e.mu.Unlock()
+	busy, err := queueBusy(port, 3*time.Second)
+	if err != nil {
+		return e.comfyBusy()
 	}
 	return busy
 }
 
+// comfyBusy reports whether ComfyUI has prompts running or queued (from
+// watchQueue; it never waits for ComfyUI itself). It errs on the side of
+// "busy": it is what keeps the idle exit from killing a render.
+func (e *Engine) comfyBusy() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.proc == nil || e.state != "ready" {
+		return false
+	}
+	if time.Since(e.lastBusy) < busyLinger {
+		return true
+	}
+	if !e.qFailSince.IsZero() { // alive, but /queue does not answer
+		limit := busyNoAnswerAfterIdle
+		if e.qBusy {
+			limit = busyNoAnswerAfterBusy
+		}
+		return time.Since(e.qFailSince) < limit
+	}
+	return e.qBusy
+}
+
 var localClient = &http.Client{Transport: &http.Transport{Proxy: nil, MaxIdleConnsPerHost: 4}}
 
+const msgEngineDamaged = "Some AI engine files are missing or damaged (antivirus programs sometimes remove them). Press “Check & repair files”: Glow Studio checks every file and downloads the AI engine again if needed (about 2 GB; your AI models are kept)."
+
 // explainCrash turns the last log lines into advice for a non-technical user.
-func explainCrash(lines []string, err error, wasReady bool) string {
+// damaged is true when engine files are missing (the next repair unpacks the
+// engine again). c10Missing: PyTorch's c10.dll is not on disk, so a "could not
+// load c10.dll" error is a removed file, not a missing Microsoft component.
+func explainCrash(lines []string, err error, wasReady, c10Missing bool) (msg string, damaged bool) {
 	all := strings.ToLower(strings.Join(lines, "\n"))
 	has := func(s ...string) bool {
 		for _, x := range s {
@@ -365,27 +491,29 @@ func explainCrash(lines []string, err error, wasReady bool) string {
 		return false
 	}
 	switch {
-	case has("c10.dll", "winerror 126", "vcruntime140", "msvcp140"):
-		return "Windows is missing a free Microsoft component (Visual C++ Redistributable). Install it from https://aka.ms/vc14/vc_redist.x64.exe, then press Start again."
+	case has("c10.dll", "winerror 126", "vcruntime140", "msvcp140", "dll load failed") && c10Missing:
+		return msgEngineDamaged, true
+	case has("c10.dll", "winerror 126", "vcruntime140", "msvcp140", "dll load failed"):
+		return "Windows is missing a free Microsoft component (Visual C++ Redistributable). Install it from https://aka.ms/vc14/vc_redist.x64.exe, then press Start again.", false
 	case has("nvidia driver on your system is too old", "driver version is insufficient", "cuda driver version is insufficient"):
-		return "Your NVIDIA driver is too old for the AI engine. Update it from https://www.nvidia.com/Download/index.aspx, restart the PC, then press Start again."
+		return "Your NVIDIA driver is too old for the AI engine. Update it from https://www.nvidia.com/Download/index.aspx, restart the PC, then press Start again.", false
 	case has("no cuda gpus are available", "torch not compiled with cuda", "found no nvidia driver", "no nvidia gpu"):
-		return "No compatible NVIDIA graphics card was found. The free AI engine needs an NVIDIA RTX card with an up-to-date driver."
+		return "No compatible NVIDIA graphics card was found. The free AI engine needs an NVIDIA RTX card with an up-to-date driver.", false
 	case has("winerror 1455", "paging file is too small"):
-		return "Windows ran out of memory (the paging file is too small). Close other programs, let Windows manage the paging file size automatically, then press Start again."
+		return "Windows ran out of memory (the paging file is too small). Close other programs, let Windows manage the paging file size automatically, then press Start again.", false
 	case has("out of memory", "outofmemoryerror", "cuda error: out of memory"):
-		return "The graphics card ran out of memory. Close games and other heavy programs, then press Start again."
+		return "The graphics card ran out of memory. Close games and other heavy programs, then press Start again.", false
 	case has("address already in use", "winerror 10048", "only one usage of each socket address"):
-		return "Another program was using the AI engine's port. Press Start again."
-	case has("modulenotfounderror", "importerror", "no such file or directory", "can't open file"):
-		return "Some AI engine files are missing or damaged. Press Install to repair (only missing files are downloaded)."
+		return "Another program was using the AI engine's port. Press Start again.", false
+	case has("modulenotfounderror", "no module named", "importerror", "no such file or directory", "can't open file"):
+		return msgEngineDamaged, true
 	}
 	if wasReady {
-		return "The AI engine stopped unexpectedly. Press Start to run it again. If this keeps happening, close other programs and open Details."
+		return "The AI engine stopped unexpectedly. Press Start to run it again. If this keeps happening, close other programs and open Details.", false
 	}
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
-		return fmt.Sprintf("The AI engine could not start (exit code %d). Press Start to try again; open Details to see what happened.", ee.ExitCode())
+		return fmt.Sprintf("The AI engine could not start (exit code %d). Press Start to try again; open Details to see what happened.", ee.ExitCode()), false
 	}
-	return "The AI engine could not start. Press Start to try again; open Details to see what happened."
+	return "The AI engine could not start. Press Start to try again; open Details to see what happened.", false
 }

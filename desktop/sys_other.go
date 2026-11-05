@@ -87,6 +87,26 @@ func totalRAM() int64 {
 
 func platformDirCheck(p string) error { return nil }
 
+// errLocked: another process holds the lock.
+var errLocked = errors.New("locked by another process")
+
+// lockFile takes an exclusive lock on path (created if needed) that lasts until
+// release is called or the process ends.
+func lockFile(path string) (release func(), err error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, errLocked
+		}
+		return nil, err
+	}
+	return func() { f.Close() }, nil
+}
+
 func isDiskFull(err error) bool {
 	return errors.Is(err, syscall.ENOSPC) || errors.Is(err, syscall.EDQUOT)
 }
@@ -98,3 +118,6 @@ func isAccessDenied(err error) bool {
 }
 
 func isPathTooLong(err error) bool { return errors.Is(err, syscall.ENAMETOOLONG) }
+
+// isTransientFSErr: other systems do not refuse renames of open files.
+func isTransientFSErr(err error) bool { return errors.Is(err, errTransientTest) }

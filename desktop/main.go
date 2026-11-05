@@ -7,12 +7,14 @@ package main
 import (
 	"bytes"
 	"embed"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -40,22 +42,41 @@ func main() {
 		fatal("The app files are missing from this program.", err)
 	}
 
-	port := preferredPort
+	// The same port every time keeps the page's origin (and so its saved
+	// settings and a running video's id) the same. If 47821 is taken or blocked
+	// (Hyper-V/WSL/Docker reserve port ranges), a few fixed alternatives come
+	// before a random port.
+	ports := []int{preferredPort, 47921, 48821, 41821}
 	if v, err := strconv.Atoi(os.Getenv("GLOW_PORT")); err == nil && v > 0 {
-		port = v
+		ports = []int{v}
 	}
-	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-	if err != nil {
+	var ln net.Listener
+	for _, p := range ports {
+		l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p))
+		if err == nil {
+			ln = l
+			break
+		}
 		// Already running? Then just open another window on it.
-		if alreadyRunning(port) {
-			openApp(fmt.Sprintf("http://127.0.0.1:%d/", port))
+		if alreadyRunning(p) {
+			openApp(fmt.Sprintf("http://127.0.0.1:%d/", p))
 			return
 		}
-		ln, err = net.Listen("tcp", "127.0.0.1:0")
+	}
+	if ln == nil {
+		// A copy that had to take a random port records it in instance.json.
+		if p := readInstancePort(); p > 0 && alreadyRunning(p) {
+			openApp(fmt.Sprintf("http://127.0.0.1:%d/", p))
+			return
+		}
+		l, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			fatal("Glow Studio could not start its local server.", err)
 		}
+		ln = l
 	}
+	myPort := ln.Addr().(*net.TCPAddr).Port
+	writeInstancePort(myPort)
 	url := fmt.Sprintf("http://%s/", ln.Addr().String())
 
 	index, err := fs.ReadFile(app, "index.html")
@@ -64,8 +85,11 @@ func main() {
 	}
 	index = withHeartbeat(index)
 
-	engine := newEngine(ln.Addr().(*net.TCPAddr).Port)
-	onExit = engine.Shutdown
+	engine := newEngine(myPort)
+	onExit = func() {
+		engine.Shutdown()
+		removeInstancePort(myPort)
+	}
 
 	files := http.FileServer(http.FS(app))
 	mux := http.NewServeMux()
@@ -140,6 +164,32 @@ func main() {
 
 func withHeartbeat(page []byte) []byte {
 	return bytes.Replace(page, []byte("</body>"), []byte(heartbeat+"</body>"), 1)
+}
+
+type instanceInfo struct {
+	Port int `json:"port"`
+	PID  int `json:"pid"`
+}
+
+func readInstancePort() int {
+	var in instanceInfo
+	if data, err := os.ReadFile(instancePath()); err == nil && json.Unmarshal(data, &in) == nil {
+		return in.Port
+	}
+	return 0
+}
+
+func writeInstancePort(port int) {
+	p := instancePath()
+	os.MkdirAll(filepath.Dir(p), 0o755)
+	data, _ := json.Marshal(instanceInfo{Port: port, PID: os.Getpid()})
+	os.WriteFile(p, data, 0o644)
+}
+
+func removeInstancePort(port int) {
+	if readInstancePort() == port {
+		os.Remove(instancePath())
+	}
 }
 
 func alreadyRunning(port int) bool {

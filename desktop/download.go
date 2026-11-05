@@ -4,11 +4,20 @@ package main
 //
 // A file is written to <name>.part (ComfyUI ignores that extension) and its
 // sha256 is computed while streaming. Every 64 MB, and whenever a download
-// stops, the hash state and offset are saved to <name>.part.state, so a resume
-// (HTTP Range) continues hashing without re-reading tens of GB: only the bytes
-// written after the last saved state (at most ~64 MB, e.g. after the app was
-// killed) are re-read. Without a usable state the whole .part is re-hashed
-// once. Only a fully verified file is renamed to its final name.
+// stops, the hash state and offset are saved to <name>.part.state (after an
+// fsync), so a resume (HTTP Range) continues hashing without re-reading tens of
+// GB. Bytes written after the last saved state are not trusted (after a power
+// cut NTFS can show a longer file whose unsynced tail reads as zeros): the .part
+// is cut back to the saved offset and at most ~64 MB is downloaded again.
+// Without a usable state the whole .part is re-hashed once. Only a fully
+// verified file is renamed to its final name.
+//
+// A .part is never thrown away because of one odd answer (a hotel Wi-Fi login
+// page, a proxy error page, a server that resumed at the wrong place): such
+// answers are retried and only a consistent "this server cannot resume" restarts
+// the file. Before a pinned file is downloaded, a HEAD request compares Hugging
+// Face's X-Linked-Etag (the file's sha256) with the pinned one, so a file that
+// was changed by its publisher fails in seconds instead of after 20 GB.
 
 import (
 	"bufio"
@@ -25,6 +34,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -125,7 +135,7 @@ func saveState(path string, f FileSpec, off int64, h hash.Hash) error {
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	return renameRetry(tmp, path)
 }
 
 func loadState(path string, f FileSpec) (int64, hash.Hash, bool) {
@@ -150,19 +160,6 @@ func partBytes(dest string) int64 {
 		return st.Size()
 	}
 	return 0
-}
-
-// hashRange adds bytes [from, from+n) of path to h.
-func hashRange(ctx context.Context, path string, from, n int64, h hash.Hash) error {
-	in, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	if _, err := in.Seek(from, io.SeekStart); err != nil {
-		return err
-	}
-	return hashReader(ctx, in, n, h, nil)
 }
 
 func hashFile(ctx context.Context, path string, limit int64, h hash.Hash, onDisk func(int64)) error {
@@ -297,19 +294,13 @@ func (d *downloader) fetch(ctx context.Context, f FileSpec, dest string, hk dlHo
 		if size > 0 {
 			if so, sh, ok := loadState(stPath, f); ok && so <= size {
 				off, h = so, sh
-				if so < size { // bytes written after the last state save
-					hk.phase("check")
-					if err := hashRange(ctx, part, so, size-so, h); err == nil {
-						off = size
-						saveState(stPath, f, off, h)
-					} else if ctx.Err() != nil {
-						return ctx.Err()
-					} else {
-						_, h, _ = loadState(stPath, f) // back to the saved hash
-						if err := os.Truncate(part, so); err != nil {
-							return fileError(err, part)
-						}
+				if so < size {
+					// Bytes written after the last fsync'd state: correct after the app
+					// was closed, but zeros after a power cut. Download them again.
+					if err := os.Truncate(part, so); err != nil {
+						return fileError(err, part)
 					}
+					hk.logf("%s: re-downloading the last %s (written after the last checkpoint)", f.Name, gb(size-so))
 				}
 				hk.logf("resuming %s at %s", f.Name, gb(off))
 			} else {
@@ -335,10 +326,16 @@ func (d *downloader) fetch(ctx context.Context, f FileSpec, dest string, hk dlHo
 	}
 	hk.onDisk(off)
 
+	if !f.SizeFlexible && (f.Size == 0 || off < f.Size) {
+		if err := d.publisherCheck(ctx, f, src, hk); err != nil {
+			return err
+		}
+	}
+
 	want := f.Size // may be adjusted for SizeFlexible files
-	tries, shaFails, sizeFails := 0, 0, 0
+	tries, shaFails, sizeFails, refusals := 0, 0, 0, 0
 	restart := func() {
-		os.Remove(part)
+		removeRetry(part)
 		os.Remove(stPath)
 		h, off = sha256.New(), 0
 		hk.onDisk(0)
@@ -363,8 +360,8 @@ func (d *downloader) fetch(ctx context.Context, f FileSpec, dest string, hk dlHo
 		if complete {
 			ok, why := d.finalCheck(f, part, off, want, h)
 			if ok {
-				if err := os.Rename(part, dest); err != nil {
-					return fileError(err, dest)
+				if err := renameRetry(part, dest); err != nil {
+					return justWrittenError(err, dest)
 				}
 				os.Remove(stPath)
 				return nil
@@ -374,7 +371,7 @@ func (d *downloader) fetch(ctx context.Context, f FileSpec, dest string, hk dlHo
 				shaFails++
 				if shaFails >= 2 {
 					restart()
-					return friendly(errors.New(why), fmt.Sprintf("The download of “%s” was damaged twice in a row. Press Resume to try again. If this keeps happening, check your internet connection.", f.Label))
+					return friendly(errors.New(why), fmt.Sprintf("The download of “%s” was damaged twice in a row. Press “Try again”. If this keeps happening, your internet connection, a proxy or an antivirus may be changing the files.", f.Label))
 				}
 			} else {
 				sizeFails++
@@ -398,11 +395,26 @@ func (d *downloader) fetch(ctx context.Context, f FileSpec, dest string, hk dlHo
 			return err
 		}
 		if progressed {
-			tries = 0
+			tries, refusals = 0, 0
+		}
+		var rr *resumeRefused
+		if errors.As(err, &rr) {
+			// Several answers in a row say this server cannot continue the file
+			// (no Range support, or it resumes at another place): start it over.
+			if refusals++; refusals >= 3 {
+				hk.logf("%s: %v (%d times); downloading this file from the start", f.Name, err, refusals)
+				restart()
+				tries, refusals = 0, 0
+				continue
+			}
 		}
 		tries++
 		if tries > d.maxTries {
-			return friendly(err, "The download keeps stopping because the internet connection is not working. Check your connection, then press Resume. Nothing downloaded so far is lost.")
+			var wp *webPage
+			if errors.As(err, &wp) {
+				return friendly(err, "The internet connection sends a web page instead of the AI files. If you use a hotel, café or school Wi-Fi, open your browser and sign in to the Wi-Fi first, then press “Try again”. Nothing downloaded so far is lost.")
+			}
+			return friendly(err, "The download keeps stopping because the internet connection is not working. Check your connection, then press “Try again”. Nothing downloaded so far is lost.")
 		}
 		wait := d.backoff << (tries - 1)
 		if wait > d.maxBackoff || wait <= 0 {
@@ -432,6 +444,62 @@ type retryAfter struct {
 
 func (r *retryAfter) Error() string { return r.err.Error() }
 func (r *retryAfter) Unwrap() error { return &retryable{r.err} }
+
+// resumeRefused: the server answered a resume request in a way that cannot be
+// appended to the .part (no Range support, wrong offset). Retried; the file is
+// only started over after several such answers in a row.
+type resumeRefused struct{ err error }
+
+func (r *resumeRefused) Error() string { return r.err.Error() }
+func (r *resumeRefused) Unwrap() error { return &retryable{r.err} }
+
+// webPage: an HTML page instead of the file (captive portal, proxy error page).
+type webPage struct{ err error }
+
+func (r *webPage) Error() string { return r.err.Error() }
+func (r *webPage) Unwrap() error { return &retryable{r.err} }
+
+func isWebPage(resp *http.Response) bool {
+	ct := strings.ToLower(resp.Header.Get("Content-Type"))
+	return strings.HasPrefix(ct, "text/html") || strings.HasPrefix(ct, "application/xhtml")
+}
+
+var hex64 = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// publisherCheck asks the download server (without following the redirect to
+// the CDN) which file it would send. Hugging Face answers with X-Linked-Etag =
+// the file's sha256 and X-Linked-Size. If those differ from the pinned values,
+// the publisher replaced the file: stop now, not after a 20 GB download that
+// cannot pass the check. Any other answer (no such headers, no connection) lets
+// the download go ahead; the sha256 is checked at the end anyway.
+func (d *downloader) publisherCheck(ctx context.Context, f FileSpec, src string, hk dlHooks) error {
+	if f.SHA256 == "" {
+		return nil
+	}
+	hctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(hctx, http.MethodHead, src, nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("User-Agent", "GlowStudio/"+launcherVersion)
+	c := *d.client
+	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := c.Do(req)
+	if err != nil {
+		return nil
+	}
+	resp.Body.Close()
+	etag := strings.ToLower(strings.Trim(strings.TrimPrefix(strings.TrimSpace(resp.Header.Get("X-Linked-Etag")), "W/"), `"`))
+	size, _ := strconv.ParseInt(resp.Header.Get("X-Linked-Size"), 10, 64)
+	changed := (hex64.MatchString(etag) && etag != f.SHA256) || (size > 0 && f.Size > 0 && size != f.Size)
+	if !changed {
+		return nil
+	}
+	hk.logf("%s: the server now has a different file (sha256 %s, %d bytes; expected %s, %d bytes)", f.Name, etag, size, f.SHA256, f.Size)
+	return friendly(fmt.Errorf("publisher changed %s: sha256 %s size %d", f.Name, etag, size),
+		fmt.Sprintf("“%s” was changed by its publisher, so Glow Studio can’t check it. Please download the latest Glow Studio, then try again. Nothing downloaded so far is lost.", f.Label))
+}
 
 func (d *downloader) finalCheck(f FileSpec, part string, off, want int64, h hash.Hash) (bool, string) {
 	st, err := os.Stat(part)
@@ -493,12 +561,16 @@ func (d *downloader) attempt(ctx context.Context, f FileSpec, src, part, stPath 
 	}
 	defer resp.Body.Close()
 
+	// What a resume request must not do is cost the user what is already on
+	// disk: every unexpected answer below is retried with the .part untouched.
+	var skip int64 // bytes at the start of a 206 body that we already have
 	switch {
+	case (resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusPartialContent) && isWebPage(resp):
+		return off, want, &webPage{fmt.Errorf("HTTP %d sent a web page (%s) instead of the file (captive portal or proxy?)", resp.StatusCode, resp.Header.Get("Content-Type"))}
 	case resp.StatusCode == http.StatusPartialContent:
 		start, total, ok := parseContentRange(resp.Header.Get("Content-Range"))
-		if !ok || start != off {
-			// The server resumed somewhere else: start this file over.
-			return d.truncate(part, stPath, h, hk), want, &retryable{fmt.Errorf("server resumed at %d instead of %d", start, off)}
+		if !ok || start < 0 || start > off {
+			return off, want, &resumeRefused{fmt.Errorf("server resumed at %d instead of %d (%q)", start, off, resp.Header.Get("Content-Range"))}
 		}
 		if total > 0 {
 			if f.SizeFlexible {
@@ -507,10 +579,24 @@ func (d *downloader) attempt(ctx context.Context, f FileSpec, src, part, stPath 
 				return off, want, &retryable{fmt.Errorf("server file is %d bytes, expected %d", total, f.Size)}
 			}
 		}
+		skip = off - start // it resumed a little earlier: skip what we have
 	case resp.StatusCode == http.StatusOK:
 		if off > 0 {
-			hk.logf("%s: the server does not support resuming; starting this file again", f.Name)
-			off = d.truncate(part, stPath, h, hk)
+			// The server ignored Range. Start over only if this is plainly the
+			// whole file; a page of another size (hotel Wi-Fi login, proxy error)
+			// must not wipe what is already downloaded.
+			cl := resp.ContentLength
+			whole := cl > 0 && ((!f.SizeFlexible && cl == f.Size) ||
+				(f.SizeFlexible && cl >= f.MinSize && (f.MaxSize == 0 || cl <= f.MaxSize)))
+			switch {
+			case whole:
+				hk.logf("%s: the server does not support resuming; starting this file again", f.Name)
+				off = d.truncate(part, stPath, h, hk)
+			case cl < 0:
+				return off, want, &resumeRefused{errors.New("server answered a resume request with the whole file of unknown size")}
+			default:
+				return off, want, &retryable{fmt.Errorf("server answered a resume request with %d bytes, expected %d (captive portal or proxy?)", cl, f.Size)}
+			}
 		}
 		if resp.ContentLength > 0 {
 			if f.SizeFlexible {
@@ -527,7 +613,7 @@ func (d *downloader) attempt(ctx context.Context, f FileSpec, src, part, stPath 
 		if _, total, ok := parseContentRange(resp.Header.Get("Content-Range")); ok && total == off && f.SizeFlexible {
 			return off, total, nil
 		}
-		return d.truncate(part, stPath, h, hk), want, &retryable{errors.New("range not satisfiable")}
+		return off, want, &resumeRefused{fmt.Errorf("range not satisfiable at %d (%q)", off, resp.Header.Get("Content-Range"))}
 	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
 		err := fmt.Errorf("server answered HTTP %d", resp.StatusCode)
 		if s, e := strconv.Atoi(resp.Header.Get("Retry-After")); e == nil && s > 0 {
@@ -542,7 +628,11 @@ func (d *downloader) attempt(ctx context.Context, f FileSpec, src, part, stPath 
 		return off, want, &retryable{fmt.Errorf("server answered HTTP %d", resp.StatusCode)}
 	}
 
-	out, err := os.OpenFile(part, os.O_CREATE|os.O_WRONLY, 0o644)
+	flags := os.O_CREATE | os.O_WRONLY
+	if off == 0 {
+		flags |= os.O_TRUNC // a fresh start: nothing old may remain past what is written
+	}
+	out, err := os.OpenFile(part, flags, 0o644)
 	if err != nil {
 		return off, want, fileError(err, part)
 	}
@@ -597,14 +687,24 @@ func (d *downloader) attempt(ctx context.Context, f FileSpec, src, part, stPath 
 		n, rerr := resp.Body.Read(buf)
 		if n > 0 {
 			last.Store(time.Now().UnixNano())
+		}
+		chunk := buf[:n]
+		if skip > 0 && n > 0 { // the server resumed a little early: drop what we have
+			k := min(int64(n), skip)
+			chunk, skip = chunk[k:], skip-k
+			hk.onNet(int(k))
+		}
+		if n = len(chunk); n > 0 {
+			extra := false
 			if !f.SizeFlexible && f.Size > 0 && off+int64(n) > f.Size {
-				out.Close()
-				return d.truncate(part, stPath, h, hk), want, &retryable{errors.New("server sent more data than expected")}
+				// More data than the file has: keep what fits; the sha256 decides.
+				n, extra = int(f.Size-off), true
+				hk.logf("%s: the server sent more data than expected; ignoring the rest", f.Name)
 			}
-			if _, werr := bw.Write(buf[:n]); werr != nil {
+			if _, werr := bw.Write(chunk[:n]); werr != nil {
 				return finish(fileError(werr, part))
 			}
-			h.Write(buf[:n])
+			h.Write(chunk[:n])
 			off += int64(n)
 			hk.onNet(n)
 			hk.onDisk(off)
@@ -615,6 +715,9 @@ func (d *downloader) attempt(ctx context.Context, f FileSpec, src, part, stPath 
 				out.Sync()
 				saveState(stPath, f, off, h)
 				savedAt = off
+			}
+			if extra {
+				return finish(nil)
 			}
 		}
 		if rerr == io.EOF {
@@ -675,16 +778,70 @@ func parseContentRange(v string) (start, total int64, ok bool) {
 func fileError(err error, path string) error {
 	switch {
 	case isDiskFull(err):
-		return friendly(err, "The drive is full. Free up some space (or choose another folder), then press Resume. Nothing downloaded so far is lost.")
+		return friendly(err, "The drive is full. Free up some space (or choose another folder), then press “Try again”. Nothing downloaded so far is lost.")
 	case isFileBusy(err):
-		return friendly(err, "Another program is using one of the AI files. Stop the AI engine (and close other AI programs), then press Resume.")
+		return friendly(err, "Another program is using one of the AI files. Stop the AI engine (and close other AI programs), then press “Try again”.")
 	case isAccessDenied(err):
 		return friendly(err, "Glow Studio is not allowed to write to “"+filepath.Dir(path)+"”. Please choose another folder.")
 	case isPathTooLong(err):
 		return friendly(err, "The install folder path is too long. Please choose a shorter folder, like D:\\GlowStudio.")
 	}
-	return friendly(err, "Glow Studio could not save a file ("+err.Error()+"). Press Resume to try again, or choose another folder.")
+	return friendly(err, "Glow Studio could not save a file ("+err.Error()+"). Press “Try again”, or choose another folder.")
 }
+
+// justWrittenError explains a failure to rename or replace a file Glow Studio
+// has just written itself: on Windows that is almost always an antivirus or the
+// search indexer still reading the new file, not a folder without permission.
+func justWrittenError(err error, path string) error {
+	if isTransientFSErr(err) {
+		return friendly(err, "Your antivirus is still checking a file that was just downloaded. Wait a minute, then press “Try again”. Nothing downloaded so far is lost.")
+	}
+	return fileError(err, path)
+}
+
+// renameRetry renames, retrying for a few seconds while another program
+// (antivirus, search indexer, backup) briefly holds the file: Windows then
+// refuses the rename with "access denied" or "sharing violation". Go's own
+// cmd/go does the same (robustio).
+func renameRetry(from, to string) error {
+	var err error
+	wait := 25 * time.Millisecond
+	for deadline := time.Now().Add(renameRetryFor); ; {
+		if err = osRename(from, to); err == nil || !isTransientFSErr(err) || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(wait)
+		if wait *= 2; wait > 500*time.Millisecond {
+			wait = 500 * time.Millisecond
+		}
+	}
+}
+
+// removeRetry is os.Remove with the same retries; a missing file is fine.
+func removeRetry(path string) error {
+	var err error
+	wait := 25 * time.Millisecond
+	for deadline := time.Now().Add(renameRetryFor); ; {
+		if err = os.Remove(path); err == nil || errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if !isTransientFSErr(err) || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(wait)
+		if wait *= 2; wait > 500*time.Millisecond {
+			wait = 500 * time.Millisecond
+		}
+	}
+}
+
+// errTransientTest lets tests simulate a Windows sharing violation.
+var errTransientTest = errors.New("simulated sharing violation")
+
+var (
+	renameRetryFor = 5 * time.Second
+	osRename       = os.Rename // tests simulate a file held by an antivirus
+)
 
 func dirError(err error, dir string) error { return fileError(err, filepath.Join(dir, "x")) }
 

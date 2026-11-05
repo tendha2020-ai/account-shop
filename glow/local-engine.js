@@ -336,7 +336,8 @@
   }
   function getStatus(opt) {
     if (!isLoopbackPage()) return Promise.reject(LocalAIError('unavailable', MSG.unavailable, 'not served by the desktop launcher'));
-    return request('GET', ENGINE + '/status', undefined, { timeout: (opt && opt.timeout) || 8000, signal: opt && opt.signal }).then(function (res) {
+    var refresh = !!(opt && opt.refresh); // "Check again": the launcher asks the graphics driver afresh (waits up to ~6 s)
+    return request('GET', ENGINE + '/status' + (refresh ? '?refresh=1' : ''), undefined, { timeout: (opt && opt.timeout) || (refresh ? 15000 : 8000), signal: opt && opt.signal }).then(function (res) {
       if (!res.ok) throw LocalAIError('unavailable', MSG.unavailable, 'HTTP ' + res.status);
       return readJSON(res).then(function (s) {
         if (!isStatus(s)) throw LocalAIError('unavailable', MSG.unavailable, 'not a launcher status');
@@ -349,9 +350,15 @@
   function detect() {
     // The launcher only ever serves on loopback, so the public website does not even ask (no 404 noise).
     if (!isLoopbackPage()) return Promise.resolve(null);
-    return getStatus({ timeout: 5000 }).catch(function () { return null; });
+    // A launcher that is busy for a moment (just started, PC waking up) gets a second chance; a page without the
+    // launcher endpoints (404 / not a status) does not.
+    return getStatus({ timeout: 5000 }).catch(function (e) {
+      if (!e || e.code !== 'network') return null;
+      return delay(700).then(function () { return getStatus({ timeout: 5000 }); }).catch(function () { return null; });
+    });
   }
-  function status() { return getStatus(); }
+  // status({refresh: true}) also re-checks the graphics card (for "Check again" after a driver update)
+  function status(opt) { return getStatus(opt && opt.refresh ? { refresh: true } : undefined); }
 
   function normPacks(packs) {
     var list = Array.isArray(packs) ? packs : (typeof packs === 'string' ? [packs] : []);
@@ -367,9 +374,12 @@
       });
     });
   }
-  function install(packs, installDir) {
+  // opt.repair: "Check & repair files" — the launcher re-checks every file (and the unpacked engine) and fetches
+  // again what is damaged; it stops the engine first (409 while a video is being made).
+  function install(packs, installDir, opt) {
     var body = { packs: normPacks(packs) };
     if (typeof installDir === 'string' && installDir.trim()) body.installDir = installDir.trim();
+    if (opt && opt.repair) body.repair = true;
     return postEngine('/install', body, 'install-failed', 'The download couldn’t start. Please try again.');
   }
   function cancel() { return postEngine('/cancel', {}, 'cancel-failed', 'The download couldn’t be paused.'); }
@@ -394,8 +404,10 @@
 
   // A launcher error that reads like a sentence for people (not a raw exit code or Python error).
   function launcherSentence(t) {
-    return typeof t === 'string' && t.trim().length > 12 && t.length < 400 && /^[A-Z]/.test(t.trim()) &&
-      !/exited with code|Traceback|Exception|Error:|errno|0x[0-9a-f]{6,}/i.test(t);
+    if (typeof t !== 'string') return false;
+    t = t.trim();
+    return t.length > 12 && t.length < 400 && /^[“"‘'(]?[A-Z]/.test(t) && /[.!?)”]$/.test(t) && /\s\S+\s\S+\s/.test(t) &&
+      !/exited with code|exit status|Traceback|Exception|Error:|errno|0x[0-9a-f]{6,}|\b(?:GET|POST|HEAD|PUT)\s+\S|HTTP\/\d|unexpected EOF|dial tcp|read tcp|x509:|tls:|syscall|\bpanic\b/i.test(t);
   }
 
   // Resolves with the status once engine.state is 'ready'.
@@ -1174,7 +1186,9 @@
       t0 = now();
       return uploadImage(b, 'warmup.png', signal);
     }).then(function (name) {
-      var g = graphs.still({ image: name, prompt: 'A realistic photo of the same person from Picture 1 standing in a softly lit room, natural light.', seed: 1, job: 'warmup', model: rec.stillModel, width: 368, height: 640 });
+      // A new seed and file prefix every time: ComfyUI caches node results, and the same graph twice would be
+      // answered from that cache without loading or running anything (and the timing would be meaningless).
+      var g = graphs.still({ image: name, prompt: 'A realistic photo of the same person from Picture 1 standing in a softly lit room, natural light.', seed: randomSeed(), job: 'warmup' + newJobId(), model: rec.stillModel, width: 368, height: 640 });
       var promptId = uuid();
       ctx.stage('still', 0, 'Loading the photo model… (1–3 minutes the first time)');
       return queuePrompt(g, promptId, rec.clientId, signal).then(function () {
@@ -1185,14 +1199,29 @@
       }).then(function (h) {
         var f = pickFile(h.outputs, OUTPUT_NODE[rec.stillModel === 'klein' ? 'stillKlein' : 'stillQwen']);
         if (!f) throw LocalAIError('failed', MSG.failed, 'no warm-up output');
+        rec.cached = cachedInfo(h, g);
         return fetchFile(f, signal);
       });
     }).then(function (b) {
       ctx.stage('download', 1, 'Warm-up finished.');
-      return { seconds: Math.round((now() - t0) / 100) / 10, stillBlob: b, stillUrl: URL.createObjectURL(b) };
+      var c = rec.cached || {};
+      // modelsWereLoaded: every model loader was answered from ComfyUI's cache (an earlier job had loaded them)
+      return { seconds: Math.round((now() - t0) / 100) / 10, stillBlob: b, stillUrl: URL.createObjectURL(b), modelsWereLoaded: !!c.loaders, cached: !!c.all };
     });
     function fin() { if (socket) socket.close(); if (active === token) active = null; }
     return p.then(function (r) { fin(); return r; }, function (e) { fin(); throw e; });
+  }
+  // Which nodes of graph g ComfyUI answered from its cache ('execution_cached' in the history status messages).
+  function cachedInfo(h, g) {
+    var cached = {};
+    ((h && h.status && h.status.messages) || []).forEach(function (m) {
+      if (Array.isArray(m) && m[0] === 'execution_cached' && m[1] && Array.isArray(m[1].nodes)) m[1].nodes.forEach(function (id) { cached[String(id)] = true; });
+    });
+    var ids = Object.keys(g), loaders = ids.filter(function (id) { return /Loader/.test(g[id].class_type); });
+    return {
+      all: ids.length > 0 && ids.every(function (id) { return cached[id]; }),
+      loaders: loaders.length > 0 && loaders.every(function (id) { return cached[id]; })
+    };
   }
   function testImage() {
     // a plain head-and-shoulders silhouette, enough for the encoder to have "a person" to work with
@@ -1274,6 +1303,8 @@
     // plain-words reason (+ code, detail) for an engine in state 'error'
     explainEngineError: function (s) { var e = engineErrorFrom(s || lastStatus); return { code: e.code, message: e.message, detail: e.detail || '' }; },
     friendlyFile: friendlyFile,
+    // true when a launcher message is already a plain sentence for people (show it as is), false for raw errors
+    isPlainMessage: launcherSentence,
     isBusy: function () { return !!active; },
     minDriver: '580.00',
     vcRedistUrl: 'https://aka.ms/vc14/vc_redist.x64.exe',

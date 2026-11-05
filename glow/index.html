@@ -42,7 +42,8 @@
     </svg>
     <span class="brand-text">
       <b>Glow <em>Studio</em></b>
-      <small>Turn photos into scroll-stopping videos</small>
+      <small class="for-photo">Turn photos into scroll-stopping videos</small>
+      <small class="for-ai">One selfie, any scene</small>
     </span>
   </a>
   <div class="top-r">
@@ -216,7 +217,7 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg>
         Made on your device — your photos never leave it. Music is original &amp; royalty-free.
       </p>
-      <p class="foot-links"><a href="../">More apps</a><span>·</span><span>No sign-up · No watermark · Free</span></p>
+      <p class="foot-links"><a class="more-apps" href="../">More apps</a><span>·</span><span>No sign-up · No watermark · Free</span></p>
     </footer>
   </section>
 </main>
@@ -228,6 +229,10 @@
       <p class="ai-kicker"><i aria-hidden="true"></i>The one-selfie trend, done right</p>
       <h1 class="ai-h1">Put yourself in <em>any scene</em></h1>
       <p class="ai-lede">Upload one selfie, pick a scene, and get a real-looking video of you dancing, partying or singing.</p>
+      <button type="button" class="ai-myvids" id="aiMyVids" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="3"/><path d="M10.5 9.3v5.4c0 .4.4.6.7.4l4.2-2.7c.3-.2.3-.6 0-.8l-4.2-2.7c-.3-.2-.7 0-.7.4z"/></svg>
+        My AI videos <b id="aiMyVidsN">0</b>
+      </button>
     </div>
 
     <article class="card ai-photo" id="aiPhotoCard">
@@ -274,9 +279,9 @@
       <button type="button" class="cta" id="aiMake">
         <span class="cta-main">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l2.1 6 6.4 2.3-6.4 2.3-2.1 6-2.1-6-6.4-2.3 6.4-2.3z"/><path d="M19 15.5l.9 2.4 2.4.9-2.4.9-.9 2.4-.9-2.4-2.4-.9 2.4-.9z"/></svg>
-          Make my video
+          <span id="aiMakeT">Make my video</span>
         </span>
-        <span class="cta-sub" id="aiCost">about $0.57, charged by fal.ai to your account</span>
+        <span class="cta-sub" id="aiCost">5 s · Built-in music · about $0.57 from your fal.ai credit</span>
       </button>
     </div>
   </section>
@@ -335,7 +340,7 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 3v5c0 4.6-3 8.6-7 10-4-1.4-7-5.4-7-10V6z"/></svg>
         <span>Your selfie goes straight from this browser to <a href="https://fal.ai" target="_blank" rel="noopener">fal.ai</a>, using your own key, and nowhere else. Use only your own photo, or one you have permission to use, of an adult. Every video gets a small &ldquo;AI-generated&rdquo; label.</span>
       </p>
-      <p class="foot-links"><button type="button" class="foot-btn" id="aiFootKey">fal.ai key settings</button><span>&middot;</span><a href="../">More apps</a><span>&middot;</span><span>No watermark</span></p>
+      <p class="foot-links"><button type="button" class="foot-btn" id="aiFootKey">fal.ai key settings</button><span>&middot;</span><a class="more-apps" href="../">More apps</a><span>&middot;</span><span>No watermark</span></p>
     </footer>
   </section>
 </main>
@@ -402,7 +407,7 @@
 <div class="modal ai-modal" id="aiConnect" hidden>
   <div class="sheet ai-connect" role="dialog" aria-modal="true" aria-labelledby="aiConnT" aria-describedby="aiConnLede">
     <div class="sheet-h">
-      <h3 id="aiConnT"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l2.1 6 6.4 2.3-6.4 2.3-2.1 6-2.1-6-6.4-2.3 6.4-2.3z"/></svg>Connect fal.ai</h3>
+      <h3 id="aiConnT" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l2.1 6 6.4 2.3-6.4 2.3-2.1 6-2.1-6-6.4-2.3 6.4-2.3z"/></svg>Connect fal.ai</h3>
       <button type="button" class="icon-btn" id="aiConnClose" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </div>
     <p class="ai-conn-lede" id="aiConnLede">AI Scenes are made by <b>fal.ai</b>, a pay-as-you-go AI service. You use your own fal.ai account, so you pay fal only for the videos you make &mdash; usually <b id="aiConnRange">$0.57&ndash;$1.55</b> each. Glow Studio is free and takes no cut.</p>
@@ -475,7 +480,8 @@
       <li data-step="video" data-state="todo"><span class="ai-sn" aria-hidden="true"><i>2</i><svg viewBox="0 0 24 24"><path d="M5.5 12.5l4 4 9-9"/></svg></span><span class="ai-st"><b>Bringing it to life</b><small id="aiSubVideo"></small></span></li>
       <li data-step="finish" data-state="todo"><span class="ai-sn" aria-hidden="true"><i>3</i><svg viewBox="0 0 24 24"><path d="M5.5 12.5l4 4 9-9"/></svg></span><span class="ai-st"><b id="aiFinishName">Adding music &amp; finishing</b><small id="aiSubFinish"></small></span></li>
     </ol>
-    <p class="ai-msg" id="aiProgMsg" role="status" aria-live="polite"></p>
+    <p class="ai-msg" id="aiProgMsg"></p>
+    <p class="sr-only" id="aiAnnounce" role="status" aria-live="polite"></p>
     <p class="ai-elapsed"><span id="aiElapsed">0:00</span><span id="aiEta"></span></p>
     <div class="ai-err" id="aiErr" hidden role="alert">
       <span class="ai-err-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.4v.1"/></svg></span>
@@ -487,7 +493,7 @@
       <button type="button" class="btn primary wide" id="aiTapFinish" hidden>Tap to finish your video</button>
       <button type="button" class="btn glass wide" id="aiCancel">Cancel</button>
     </div>
-    <p class="ai-keepopen" id="aiKeepOpen">Videos take a few minutes. If you leave, come back within an hour and we&rsquo;ll pick up right where we left off &mdash; without paying again.</p>
+    <p class="ai-keepopen" id="aiKeepOpen">Videos take a few minutes. You can leave &mdash; come back on this device later today and we&rsquo;ll pick up right where we left off, without paying again.</p>
   </div>
 </div>
 
@@ -511,7 +517,7 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4M8 7.5l4-4 4 4M6 11v7.5A1.5 1.5 0 0 0 7.5 20h9a1.5 1.5 0 0 0 1.5-1.5V11"/></svg>Share
       </button>
       <button type="button" class="btn glass" id="aiAgain">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 0 1 12.9-5.2L20 9.5M20 4.5v5h-5M19.5 12a7.5 7.5 0 0 1-12.9 5.2L4 14.5M4 19.5v-5h5"/></svg>Make again
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 0 1 12.9-5.2L20 9.5M20 4.5v5h-5M19.5 12a7.5 7.5 0 0 1-12.9 5.2L4 14.5M4 19.5v-5h5"/></svg><span id="aiAgainT">Make again</span>
       </button>
       <button type="button" class="btn text wide" id="aiOther">Try another scene with this photo</button>
       <button type="button" class="btn text wide ai-danger" id="aiDelete" hidden>Delete from this device</button>

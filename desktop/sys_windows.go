@@ -214,6 +214,28 @@ func platformDirCheck(p string) error {
 	return nil
 }
 
+// errLocked: another process holds the lock.
+var errLocked = errors.New("locked by another process")
+
+// lockFile opens path with no sharing allowed: a second launcher gets a sharing
+// violation until this one exits (or crashes: Windows closes the handle).
+func lockFile(path string) (release func(), err error) {
+	p, err := syscall.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	h, err := syscall.CreateFile(p, syscall.GENERIC_READ|syscall.GENERIC_WRITE, 0, nil,
+		syscall.OPEN_ALWAYS, syscall.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		var en syscall.Errno
+		if errors.As(err, &en) && (en == errorSharingViolation || en == errorLockViolation) {
+			return nil, errLocked
+		}
+		return nil, err
+	}
+	return func() { syscall.CloseHandle(h) }, nil
+}
+
 func isDiskFull(err error) bool {
 	var en syscall.Errno
 	if errors.As(err, &en) {
@@ -236,6 +258,19 @@ func isAccessDenied(err error) bool {
 		return true
 	}
 	return errors.Is(err, os.ErrPermission)
+}
+
+// isTransientFSErr: errors Windows gives while another program (antivirus,
+// search indexer, backup) briefly has a file open; worth retrying.
+func isTransientFSErr(err error) bool {
+	if errors.Is(err, errTransientTest) {
+		return true
+	}
+	var en syscall.Errno
+	if errors.As(err, &en) {
+		return en == errorAccessDenied || en == errorSharingViolation || en == errorLockViolation
+	}
+	return false
 }
 
 func isPathTooLong(err error) bool {

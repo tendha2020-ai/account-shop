@@ -52,6 +52,7 @@
 
   var ICON = {
     ok: '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+    wait: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5"/><path d="M12 8v4l2.5 1.5"/></svg>',
     warn: '<svg viewBox="0 0 24 24"><path d="M12 6.5v7M12 17.5h.01"/></svg>',
     bad: '<svg viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></svg>',
     dl: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',
@@ -79,7 +80,8 @@
     dismissJob: false,          // "Not now" on a paused/failed extra-pack download
     sel: Array.isArray(prefs.packs) ? prefs.packs.slice() : ['core'],
     dirEdit: false, dir: '',
-    busy: null, err: null, pendingFocus: false,
+    busy: null, err: null, note: null, pendingFocus: false,
+    connecting: false,          // in the app, but the launcher did not answer yet (retrying)
     offline: 0, startingSince: 0,
     warm: { state: 'idle' }, warmCtl: null,
     speeds: [], sysRamGB: null
@@ -97,7 +99,7 @@
   function ramGB() { if (S && typeof S.ramGB === 'number') return S.ramGB; if (S && typeof S.ramMB === 'number') return S.ramMB / 1024; return ui.sysRamGB; }
 
   function deriveView() {
-    if (!S) return 'website';
+    if (!S) return ui.connecting ? 'connecting' : 'website';
     var job = S.job;
     if (job && job.state === 'running') return 'install';
     if (ui.force) return ui.force;
@@ -112,8 +114,12 @@
   function pcChecks() {
     var g = S.gpu, rows = [];
     var need = L.diskNeededGB(['core'], S);
-    var blocker = false, driverBad = false, diskLow = false, soft = false;
-    if (!g) {
+    var blocker = false, driverBad = false, diskLow = false, soft = false, pending = false;
+    if (!g && S.gpuPending) {
+      // nvidia-smi has not answered yet (e.g. a laptop graphics card waking up)
+      pending = true;
+      rows.push({ k: 'wait', icon: 'gpu', l: 'Graphics card', v: 'Checking…', n: 'Looking for your graphics card. This takes a few seconds.' });
+    } else if (!g) {
       blocker = true;
       rows.push({ k: 'bad', icon: 'gpu', l: 'Graphics card', v: 'No NVIDIA graphics card found', n: 'Free AI needs an NVIDIA RTX graphics card with 8 GB of video memory.' });
     } else {
@@ -139,15 +145,24 @@
     }
     if (S.os && S.os !== 'windows') { soft = true; rows.push({ k: 'warn', icon: 'win', l: 'System', v: S.os, n: 'The free AI engine is made for Windows 10 and 11.' }); }
     var verdict;
-    if (blocker) verdict = { k: 'bad', t: 'This PC can’t run free AI', p: 'It needs an NVIDIA RTX graphics card with 8 GB of video memory. You can still make AI scenes online in Glow Studio.' };
+    if (pending) verdict = { k: 'wait', t: 'Checking this PC…', p: 'This takes a few seconds.' };
+    else if (blocker) verdict = { k: 'bad', t: 'This PC can’t run free AI', p: 'It needs an NVIDIA RTX graphics card with 8 GB of video memory. You can still make AI scenes online in Glow Studio.' };
     else if (driverBad) verdict = { k: 'warn', t: 'Almost ready — please update your graphics driver', p: 'You can start the download now and update the driver while it downloads. Restart your PC after updating.' };
     else if (diskLow) verdict = { k: 'warn', t: 'Your PC can do it — it just needs more free space', p: 'Free up space on this drive, or choose a folder on another drive in the next step.' };
     else if (soft) verdict = { k: 'warn', t: 'Your PC can run free AI, a little slower', p: 'Everything needed is there. Videos may take a bit longer than usual.' };
     else verdict = { k: 'ok', t: 'Great — this PC can make free AI videos', p: 'Next, choose what to install.' };
-    return { rows: rows, verdict: verdict, blocker: blocker, driverBad: driverBad };
+    return { rows: rows, verdict: verdict, blocker: blocker, driverBad: driverBad, pending: pending };
   }
 
   function driverLink(cls) { return '<a class="eg-btn ' + (cls || 'glass') + '" href="' + esc(L.driverUrl) + '" target="_blank" rel="noopener">Update NVIDIA driver' + ICON.ext + '<span class="eg-live">(opens NVIDIA’s website)</span></a>'; }
+
+  function vConnecting() {
+    return {
+      shape: 'connecting', say: 'Connecting to Glow Studio',
+      html: '<section class="eg-card" aria-labelledby="egH"><div class="eg-hl"><span class="eg-spin" aria-hidden="true"></span><h2 id="egH">Connecting to Glow Studio…</h2></div>' +
+        '<p>This takes a few seconds.</p></section>'
+    };
+  }
 
   function vWebsite() {
     return {
@@ -172,15 +187,18 @@
   function vCheck() {
     var c = pcChecks();
     var rows = c.rows.map(function (r) {
-      return '<li>' + dot(r.k, r.k === 'ok' ? 'OK' : r.k === 'warn' ? 'Warning' : 'Problem') + '<span class="eg-ct"><span class="eg-cl">' + esc(r.l) + '</span><span class="eg-cv">' + esc(r.v) + '</span>' +
+      return '<li>' + dot(r.k, r.k === 'ok' ? 'OK' : r.k === 'warn' ? 'Warning' : r.k === 'wait' ? 'Checking' : 'Problem') + '<span class="eg-ct"><span class="eg-cl">' + esc(r.l) + '</span><span class="eg-cv">' + esc(r.v) + '</span>' +
         (r.n ? '<span class="eg-cn">' + esc(r.n) + '</span>' : '') + (r.link ? '<span class="eg-cn">' + driverLink('glass eg-mini') + '</span>' : '') + '</span></li>';
     }).join('');
-    var actions = c.blocker
-      ? '<a class="eg-btn primary" href="./#ai" data-primary>' + ICON.back + 'Back to AI Scenes</a><button type="button" class="eg-btn glass" data-act="recheck">Check again</button>'
+    var checking = ui.busy === 'recheck' ? '<span class="eg-spin" aria-hidden="true"></span>Checking…' : 'Check again';
+    var actions = c.pending
+      ? '<button type="button" class="eg-btn primary" data-act="continue" data-primary disabled>Continue</button>'
+      : c.blocker
+      ? '<a class="eg-btn primary" href="./#ai" data-primary>' + ICON.back + 'Back to AI Scenes</a><button type="button" class="eg-btn glass" data-act="recheck"' + (ui.busy ? ' disabled' : '') + '>' + checking + '</button>'
       : '<button type="button" class="eg-btn primary" data-act="continue" data-primary>' + (c.driverBad ? 'Continue anyway' : 'Continue') + '</button>' +
-        '<button type="button" class="eg-btn text" data-act="recheck">Check again</button>';
+        '<button type="button" class="eg-btn text" data-act="recheck"' + (ui.busy ? ' disabled' : '') + '>' + checking + '</button>';
     return {
-      shape: 'check:' + c.verdict.k + ':' + JSON.stringify(c.rows), say: c.verdict.t,
+      shape: 'check:' + c.verdict.k + ':' + (ui.busy || '') + ':' + JSON.stringify(c.rows), say: c.verdict.t,
       html: '<section class="eg-card" aria-labelledby="egH"><p class="eg-kicker">Step 1 of 5</p><h2 id="egH">Check this PC</h2>' +
         '<div class="eg-verdict ' + c.verdict.k + '">' + dot(c.verdict.k, '') + '<div><b>' + esc(c.verdict.t) + '</b><p>' + esc(c.verdict.p) + '</p></div></div>' +
         '<ul class="eg-checks">' + rows + '</ul>' +
@@ -267,37 +285,54 @@
     return '';
   }
 
+  // Fallback for raw, technical errors only; the launcher's own messages are already plain words.
   function friendlyJobError(e) {
     e = String(e || '');
     if (/space|disk full|ENOSPC|not enough/i.test(e)) return 'Your drive ran out of space. Free up some space, then try again.';
+    if (/permission|access is denied|EACCES|EPERM|read-only/i.test(e)) return 'Glow Studio isn’t allowed to save files in this folder. Please choose another folder.';
+    if (/sharing violation|being used by another|in use/i.test(e)) return 'Another program is using one of the AI files (often an antivirus checking it). Wait a minute, then try again.';
     if (/sha|hash|checksum|verif|corrupt|damaged|size mismatch/i.test(e)) return 'A downloaded file was damaged. Press “Try again” to download it again.';
     if (/7z|7zr|extract|unpack/i.test(e)) return 'Unpacking the AI engine didn’t work. Press “Try again”.';
+    if (/\b40[134]\b|not found|not available/i.test(e)) return 'One of the AI files isn’t available from the download server right now. Please try again later.';
     if (/network|connect|timeout|timed out|interrupt|reset|refused|dns|dial|50[0-9]|429|offline/i.test(e)) return 'The internet connection was interrupted.';
     return 'The download stopped unexpectedly.';
   }
+  // What to show for job.error: the launcher's sentence as is (it says what to do), else a plain fallback.
+  function jobErrorText(j) {
+    var e = String((j && j.error) || '').trim();
+    var t = e && L.isPlainMessage && L.isPlainMessage(e) ? e : friendlyJobError(e);
+    // name the button on this page ("Try again"), keeping the sentence's own capital letter
+    t = t.replace(/\b(press) (?:“|")?Resume(?: download)?(?:”|")?(?: to (?:try again|continue))?/gi, function (m, p) { return p + ' “Try again”'; });
+    if (!/lost|saved|kept/i.test(t)) t += ' Your progress is saved.';
+    return t;
+  }
+  function wantsFolder(t) { return /another folder|shorter folder|choose a folder|another drive/i.test(t || ''); }
   function vInstall() {
     var j = S.job || {};
     var st = j.state;
-    var head = st === 'running' ? 'Installing free AI' : st === 'cancelled' ? 'Download paused' : 'The download stopped';
+    var rep = !!j.repair;
+    var head = st === 'running' ? (rep ? 'Checking & repairing files' : 'Installing free AI') : st === 'cancelled' ? (rep ? 'Check paused' : 'Download paused') : (rep ? 'The check stopped' : 'The download stopped');
+    var errText = st === 'error' ? jobErrorText(j) : '';
     var intro = st === 'running'
       ? '<p class="eg-steptext" data-f="step"></p>'
       : st === 'cancelled'
-        ? '<p>Your progress is saved — <b data-f="doneTxt"></b> already downloaded. Continue whenever you like.</p>'
-        : '<p class="eg-err" role="alert">' + esc(friendlyJobError(j.error)) + ' Your progress is saved.</p>';
+        ? '<p>Your progress is saved — <b data-f="doneTxt"></b> already ' + (rep ? 'checked or downloaded' : 'downloaded') + '. Continue whenever you like.</p>'
+        : '<p class="eg-err" role="alert">' + esc(errText) + '</p>';
     var file = st === 'running'
       ? '<div class="eg-file" data-f="fileBox"><div class="eg-prog-h"><span data-f="fileName"></span><span data-f="fileTxt"></span></div>' +
         '<div class="eg-bar thin" role="progressbar" aria-label="Current file" aria-valuemin="0" aria-valuemax="100" data-f="fileBar"><i></i></div></div>' +
         '<div class="eg-stats"><span>Speed: <b data-f="speed">—</b></span><span>Time left: <b data-f="eta">working it out…</b></span></div>' +
-        '<p class="eg-note">You can keep using your PC. If Glow Studio closes or the internet drops, the download continues where it stopped.</p>'
+        '<p class="eg-note">You can keep using your PC. <b>Closing this window does not stop the download</b>: it keeps going in the background, and Glow Studio closes by itself when it is finished. To stop it, press Cancel. If the internet drops or the PC restarts, it continues where it stopped.</p>'
       : '';
     var actions = st === 'running'
       ? '<button type="button" class="eg-btn glass" data-act="cancel" data-primary' + (ui.busy ? ' disabled' : '') + '>Cancel</button><span class="eg-small">Cancelling keeps what is already downloaded.</span>'
-      : '<button type="button" class="eg-btn primary" data-act="resume" data-primary' + (ui.busy ? ' disabled' : '') + '>' + (ui.busy === 'resume' ? '<span class="eg-spin" aria-hidden="true"></span>' : '') + (st === 'cancelled' ? 'Resume download' : 'Try again') + '</button>' +
-        '<button type="button" class="eg-btn text" data-act="changePacks">Change packs</button>' +
+      : '<button type="button" class="eg-btn primary" data-act="resume" data-primary' + (ui.busy ? ' disabled' : '') + '>' + (ui.busy === 'resume' ? '<span class="eg-spin" aria-hidden="true"></span>' : '') + (st === 'cancelled' ? (rep ? 'Continue the check' : 'Resume download') : 'Try again') + '</button>' +
+        (wantsFolder(errText) ? '<button type="button" class="eg-btn glass" data-act="changeDir">Choose another folder</button>' : '') +
+        '<button type="button" class="eg-btn text" data-act="changePacks">Change packs or folder</button>' +
         (installed('core') ? '<button type="button" class="eg-btn text" data-act="notNow">Not now</button>' : '');
     return {
-      shape: 'install:' + st + ':' + (ui.busy || '') + ':' + (ui.err || ''),
-      say: st === 'running' ? 'Download running' : st === 'cancelled' ? 'Download paused' : 'The download stopped',
+      shape: 'install:' + st + ':' + (rep ? 1 : 0) + ':' + errText + ':' + (ui.busy || '') + ':' + (ui.err || ''),
+      say: head,
       html: '<section class="eg-card" aria-labelledby="egH"><p class="eg-kicker">Step 3 of 5</p><h2 id="egH">' + head + '</h2>' + intro +
         '<div class="eg-prog"><div class="eg-prog-h"><b>Overall</b><span><span data-f="overallTxt"></span> · <span class="eg-pct" data-f="pct"></span></span></div>' +
         '<div class="eg-bar' + (st === 'running' ? '' : ' idle') + '" role="progressbar" aria-label="Overall download" aria-valuemin="0" aria-valuemax="100" data-f="bar"><i></i></div></div>' +
@@ -343,7 +378,9 @@
         '<div class="eg-actions"><button type="button" class="eg-btn text" data-act="warmCancel">Stop the test</button></div></div>';
     }
     if (w.state === 'done') {
-      return '<div class="eg-sub"><h3>Test passed</h3><div class="eg-thumb"><img src="' + esc(w.url) + '" alt="Test picture made by the AI engine"><p>The AI made a test picture in ' + esc(dur(w.seconds).replace('about ', '') || 'a few seconds') + '. Your first video will start faster now.</p></div></div>';
+      var took = w.seconds >= 1 ? esc(dur(w.seconds).replace('about ', '')) : 'a few seconds';
+      return '<div class="eg-sub"><h3>Test passed</h3><div class="eg-thumb"><img src="' + esc(w.url) + '" alt="Test picture made by the AI engine"><p>The AI made a test picture in ' + took + '. ' +
+        (w.loaded ? 'The photo AI was already loaded, so a video can start right away.' : 'The photo AI is now loaded, so your next video starts faster.') + '</p></div></div>';
     }
     if (w.state === 'error') {
       return '<div class="eg-sub"><h3>The test didn’t finish</h3><p class="eg-err" role="alert">' + esc(w.msg) + '</p><div class="eg-actions"><button type="button" class="eg-btn glass" data-act="warm">Try the test again</button></div></div>';
@@ -366,8 +403,10 @@
       var x = L.explainEngineError(S);
       var fix = /Visual C\+\+/.test(x.message) ? '<a class="eg-btn glass" href="' + esc(L.vcRedistUrl) + '" target="_blank" rel="noopener">Get the Microsoft component' + ICON.ext + '</a>' : (/driver/i.test(x.message) ? driverLink() : '');
       body = '<h2 id="egH">The AI engine couldn’t start</h2><p class="eg-err" role="alert">' + esc(x.message) + '</p><p class="eg-note">Open “Details” below to see the engine’s messages.</p>';
-      actions = '<button type="button" class="eg-btn primary" data-act="start" data-primary' + (ui.busy ? ' disabled' : '') + '>' + ICON.play + 'Start again</button>' + fix +
-        '<button type="button" class="eg-btn text" data-act="repair">Check &amp; repair files</button>';
+      var repairFirst = /Check & repair/.test(x.message);
+      var repairBtn = '<button type="button" class="eg-btn ' + (repairFirst ? 'primary' : 'text') + '" data-act="repair"' + (repairFirst ? ' data-primary' : '') + (ui.busy ? ' disabled' : '') + '>Check &amp; repair files</button>';
+      var startBtn = '<button type="button" class="eg-btn ' + (repairFirst ? 'glass' : 'primary') + '" data-act="start"' + (repairFirst ? '' : ' data-primary') + (ui.busy ? ' disabled' : '') + '>' + ICON.play + 'Start again</button>';
+      actions = repairFirst ? repairBtn + startBtn : startBtn + fix + repairBtn;
     } else if (st === 'ready') {
       say = 'The AI engine is running';
       body = '<div class="eg-hl"><span class="eg-dot ok" aria-hidden="true">' + ICON.ok + '</span><h2 id="egH">The AI engine is running</h2></div>' +
@@ -381,10 +420,11 @@
         (driverBad ? driverLink() : '');
     }
     return {
-      shape: 'engine:' + st + ':' + ui.warm.state + ':' + (ui.busy || '') + ':' + (driverBad ? 1 : 0) + ':' + (ui.err || ''), say: say,
-      html: '<section class="eg-card" aria-labelledby="egH"><p class="eg-kicker">Step 4 of 5</p>' + body + '<p class="eg-err" role="alert">' + esc(ui.err || '') + '</p>' + (actions ? '<div class="eg-actions">' + actions + '</div>' : '') + '</section>'
+      shape: 'engine:' + st + ':' + ui.warm.state + ':' + (ui.busy || '') + ':' + (driverBad ? 1 : 0) + ':' + (ui.err || '') + ':' + (ui.note || ''), say: say,
+      html: '<section class="eg-card" aria-labelledby="egH"><p class="eg-kicker">Step 4 of 5</p>' + body + noteHtml() + '<p class="eg-err" role="alert">' + esc(ui.err || '') + '</p>' + (actions ? '<div class="eg-actions">' + actions + '</div>' : '') + '</section>'
     };
   }
+  function noteHtml() { return ui.note ? '<p class="eg-okline" role="status">' + dot('ok', '') + '<span>' + esc(ui.note) + '</span></p>' : ''; }
   function updEngine(root) {
     var el = $('[data-f="elapsed"]', root);
     if (el && ui.startingSince) el.textContent = 'Time so far: ' + clock((Date.now() - ui.startingSince) / 1000) + '.';
@@ -401,11 +441,11 @@
     var missing = L.packs.some(function (p) { return !installed(p.id); });
     var est = L.estimate({ quality: 'best' }).minutes;
     return {
-      shape: 'ready:' + L.packs.map(function (p) { return installed(p.id) ? 1 : 0; }).join('') + ':' + ui.warm.state + ':' + (ui.busy || '') + ':' + (ui.err || ''), say: 'Free AI is ready',
+      shape: 'ready:' + L.packs.map(function (p) { return installed(p.id) ? 1 : 0; }).join('') + ':' + ui.warm.state + ':' + (ui.busy || '') + ':' + (ui.err || '') + ':' + (ui.note || ''), say: 'Free AI is ready',
       html: '<section class="eg-card" aria-labelledby="egH"><p class="eg-kicker">Step 5 of 5</p>' +
         '<div class="eg-hl"><span class="eg-big-ok" aria-hidden="true">' + ICON.ok + '</span><div><h2 id="egH">Free AI is ready</h2></div></div>' +
         '<p>Make party videos on this PC for free — about ' + minRange(est) + ' per video. Keep Glow Studio open while a video is being made.</p>' +
-        '<ul class="eg-chips" aria-label="Installed packs">' + chips + '</ul>' +
+        '<ul class="eg-chips" aria-label="Installed packs">' + chips + '</ul>' + noteHtml() +
         '<div class="eg-actions"><a class="eg-btn primary big" href="./#ai" data-primary>' + ICON.back + 'Back to AI Scenes</a></div>' +
         (ui.warm.state !== 'idle' ? warmBox(true) : '') +
         '<p class="eg-err" role="alert">' + esc(ui.err || '') + '</p>' +
@@ -418,7 +458,7 @@
     };
   }
 
-  var VIEWS = { website: vWebsite, check: vCheck, packs: vPacks, install: vInstall, engine: vEngine, ready: vReady };
+  var VIEWS = { connecting: vConnecting, website: vWebsite, check: vCheck, packs: vPacks, install: vInstall, engine: vEngine, ready: vReady };
   var UPDATES = { packs: updPacks, install: updInstall, engine: updEngine, ready: updWarm };
 
   /* ---------------- render ---------------- */
@@ -483,7 +523,7 @@
       ['Free space', gb1(S.diskFreeGB)]
     ];
     if (j) facts.push(['Last download', j.state + ' — ' + (j.step || '') + (j.file ? ' — ' + j.file : '')]);
-    if (j && j.error) facts.push(['Download error', j.error]);
+    if (j && j.error) facts.push([j.repair ? 'Repair error' : 'Download error', j.error]);
     if (e.error) facts.push(['Engine error', e.error]);
     els.facts.innerHTML = facts.map(function (f) { return '<dt>' + esc(f[0]) + '</dt><dd>' + esc(f[1]) + '</dd>'; }).join('');
     var log = (e.log || []).join('\n') || 'No messages yet.';
@@ -496,14 +536,16 @@
 
   /* ---------------- polling ---------------- */
   var pollTimer = null, inflight = false;
-  function needFast() { return !!(S && ((S.job && S.job.state === 'running') || S.engine.state === 'starting' || ui.warm.state === 'running' || ui.offline)); }
+  function needFast() { return !!(S && ((S.job && S.job.state === 'running') || S.engine.state === 'starting' || S.gpuPending || ui.warm.state === 'running' || ui.offline)); }
   function refresh() {
     if (inflight) return Promise.resolve();
     inflight = true;
     return L.status().then(function (s) {
       var wasReady = S && S.engine.state === 'ready';
+      var prevJob = S && S.job;
       S = s; ui.offline = 0;
       if (s.engine.state === 'ready' && !wasReady) loadSysRam();
+      if (prevJob && prevJob.state === 'running' && s.job && s.job.state === 'done' && s.job.repair) ui.note = 'All AI files were checked and are in order.';
     }, function () { ui.offline++; }).then(function () { inflight = false; render(); });
   }
   function schedule() {
@@ -526,12 +568,12 @@
   /* ---------------- actions ---------------- */
   function act(name, fn) {
     ui.pendingFocus = els.view.contains(document.activeElement);
-    ui.busy = name; ui.err = null; render();
+    ui.busy = name; ui.err = null; ui.note = null; render();
     return Promise.resolve().then(fn).then(function () { return refresh(); }, function (e) { ui.err = (e && e.message) || 'Something went wrong. Please try again.'; })
       .then(function () { ui.busy = null; render(); schedule(); });
   }
   var ACTIONS = {
-    recheck: function () { return act('recheck', function () { return null; }); },
+    recheck: function () { return act('recheck', function () { return L.status({ refresh: true }).then(function (s) { S = s; }); }); },
     'continue': function () { ui.passedCheck = true; render(); },
     back: function () { ui.err = null; if (installed('core')) ui.force = null; else ui.passedCheck = false; render(); },
     dirChange: function () { ui.dirEdit = true; ui.dir = ui.dir || S.installDir || ''; render(); var i = $('#egDir'); if (i) { i.focus(); i.select(); } },
@@ -563,9 +605,10 @@
       // the folder is only sent when it changes (the launcher re-validates a folder it is given)
       var want = j.installDir || prefs.dir || '';
       var dir = want && want !== S.installDir ? want : undefined;
-      return act('resume', function () { ui.speeds = []; return L.install(packs, dir); });
+      return act('resume', function () { ui.speeds = []; return L.install(packs, dir, j.repair ? { repair: true } : undefined); });
     },
     changePacks: function () { ui.force = 'packs'; ui.passedCheck = true; ui.dismissJob = true; render(); },
+    changeDir: function () { ui.force = 'packs'; ui.passedCheck = true; ui.dismissJob = true; ACTIONS.dirChange(); },
     notNow: function () { ui.dismissJob = true; render(); },
     addPacks: function () { ui.force = 'packs'; ui.err = null; render(); },
     start: function () { return act('start', function () { return L.start(); }); },
@@ -573,7 +616,7 @@
     repair: function () {
       var packs = L.packs.filter(function (p) { return installed(p.id); }).map(function (p) { return p.id; });
       prefs = { packs: packs, dir: '' }; lsSet(PREF_KEY, prefs);
-      return act('repair', function () { return L.install(packs); });
+      return act('repair', function () { return L.install(packs, undefined, { repair: true }); });
     },
     finish: function () { ui.finished = true; render(); },
     warm: function () {
@@ -582,7 +625,7 @@
       ui.warm = { state: 'running', pct: 0, msg: 'Starting the test…' };
       render(); schedule();
       L.warmup(function (p) { ui.warm.pct = p.overall; ui.warm.msg = p.message; if (ui.view) updWarm(els.view); }, { signal: ui.warmCtl && ui.warmCtl.signal })
-        .then(function (r) { ui.warm = { state: 'done', seconds: r.seconds, url: r.stillUrl }; },
+        .then(function (r) { ui.warm = { state: 'done', seconds: r.seconds, url: r.stillUrl, loaded: !!r.modelsWereLoaded }; },
           function (e) { ui.warm = e && e.name === 'AbortError' ? { state: 'idle' } : { state: 'error', msg: (e && e.message) || 'The test didn’t work.' }; })
         .then(function () { render(); });
     },
@@ -613,16 +656,26 @@
   });
 
   /* ---------------- start ---------------- */
-  L.detect().then(function (s) {
-    S = s;
-    if (s) {
-      heartbeat();
-      if (s.engine.state === 'ready') loadSysRam();
-      // a reload in the middle of a running install comes straight back to step 3 (derived from status.job)
-      // already installed, or set up before and now missing a file (the engine is unpacked): no need to check the PC again
-      if (installed('core') || (s.engine && s.engine.comfyVersion)) ui.passedCheck = true;
-    }
+  function isLoopback() { var h = (location.hostname || '').toLowerCase(); return location.protocol === 'http:' && (h === '127.0.0.1' || h === 'localhost' || h === '[::1]' || h === '::1'); }
+  function begin(s) {
+    S = s; ui.connecting = false;
+    heartbeat();
+    if (s.engine.state === 'ready') loadSysRam();
+    // a reload in the middle of a running install comes straight back to step 3 (derived from status.job)
+    // already installed, or set up before and now missing a file (the engine is unpacked): no need to check the PC again
+    if (installed('core') || (s.engine && s.engine.comfyVersion)) ui.passedCheck = true;
     render();
-    if (s) schedule();
-  });
+    schedule();
+  }
+  // In the app, a launcher that is slow to answer (just started, PC waking up) must not be mistaken for the
+  // website: keep asking. A page without the launcher (website, 404) shows the download view at once.
+  function boot(tries) {
+    L.status().then(begin, function (e) {
+      var retry = isLoopback() && e && e.code === 'network';
+      if (retry && tries < 5) { ui.connecting = true; render(); setTimeout(function () { boot(tries + 1); }, 1500); return; }
+      ui.connecting = false; render();
+      if (retry) setTimeout(function () { boot(tries + 1); }, 5000); // the website view, but switch over when it answers
+    });
+  }
+  boot(0);
 })();

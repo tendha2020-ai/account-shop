@@ -54,11 +54,18 @@ type mockFiles struct {
 	gate        map[string]chan struct{} // block after half of the file until closed
 	ignoreRange bool
 	status      map[string]int
+	portal      int              // the next N answers are a 200 text/html login page
+	served      map[string]int64 // body bytes sent per file
+	resumeAt    map[string]int64 // 206 answers start at this offset instead of the requested one
+	refuse416   map[string]int   // answer the next N Range requests with 416
+	etag        map[string]string
+	heads       int
 }
 
 func newMockFiles() *mockFiles {
 	return &mockFiles{files: map[string][]byte{}, cutOnce: map[string]int64{}, stallOnce: map[string]int64{},
-		gate: map[string]chan struct{}{}, status: map[string]int{}}
+		gate: map[string]chan struct{}{}, status: map[string]int{}, served: map[string]int64{},
+		resumeAt: map[string]int64{}, refuse416: map[string]int{}, etag: map[string]string{}}
 }
 
 func (m *mockFiles) requests(name string) []string {
@@ -79,10 +86,47 @@ func (m *mockFiles) all() []string {
 	return append([]string{}, m.reqs...)
 }
 
+func (m *mockFiles) servedBytes(name string) int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.served[name]
+}
+
 func (m *mockFiles) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimPrefix(r.URL.Path, "/")
 	m.mu.Lock()
+	if r.Method == http.MethodHead {
+		// Hugging Face style: a redirect that names the file's sha256 and size.
+		m.heads++
+		et, data := m.etag[name], m.files[name]
+		m.mu.Unlock()
+		if et != "" {
+			w.Header().Set("X-Linked-Etag", `"`+et+`"`)
+			w.Header().Set("X-Linked-Size", strconv.Itoa(len(data)))
+			w.Header().Set("Location", "/cdn/"+name)
+			w.WriteHeader(http.StatusFound)
+		}
+		return
+	}
+	if m.portal > 0 {
+		m.portal--
+		m.reqs = append(m.reqs, name+" "+r.Header.Get("Range")+" (portal)")
+		m.mu.Unlock()
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Length", "40")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("<html>Please sign in to Hotel WiFi</html>"))
+		return
+	}
 	m.reqs = append(m.reqs, name+" "+r.Header.Get("Range"))
+	if r.Header.Get("Range") != "" && m.refuse416[name] > 0 {
+		m.refuse416[name]--
+		m.mu.Unlock()
+		w.Header().Set("Content-Range", "bytes */1")
+		w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+		return
+	}
+	resumeAt, hasResumeAt := m.resumeAt[name]
 	data, ok := m.files[name]
 	code := m.status[name]
 	cut, hasCut := m.cutOnce[name]
@@ -103,6 +147,9 @@ func (m *mockFiles) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := int64(0)
 	if rg := r.Header.Get("Range"); rg != "" && !ignore {
 		fmt.Sscanf(rg, "bytes=%d-", &start)
+		if hasResumeAt {
+			start = resumeAt
+		}
 		if start >= int64(len(data)) {
 			w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", len(data)))
 			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
@@ -116,6 +163,9 @@ func (m *mockFiles) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}
 	body := data[start:]
+	m.mu.Lock()
+	m.served[name] += int64(len(body)) // what was offered (an upper bound if the client hangs up)
+	m.mu.Unlock()
 	fl := w.(http.Flusher)
 	switch {
 	case hasCut:
@@ -244,9 +294,10 @@ func TestDownloadCancelThenResumeWithState(t *testing.T) {
 	}
 }
 
-func TestDownloadResumeHashesTailAfterState(t *testing.T) {
-	// Killed (kill -9) after a state save: the .part has more bytes than the
-	// state describes. They are hashed, not thrown away.
+func TestDownloadResumeCutsUnsyncedTail(t *testing.T) {
+	// Killed after a state save: the .part has more bytes than the state
+	// describes. They are not trusted (after a power cut they can be zeros):
+	// the .part is cut back to the state and the tail downloaded again.
 	srv := newMockFiles()
 	data := randBytes(2<<20, "")
 	srv.files["t.bin"] = data
@@ -275,25 +326,207 @@ func TestDownloadResumeHashesTailAfterState(t *testing.T) {
 	if err := d.fetch(context.Background(), f, dest, dlHooks{}); err != nil {
 		t.Fatal(err)
 	}
-	if r := srv.requests("t.bin"); r[len(r)-1] != fmt.Sprintf("t.bin bytes=%d-", 1<<20+300000) {
+	if r := srv.requests("t.bin"); r[len(r)-1] != fmt.Sprintf("t.bin bytes=%d-", 1<<20) {
 		t.Fatalf("requests %q", r)
 	}
 	got, _ := os.ReadFile(dest)
 	if !bytes.Equal(got, data) {
 		t.Fatal("content differs")
 	}
-	// A damaged tail is noticed by the final sha256 and the file is fetched again.
-	dest2 := filepath.Join(t.TempDir(), "t2.bin")
-	os.WriteFile(dest2+".part", append(append([]byte{}, data[:1<<20]...), make([]byte, 1000)...), 0o644)
+}
+
+func TestDownloadUnsyncedTailAfterPowerLoss(t *testing.T) {
+	// The reviewer's case: an 8 MB file, state saved at 3 MB, and a .part that
+	// NTFS shows 1 MB longer, all zeros. Only the 5 MB after the state may be
+	// downloaded, not the whole file again after a sha256 mismatch.
+	srv := newMockFiles()
+	data := randBytes(8<<20, "")
+	srv.files["p.bin"] = data
+	hs := httptest.NewServer(srv)
+	defer hs.Close()
+	dest := filepath.Join(t.TempDir(), "p.bin")
+	f := FileSpec{Name: "p.bin", Label: "P", URL: hs.URL + "/p.bin", Size: int64(len(data)), SHA256: shaHex(data)}
+	os.WriteFile(dest+".part", append(append([]byte{}, data[:3<<20]...), make([]byte, 1<<20)...), 0o644)
 	h := sha256.New()
-	h.Write(data[:1<<20])
-	saveState(dest2+".part.state", f, 1<<20, h)
-	if err := d.fetch(context.Background(), f, dest2, dlHooks{}); err != nil {
+	h.Write(data[:3<<20])
+	saveState(dest+".part.state", f, 3<<20, h)
+	if err := quickDownloader().fetch(context.Background(), f, dest, dlHooks{}); err != nil {
 		t.Fatal(err)
 	}
-	got, _ = os.ReadFile(dest2)
+	if got := srv.servedBytes("p.bin"); got != 5<<20 {
+		t.Fatalf("server sent %d bytes for a file with 5 MB left: %q", got, srv.requests("p.bin"))
+	}
+	got, _ := os.ReadFile(dest)
 	if !bytes.Equal(got, data) {
-		t.Fatal("content differs after damaged tail")
+		t.Fatal("content differs")
+	}
+}
+
+func TestDownloadCaptivePortalKeepsPart(t *testing.T) {
+	// A laptop wakes up on hotel Wi-Fi: every request gets a 200 login page.
+	// The 3 MB already downloaded must survive, and the message must say what
+	// to do; once the Wi-Fi works, the download continues where it was.
+	srv := newMockFiles()
+	data := randBytes(4<<20, "")
+	srv.files["m.bin"] = data
+	hs := httptest.NewServer(srv)
+	defer hs.Close()
+	dest := filepath.Join(t.TempDir(), "m.bin")
+	f := FileSpec{Name: "m.bin", Label: "M", URL: hs.URL + "/m.bin", Size: int64(len(data)), SHA256: shaHex(data)}
+	os.WriteFile(dest+".part", data[:3<<20], 0o644)
+	h := sha256.New()
+	h.Write(data[:3<<20])
+	saveState(dest+".part.state", f, 3<<20, h)
+	d := quickDownloader()
+	d.maxTries = 3
+	srv.portal = 100
+	err := d.fetch(context.Background(), f, dest, dlHooks{})
+	if err == nil || !strings.Contains(userMsg(err), "sign in to the Wi-Fi") || !strings.Contains(userMsg(err), "Nothing downloaded so far is lost") {
+		t.Fatalf("error %v", err)
+	}
+	if st, _ := os.Stat(dest + ".part"); st == nil || st.Size() != 3<<20 {
+		t.Fatalf(".part after the portal answers: %v", st)
+	}
+	// The Wi-Fi works again.
+	srv.mu.Lock()
+	srv.portal = 0
+	srv.mu.Unlock()
+	if err := d.fetch(context.Background(), f, dest, dlHooks{}); err != nil {
+		t.Fatal(err)
+	}
+	r := srv.requests("m.bin")
+	if r[len(r)-1] != fmt.Sprintf("m.bin bytes=%d-", 3<<20) {
+		t.Fatalf("did not resume: %q", r)
+	}
+	got, _ := os.ReadFile(dest)
+	if !bytes.Equal(got, data) {
+		t.Fatal("content differs")
+	}
+}
+
+func TestDownloadOddResumeAnswersKeepPart(t *testing.T) {
+	data := randBytes(1<<20, "")
+	f := func(url string) FileSpec {
+		return FileSpec{Name: "o.bin", Label: "O", URL: url + "/o.bin", Size: int64(len(data)), SHA256: shaHex(data)}
+	}
+	setup := func(t *testing.T) (*mockFiles, string, FileSpec) {
+		srv := newMockFiles()
+		srv.files["o.bin"] = data
+		hs := httptest.NewServer(srv)
+		t.Cleanup(hs.Close)
+		dest := filepath.Join(t.TempDir(), "o.bin")
+		fs := f(hs.URL)
+		os.WriteFile(dest+".part", data[:600000], 0o644)
+		h := sha256.New()
+		h.Write(data[:600000])
+		saveState(dest+".part.state", fs, 600000, h)
+		return srv, dest, fs
+	}
+	check := func(t *testing.T, dest string) {
+		got, _ := os.ReadFile(dest)
+		if !bytes.Equal(got, data) {
+			t.Fatal("content differs")
+		}
+	}
+	t.Run("resumed a little earlier: skip what we have", func(t *testing.T) {
+		srv, dest, fs := setup(t)
+		srv.resumeAt["o.bin"] = 500000
+		if err := quickDownloader().fetch(context.Background(), fs, dest, dlHooks{}); err != nil {
+			t.Fatal(err)
+		}
+		check(t, dest)
+		if r := srv.requests("o.bin"); len(r) != 1 {
+			t.Fatalf("requests %q", r)
+		}
+	})
+	t.Run("two 416 answers, then it works", func(t *testing.T) {
+		srv, dest, fs := setup(t)
+		srv.refuse416["o.bin"] = 2
+		if err := quickDownloader().fetch(context.Background(), fs, dest, dlHooks{}); err != nil {
+			t.Fatal(err)
+		}
+		check(t, dest)
+		if r := srv.requests("o.bin"); len(r) != 3 || r[2] != "o.bin bytes=600000-" {
+			t.Fatalf("requests %q", r)
+		}
+	})
+	t.Run("always resumes at the wrong place: start over after 3 answers", func(t *testing.T) {
+		srv, dest, fs := setup(t)
+		srv.resumeAt["o.bin"] = 700000
+		if err := quickDownloader().fetch(context.Background(), fs, dest, dlHooks{}); err != nil {
+			t.Fatal(err)
+		}
+		check(t, dest)
+		r := srv.requests("o.bin")
+		if len(r) != 4 || r[3] != "o.bin " {
+			t.Fatalf("requests %q", r)
+		}
+	})
+	t.Run("200 with another size keeps the part", func(t *testing.T) {
+		srv, dest, fs := setup(t)
+		fs.Size = int64(len(data)) + 5 // the server's file is "too small"
+		d := quickDownloader()
+		d.maxTries = 2
+		srv.ignoreRange = true
+		if err := d.fetch(context.Background(), fs, dest, dlHooks{}); err == nil {
+			t.Fatal("expected an error")
+		}
+		if st, _ := os.Stat(dest + ".part"); st == nil || st.Size() != 600000 {
+			t.Fatalf(".part %v", st)
+		}
+	})
+}
+
+func TestDownloadPublisherChanged(t *testing.T) {
+	srv := newMockFiles()
+	data := randBytes(300000, "")
+	srv.files["q.bin"] = data
+	hs := httptest.NewServer(srv)
+	defer hs.Close()
+	f := FileSpec{Name: "q.bin", Label: "Photo model", URL: hs.URL + "/q.bin", Size: int64(len(data)), SHA256: shaHex(data)}
+	// The publisher re-uploaded the file: HEAD says so, nothing is downloaded.
+	srv.etag["q.bin"] = strings.Repeat("ab", 32)
+	err := quickDownloader().fetch(context.Background(), f, filepath.Join(t.TempDir(), "q.bin"), dlHooks{})
+	if err == nil || !strings.Contains(userMsg(err), "changed by its publisher") || !strings.Contains(userMsg(err), "latest Glow Studio") {
+		t.Fatalf("error %v", err)
+	}
+	if r := srv.requests("q.bin"); len(r) != 0 {
+		t.Fatalf("nothing should be downloaded: %q", r)
+	}
+	// The pinned file: HEAD agrees, the download goes ahead.
+	srv.etag["q.bin"] = shaHex(data)
+	if err := quickDownloader().fetch(context.Background(), f, filepath.Join(t.TempDir(), "q.bin"), dlHooks{}); err != nil {
+		t.Fatal(err)
+	}
+	if srv.heads != 2 {
+		t.Fatalf("HEAD requests %d", srv.heads)
+	}
+}
+
+func TestRenameRetry(t *testing.T) {
+	dir := t.TempDir()
+	from, to := filepath.Join(dir, "a.part"), filepath.Join(dir, "a")
+	os.WriteFile(from, []byte("x"), 0o644)
+	fails := 3
+	osRename = func(a, b string) error {
+		if fails > 0 {
+			fails--
+			return &os.LinkError{Op: "rename", Old: a, New: b, Err: errTransientTest}
+		}
+		return os.Rename(a, b)
+	}
+	defer func() { osRename = os.Rename }()
+	if err := renameRetry(from, to); err != nil || fails != 0 {
+		t.Fatalf("%v %d", err, fails)
+	}
+	// Held for good: the message points at the antivirus, not at the folder.
+	renameRetryFor = 100 * time.Millisecond
+	defer func() { renameRetryFor = 5 * time.Second }()
+	fails = 1 << 30
+	os.WriteFile(from, []byte("x"), 0o644)
+	err := renameRetry(from, to)
+	if err == nil || !strings.Contains(userMsg(justWrittenError(err, to)), "antivirus") {
+		t.Fatalf("%v", err)
 	}
 }
 
@@ -485,9 +718,18 @@ func TestExplainCrash(t *testing.T) {
 		"torch.OutOfMemoryError: CUDA out of memory":                "ran out of memory",
 	}
 	for line, want := range cases {
-		if got := explainCrash([]string{line}, nil, false); !strings.Contains(got, want) {
+		if got, _ := explainCrash([]string{line}, nil, false, false); !strings.Contains(got, want) {
 			t.Errorf("%q -> %q", line, got)
 		}
+	}
+	for _, line := range []string{"ModuleNotFoundError: No module named 'torch'", "can't open file 'ComfyUI\\main.py'"} {
+		if got, damaged := explainCrash([]string{line}, nil, false, false); !damaged || !strings.Contains(got, "Check & repair files") || strings.Contains(got, "Install") {
+			t.Errorf("%q -> %q %v", line, got, damaged)
+		}
+	}
+	// c10.dll could not be loaded because it is gone: not a Microsoft component.
+	if got, damaged := explainCrash([]string{"OSError: [WinError 126] ... c10.dll"}, nil, false, true); !damaged || !strings.Contains(got, "missing or damaged") {
+		t.Errorf("c10 missing -> %q", got)
 	}
 }
 
@@ -544,6 +786,7 @@ func newHarness(t *testing.T) *harness {
 	t.Setenv("GLOW_COMFY_CMD", exe)
 	t.Setenv("GLOW_TEST_MOCK_COMFY", "1")
 	t.Setenv("GLOW_COMFY_PORT", "8185")
+	t.Setenv("GLOW_QUEUE_POLL_MS", "100")
 	h.start()
 	return h
 }
@@ -552,6 +795,9 @@ func newHarness(t *testing.T) *harness {
 func (h *harness) start() {
 	if h.srv != nil {
 		h.srv.Close()
+	}
+	if h.e != nil {
+		h.e.Shutdown() // the old "process" ends (and frees the folder lock)
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -903,6 +1149,245 @@ echo "Everything is Ok"`)
 	}
 }
 
+func TestInstallProgressStableAcrossResume(t *testing.T) {
+	// Overall progress must not jump back after Resume, Try again or an app
+	// restart: verified files count as done, and models are numbered over all.
+	h := newHarness(t)
+	gate := make(chan struct{})
+	h.files.gate["video.safetensors"] = gate
+	h.do("POST", "/__glow/engine/install", map[string]any{"packs": []string{"core"}})
+	waitFor(t, 10*time.Second, func() bool {
+		s := h.status()
+		return s.Job != nil && s.Job.File != nil && *s.Job.File == "video.safetensors" && s.Job.BytesDone > 0
+	})
+	h.do("POST", "/__glow/engine/cancel", nil)
+	paused := h.status().Job
+	total := h.cat.packBytes("core")
+	if paused.OverallTotal != total || paused.OverallDone < h.cat.Tool.Size+h.cat.Engine.Size+(1<<20) {
+		t.Fatalf("paused %+v (core %d)", paused, total)
+	}
+	gate2 := make(chan struct{})
+	h.files.gate["video.safetensors"] = gate2 // hold the resumed download too
+	h.do("POST", "/__glow/engine/install", map[string]any{"packs": []string{"core"}})
+	var j *jobJSON
+	waitFor(t, 10*time.Second, func() bool {
+		j = h.status().Job
+		return j.File != nil && *j.File == "video.safetensors" && strings.HasPrefix(j.Step, "Downloading")
+	})
+	if j.OverallTotal != total || j.OverallDone < paused.OverallDone || !strings.Contains(j.Step, "AI model 2 of 3") {
+		t.Fatalf("after Resume %+v (paused at %d of %d)", j, paused.OverallDone, paused.OverallTotal)
+	}
+	h.do("POST", "/__glow/engine/cancel", nil)
+	h.start() // the app is closed and opened again
+	j = h.status().Job
+	if j.State != "cancelled" || j.OverallTotal != total || j.OverallDone < paused.OverallDone {
+		t.Fatalf("after restart %+v", j)
+	}
+	close(gate)
+	close(gate2)
+	delete(h.files.gate, "video.safetensors")
+	h.installCore()
+	// Adding a pack later counts only that pack.
+	h.do("POST", "/__glow/engine/install", map[string]any{"packs": []string{"core", "singing"}})
+	s := h.waitJob("done", "error")
+	if s.Job.State != "done" || s.Job.OverallTotal != h.cat.packBytes("singing") {
+		t.Fatalf("add-on %+v", s.Job)
+	}
+}
+
+func TestRepairChecksEngineAndModels(t *testing.T) {
+	h := newHarness(t)
+	h.installCore()
+	dir := h.status().InstallDir
+	root := filepath.Join(dir, portableDir)
+	list, err := os.ReadFile(filepath.Join(dir, engineListName))
+	if err != nil || !strings.Contains(string(list), "\tpython_embeded/Lib/site-packages/torch/__init__.py\n") || strings.Contains(string(list), "models/") {
+		t.Fatalf("engine list: %v\n%s", err, list)
+	}
+	man := loadManifest(dir)
+	if man.EngineFiles < 5 || man.EngineKey["python_embeded/Lib/site-packages/torch/lib/c10.dll"] == 0 || man.EngineKey["ComfyUI/main.py"] == 0 {
+		t.Fatalf("manifest engine info %d %v", man.EngineFiles, man.EngineKey)
+	}
+
+	// 1. An antivirus removed a key DLL: noticed by status, fixed by an install.
+	os.Remove(filepath.Join(root, "python_embeded", "Lib", "site-packages", "torch", "lib", "c10.dll"))
+	if s := h.status(); s.Packs["core"].Installed || s.Engine.State != "not-installed" {
+		t.Fatalf("a missing key file must show core as not installed: %+v", s.Engine)
+	}
+	before := len(h.files.all())
+	h.installCore()
+	// (7zr.exe is kept after unpacking, so only the engine archive is fetched.)
+	if got := h.files.all()[before:]; len(got) != 1 || !strings.HasPrefix(got[0], "portable.7z") {
+		t.Fatalf("engine should be fetched again: %q", got)
+	}
+	if !fileExists(filepath.Join(root, "python_embeded", "Lib", "site-packages", "torch", "lib", "c10.dll")) {
+		t.Fatal("not unpacked again")
+	}
+
+	// 2. Another engine file is gone (not a key file): only the repair's full
+	// check finds it, and unpacks the engine again. The models stay.
+	gone := filepath.Join(root, "python_embeded", "Lib", "site-packages", "torch", "__init__.py")
+	os.Remove(gone)
+	if !h.status().Packs["core"].Installed {
+		t.Fatal("status only checks key files")
+	}
+	h.do("POST", "/__glow/engine/start", nil)
+	h.waitEngine("ready")
+	// A video is being made: no repair now (it would stop ComfyUI mid-render).
+	h.do("POST", "/__glow/comfy/mock/busy?on=1", nil)
+	if code, out := h.do("POST", "/__glow/engine/install", map[string]any{"packs": []string{"core"}, "repair": true}); code != 409 || !strings.Contains(fmt.Sprint(out["error"]), "video is being made") {
+		t.Fatalf("repair during a render %d %v", code, out)
+	}
+	h.do("POST", "/__glow/comfy/mock/busy?on=0", nil)
+	// Right after a video (a prompt was just posted) the repair is fine.
+	h.do("POST", "/__glow/comfy/prompt", map[string]any{"prompt": map[string]any{}, "client_id": "x"})
+	before = len(h.files.all())
+	if code, out := h.do("POST", "/__glow/engine/install", map[string]any{"packs": []string{"core"}, "repair": true}); code != 202 {
+		t.Fatalf("repair %d %v", code, out)
+	}
+	if st := h.status().Engine.State; st == "ready" || st == "starting" {
+		t.Fatalf("repair must stop the engine first: %s", st)
+	}
+	s := h.waitJob("done", "error")
+	if s.Job.State != "done" || !s.Job.Repair || s.Job.Step != "All files are checked and in order." || !fileExists(gone) {
+		t.Fatalf("repair %+v", s.Job)
+	}
+	got := h.files.all()[before:]
+	if len(got) != 1 || !strings.HasPrefix(got[0], "portable.7z") {
+		t.Fatalf("repair requests %q", got)
+	}
+	logs := strings.Join(s.Engine.Log, "\n")
+	if !strings.Contains(logs, "AI engine files are missing or changed (for example python_embeded/Lib/site-packages/torch/__init__.py)") {
+		t.Fatalf("log %s", logs)
+	}
+
+	// 3. A model damaged in place (same size): the repair re-hashes it.
+	still := filepath.Join(root, "ComfyUI", "models", "diffusion_models", "still.safetensors")
+	fh, _ := os.OpenFile(still, os.O_WRONLY, 0)
+	fh.WriteAt([]byte("garbage"), 1000)
+	fh.Close()
+	before = len(h.files.all())
+	h.do("POST", "/__glow/engine/install", map[string]any{"packs": []string{"core"}, "repair": true})
+	s = h.waitJob("done", "error")
+	if got := h.files.all()[before:]; s.Job.State != "done" || len(got) != 1 || !strings.HasPrefix(got[0], "still.safetensors") {
+		t.Fatalf("re-hash repair %+v %q", s.Job, got)
+	}
+	if b, _ := os.ReadFile(still); !bytes.Equal(b, h.data["still.safetensors"]) {
+		t.Fatal("still not repaired")
+	}
+
+	// 4. ComfyUI says a Python module is missing: the next repair unpacks again
+	// even though every listed file is there.
+	t.Setenv("GLOW_TEST_MOCK_MODE", "fail-module")
+	h.do("POST", "/__glow/engine/start", nil)
+	s = h.waitEngine("error")
+	if s.Engine.Error == nil || !strings.Contains(*s.Engine.Error, "Check & repair files") || !loadManifest(dir).EngineSuspect {
+		t.Fatalf("crash %+v", s.Engine)
+	}
+	t.Setenv("GLOW_TEST_MOCK_MODE", "")
+	before = len(h.files.all())
+	h.do("POST", "/__glow/engine/install", map[string]any{"packs": []string{"core"}, "repair": true})
+	s = h.waitJob("done", "error")
+	if got := h.files.all()[before:]; s.Job.State != "done" || len(got) != 1 || loadManifest(dir).EngineSuspect {
+		t.Fatalf("suspect repair %+v %q", s.Job, got)
+	}
+	h.do("POST", "/__glow/engine/start", nil)
+	h.waitEngine("ready")
+}
+
+func TestCrashReasonIsNotLost(t *testing.T) {
+	// Lots of output, then the reason on the last line, then exit: the launcher
+	// must read the pipe to the end before it explains the crash.
+	h := newHarness(t)
+	h.installCore()
+	t.Setenv("GLOW_TEST_MOCK_MODE", "fail-start-long")
+	for i := 0; i < 8; i++ {
+		h.do("POST", "/__glow/engine/start", nil)
+		s := h.waitEngine("error")
+		if s.Engine.Error == nil || !strings.Contains(*s.Engine.Error, "Visual C++") {
+			msg := "<nil>"
+			if s.Engine.Error != nil {
+				msg = *s.Engine.Error
+			}
+			t.Fatalf("run %d: %s", i, msg)
+		}
+		if !strings.Contains(strings.Join(s.Engine.Log, "\n"), "c10.dll") {
+			t.Fatalf("run %d: last line missing from the log", i)
+		}
+	}
+}
+
+func TestInstallFolderLock(t *testing.T) {
+	// Two copies of the launcher (different ports) must not use one folder.
+	h := newHarness(t)
+	gate := make(chan struct{})
+	h.files.gate["still.safetensors"] = gate
+	defer close(gate)
+	h.do("POST", "/__glow/engine/install", map[string]any{"packs": []string{"core"}})
+	waitFor(t, 10*time.Second, func() bool { j := h.status().Job; return j != nil && j.File != nil && *j.File == "still.safetensors" })
+	other := newEngine(1)
+	defer other.Shutdown()
+	other.mu.Lock()
+	err := other.lockDirLocked(other.installDir)
+	other.mu.Unlock()
+	if err == nil || !strings.Contains(userMsg(err), "already running in the background") {
+		t.Fatalf("second copy: %v", err)
+	}
+	h.do("POST", "/__glow/engine/cancel", nil)
+	h.e.Shutdown() // the first copy quits: the folder is free
+	other.mu.Lock()
+	err = other.lockDirLocked(other.installDir)
+	other.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStatusDoesNotWaitForNvidiaSmi(t *testing.T) {
+	h := newHarness(t)
+	t.Setenv("GLOW_NVIDIA_SMI", writeScript(t, h.dir, "slow-smi", "sleep 3; echo 'NVIDIA GeForce RTX 5060 Laptop GPU, 8151, 581.57'"))
+	h.start()
+	t0 := time.Now()
+	s := h.status()
+	if d := time.Since(t0); d > 2*time.Second || s.GPU != nil || !s.GPUPending {
+		t.Fatalf("first status took %s: gpu %+v pending %v", d, s.GPU, s.GPUPending)
+	}
+	waitFor(t, 6*time.Second, func() bool { s = h.status(); return s.GPU != nil })
+	if s.GPUPending || !s.GPU.DriverOk || !strings.Contains(s.GPU.Name, "Laptop") {
+		t.Fatalf("%+v", s.GPU)
+	}
+	// "Check again" (refresh=1) waits for a fresh answer.
+	t.Setenv("GLOW_NVIDIA_SMI", writeScript(t, h.dir, "smi2", "sleep 1; echo 'NVIDIA GeForce RTX 5060, 8151, 590.10'"))
+	resp, err := http.Get(h.srv.URL + "/__glow/engine/status?refresh=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	json.NewDecoder(resp.Body).Decode(&s)
+	resp.Body.Close()
+	if s.GPU == nil || s.GPU.Driver != "590.10" {
+		t.Fatalf("refresh %+v", s.GPU)
+	}
+}
+
+func TestInstanceFile(t *testing.T) {
+	t.Setenv("GLOW_ENGINE_DIR", filepath.Join(t.TempDir(), "GlowStudio", "engine"))
+	if readInstancePort() != 0 {
+		t.Fatal("no file yet")
+	}
+	writeInstancePort(41234)
+	if p := readInstancePort(); p != 41234 || filepath.Base(filepath.Dir(instancePath())) != "GlowStudio" {
+		t.Fatalf("%d %s", p, instancePath())
+	}
+	removeInstancePort(1) // someone else's: kept
+	if readInstancePort() != 41234 {
+		t.Fatal("removed another instance's file")
+	}
+	removeInstancePort(41234)
+	if readInstancePort() != 0 {
+		t.Fatal("not removed")
+	}
+}
+
 // ---------------------------------------------------------------- security
 
 func TestGuard(t *testing.T) {
@@ -1014,18 +1499,25 @@ func TestComfyLifecycleAndProxy(t *testing.T) {
 		t.Fatalf("cross-origin ws must be 403, got %d", code)
 	}
 
-	// Idle exit is blocked while ComfyUI has prompts running.
-	if h.e.Busy() {
-		t.Fatal("not busy yet")
-	}
-	h.do("POST", "/__glow/comfy/mock/busy?on=1", nil)
+	// Idle exit is blocked while ComfyUI has prompts running: a prompt that was
+	// just posted counts at once, then /queue (polled all the time) decides.
+	busyLinger = 300 * time.Millisecond
+	defer func() { busyLinger = 20 * time.Second }()
 	if !h.e.Busy() {
-		t.Fatal("running prompt must block the idle exit")
+		t.Fatal("a prompt was just posted: busy")
 	}
+	waitFor(t, 3*time.Second, func() bool { return !h.e.Busy() })
+	h.do("POST", "/__glow/comfy/mock/busy?on=1", nil)
+	waitFor(t, 3*time.Second, func() bool { return h.e.Busy() })
+	// ComfyUI is loading weights and /queue answers too slowly: still busy.
+	h.do("POST", "/__glow/comfy/mock/slowqueue?ms=8000", nil)
+	time.Sleep(4 * time.Second) // > the 3 s /queue timeout and the linger
+	if !h.e.Busy() {
+		t.Fatal("a render with a slow /queue must keep the launcher alive")
+	}
+	h.do("POST", "/__glow/comfy/mock/slowqueue?ms=0", nil)
 	h.do("POST", "/__glow/comfy/mock/busy?on=0", nil)
-	if h.e.Busy() {
-		t.Fatal("idle again")
-	}
+	waitFor(t, 15*time.Second, func() bool { return !h.e.Busy() })
 
 	// Crash: state error with advice and the last log lines.
 	h.do("POST", "/__glow/comfy/mock/crash", nil)
@@ -1190,8 +1682,25 @@ func runMockComfy() {
 	fmt.Println("[START] Security scan")
 	fmt.Println("args:", strings.Join(os.Args[1:], " "))
 	fmt.Println("env PYTHONIOENCODING=" + os.Getenv("PYTHONIOENCODING"))
-	if os.Getenv("GLOW_TEST_MOCK_MODE") == "fail-start" {
+	switch os.Getenv("GLOW_TEST_MOCK_MODE") {
+	case "fail-start":
 		fmt.Fprintln(os.Stderr, "OSError: [WinError 126] The specified module could not be found. Error loading \"c10.dll\"")
+		os.Exit(1)
+	case "fail-start-long":
+		// Lots of output, then a traceback whose LAST line is the reason.
+		w := bufio.NewWriter(os.Stdout)
+		for i := 0; i < 2000; i++ {
+			fmt.Fprintf(w, "Import times for module %d: %s\n", i, strings.Repeat("x", 90))
+		}
+		w.WriteString("Traceback (most recent call last):\n")
+		for i := 0; i < 20; i++ {
+			fmt.Fprintf(w, "  File \"torch\\__init__.py\", line %d, in <module>\n", i)
+		}
+		w.WriteString("OSError: [WinError 126] The specified module could not be found. Error loading \"C:\\x\\torch\\lib\\c10.dll\" or one of its dependencies.\n")
+		w.Flush()
+		os.Exit(1)
+	case "fail-module":
+		fmt.Fprintln(os.Stderr, "ModuleNotFoundError: No module named 'torch'")
 		os.Exit(1)
 	}
 	fmt.Print("Loading: 10%|#    | 1/10\rLoading: 60%|######   | 6/10\rLoading: 100%|##########| 10/10\n")
@@ -1200,12 +1709,24 @@ func runMockComfy() {
 
 	var mu sync.Mutex
 	busy := false
+	var slow time.Duration
 	clients := map[string]net.Conn{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/system_stats", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"system":{"os":"nt","comfyui_version":"0.44.0-mock","embedded_python":true},"devices":[{"name":"cuda:0 NVIDIA GeForce RTX 5060 : cudaMallocAsync","vram_total":8500000000}]}`)
 	})
+	mux.HandleFunc("/mock/slowqueue", func(w http.ResponseWriter, r *http.Request) {
+		ms, _ := strconv.Atoi(r.URL.Query().Get("ms"))
+		mu.Lock()
+		slow = time.Duration(ms) * time.Millisecond
+		mu.Unlock()
+		fmt.Fprint(w, `{}`)
+	})
 	mux.HandleFunc("/queue", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		d := slow
+		mu.Unlock()
+		time.Sleep(d)
 		mu.Lock()
 		defer mu.Unlock()
 		if busy {

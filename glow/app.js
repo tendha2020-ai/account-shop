@@ -522,7 +522,7 @@
       S.building = false; autoplayNext = false;
       drawPreview(0);
       setStage(); updateTimeUI(); updateCta();
-      if (playAfter && !S.exporting) play();
+      if (playAfter && !S.exporting && !otherMode()) play(); // never start playing behind AI Scenes
     } catch (e) {
       disposeScene(scene);
       if (g !== S.gen) return;
@@ -567,7 +567,8 @@
   // AI Scenes (ai.js) shares this page; Photo Video stays quiet while the other mode is on screen.
   function otherMode() { return document.body.getAttribute('data-mode') === 'ai'; }
   document.addEventListener('glow:mode', function (e) {
-    if (e.detail && e.detail.mode !== 'photo') { pause(); stopTrackPreview(); }
+    if (e.detail && e.detail.mode !== 'photo') { autoplayNext = false; pause(); stopTrackPreview(); }
+    else if (e.detail && e.detail.mode === 'photo') startPosters();
   });
   document.addEventListener('keydown', function (e) {
     if (e.code !== 'Space' && e.key !== ' ') return;
@@ -902,7 +903,8 @@
     return !!(window.MediaRecorder && window.MediaStream && typeof HTMLCanvasElement.prototype.captureStream === 'function');
   }
 
-  var bgParts = [document.querySelector('.top'), document.getElementById('app')];
+  // Everything behind a sheet, including the mode switch and the AI Scenes page that share this document.
+  var bgParts = [document.querySelector('.top'), document.querySelector('.modes'), document.getElementById('app'), document.getElementById('ai'), document.getElementById('aiPill')];
   function setInert(on) { bgParts.forEach(function (n) { if (!n) return; if (on) n.setAttribute('inert', ''); else n.removeAttribute('inert'); }); }
   function openModal(m) {
     if (el.exModal.hidden && el.resModal.hidden && el.infoModal.hidden) lastFocus = document.activeElement;
@@ -1339,7 +1341,14 @@
   updateCta();
   if (!FX) toast('Templates didn’t load — please refresh the page.', 'error', 6000);
   else if (!MU) toast('Music didn’t load — videos will be silent.', 'warn', 6000);
-  // Posters start after first paint so the page appears instantly.
-  if ('requestIdleCallback' in window) requestIdleCallback(function () { schedulePosters(0); }, { timeout: 900 });
-  else schedulePosters(250);
+  // Posters start after first paint so the page appears instantly — and only once Photo Video is on screen
+  // (AI Scenes is the default mode, and rendering 12 posters behind it would only slow phones down).
+  var postersStarted = false;
+  function startPosters() {
+    if (postersStarted) return;
+    postersStarted = true;
+    if ('requestIdleCallback' in window) requestIdleCallback(function () { schedulePosters(0); }, { timeout: 900 });
+    else schedulePosters(250);
+  }
+  if (!otherMode()) startPosters();
 })();

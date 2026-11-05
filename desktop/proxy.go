@@ -105,6 +105,9 @@ func (e *Engine) proxyHandler() http.Handler {
 			errJSON(w, http.StatusServiceUnavailable, "engine not ready")
 			return
 		}
+		if r.Method == http.MethodPost && strings.TrimPrefix(r.URL.Path, "/__glow/comfy/") == "prompt" {
+			e.markBusy() // the idle exit must not race a prompt that was just queued
+		}
 		rp.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), comfyPortKey{}, port)))
 	})
 }

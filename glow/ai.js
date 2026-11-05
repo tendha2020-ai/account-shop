@@ -12,7 +12,9 @@
  * Responsible use: preset scenes only (no free-text prompts), a consent checkbox for every new photo, an always-on
  * AI label, fal's moderation is respected (refusals are explained, never worked around). The API key is kept only in
  * this browser (localStorage) and is only ever sent to fal.ai hosts.
- * In-flight jobs are saved in localStorage so a reload resumes polling instead of paying again.
+ * In-flight jobs are saved in localStorage so a reload resumes polling instead of paying again; connection trouble
+ * while collecting a finished result is waited out (the result is never paid for twice), and only one page (Web Locks,
+ * with a per-page claim as the fallback) runs a job. Only files with the burned-in label are ever offered for download.
  */
 (function () {
   'use strict';
@@ -30,18 +32,20 @@
     slowAfterMs: TEST.slowAfterMs || 15 * 60 * 1000, // after this, say "still working" and poll a little slower
     slowPollMs: TEST.slowPollMs || 8000,
     backoffMs: TEST.backoffMs || 2000,         // first retry delay for 429 / 5xx / network
-    maxBackoffMs: TEST.maxBackoffMs || 20000
+    maxBackoffMs: TEST.maxBackoffMs || 20000,
+    // Reading a finished result is free and safe to repeat, so connection trouble there is retried this long
+    // (fal keeps results much longer) before we pause and ask the user to try again.
+    resultRetryMs: TEST.resultRetryMs || 60 * 60 * 1000,
+    staleBeatMs: TEST.staleBeatMs || 12000     // a running page refreshes its claim on the job every few seconds
   };
   var REDUCED = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-  // One id per browser tab (kept across reloads) so a reload resumes its own job, while a second tab does not.
-  var TAB = (function () {
-    var t = null;
-    try { t = window.sessionStorage.getItem('glow.ai.tab'); } catch (e) { t = null; }
-    if (!t) { t = 't' + Math.random().toString(36).slice(2, 10); try { window.sessionStorage.setItem('glow.ai.tab', t); } catch (e) { /* ignore */ } }
-    return t;
-  })();
+  // One id per page instance (new on every load). It marks which page is running a job. A per-tab id kept in
+  // sessionStorage would not do: "Duplicate tab" and window.open copy sessionStorage, so two live pages would share it.
+  var INST = 'p' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+  // Web Locks (where supported) make sure only one Glow Studio page runs a job, even when a background tab is throttled.
+  var LOCKS = !!(navigator.locks && typeof navigator.locks.request === 'function');
 
-  var LS = { key: 'glow.ai.falKey', job: 'glow.ai.job', prefs: 'glow.ai.prefs', prices: 'glow.ai.prices', mode: 'glow.mode' };
+  var LS = { key: 'glow.ai.falKey', job: 'glow.ai.job', prefs: 'glow.ai.prefs', prices: 'glow.ai.prices.v2', mode: 'glow.mode' };
   function lsGet(k) { try { return window.localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { window.localStorage.setItem(k, v); return true; } catch (e) { return false; } }
   function lsDel(k) { try { window.localStorage.removeItem(k); } catch (e) { /* ignore */ } }
@@ -52,7 +56,7 @@
   function money(v) { return '$' + (Math.round(v * 100) / 100).toFixed(2); }
 
   /* ------------------------------------------------------------------ *
-   * fal.ai models & pricing (from fal's model pages; refreshed from the pricing API when the key is checked)
+   * fal.ai models & pricing (from fal's model pages; only the photo price is refreshed from the pricing API)
    * ------------------------------------------------------------------ */
   var EP = {
     still: 'fal-ai/nano-banana-pro/edit',                     // Gemini 3 Pro Image: keeps the person's identity
@@ -86,23 +90,23 @@
     } catch (e) { return false; }
   }
 
+  // fal's pricing API gives each model's *base* unit price, with no idea of the tier we ask for (Kling with audio off
+  // costs 0.6x its base; Happy Horse defaults to 1080p). So the per-second video prices always come from the model
+  // pages above, and only the per-image price of the scene photo (same at 1K and 2K) is refreshed.
+  lsDel('glow.ai.prices'); // old cache that could hold the base video prices
   (function loadPrices() {
     var p = lsJSON(LS.prices);
     if (p && p.at && Date.now() - p.at < 14 * 864e5) applyPrices(p.prices, true);
   })();
   function applyPrices(list, fromCache) {
     if (!Array.isArray(list)) return;
-    var map = { still: EP.still, std: EP.std, ai: EP.ai }, changed = false;
+    var changed = false;
     list.forEach(function (p) {
-      if (!p || typeof p.unit_price !== 'number' || !(p.unit_price > 0) || p.unit_price > 5) return;
-      var unit = String(p.unit || '').toLowerCase();
-      Object.keys(map).forEach(function (k) {
-        if (map[k] !== p.endpoint_id) return;
-        if (k === 'still' && /image/.test(unit)) { PRICE.still = p.unit_price; changed = true; }
-        if (k !== 'still' && /sec/.test(unit)) { PRICE[k] = p.unit_price; changed = true; }
-      });
+      if (!p || p.endpoint_id !== EP.still || typeof p.unit_price !== 'number') return;
+      if (!(p.unit_price >= 0.02 && p.unit_price <= 1) || !/image/.test(String(p.unit || '').toLowerCase())) return;
+      PRICE.still = p.unit_price; changed = true;
     });
-    if (changed && !fromCache) lsSet(LS.prices, JSON.stringify({ at: Date.now(), prices: list }));
+    if (changed && !fromCache) lsSet(LS.prices, JSON.stringify({ at: Date.now(), prices: list.filter(function (p) { return p && p.endpoint_id === EP.still; }) }));
   }
   function estimate(sound, dur) { return PRICE.still + (sound === 'ai' ? PRICE.ai : PRICE.std) * dur; }
 
@@ -166,6 +170,8 @@
       audio: 'recommended', defaultTrack: 'epic', length: 5,
       stillPrompt: 'Place this person performing on a big concert stage, holding a microphone and reaching toward a huge cheering crowd with a joyful, confident expression. Three-quarter shot from the front of the stage, the person centered and lit by bright spotlights. Thousands of fans with raised hands and phone lights, a giant light rig with beams overhead, light haze. Deep blue and violet stage lighting with warm white spotlights.',
       motion: 'Smartphone video from the front of a huge concert. The person on stage performs with energy, singing into the microphone, raising one arm to the crowd and walking toward the edge of the stage, while thousands of fans jump and wave their hands and phone lights. Spotlights sweep across the stage.',
+      // Silent tier (built-in music is mixed in later): no singing, so the mouth never moves out of sync with the track.
+      motionStd: 'Smartphone video from the front of a huge concert. The person on stage soaks up the moment, holding the microphone out toward the cheering crowd, dancing to the beat with a big closed-mouth smile, raising one arm and walking toward the edge of the stage, while thousands of fans jump and wave their hands and phone lights. Spotlights sweep across the stage.',
       lyrics: [
         { from: 0, to: 5, who: 'The person sings into the microphone', line: 'Hands up high, this is our night!' },
         { from: 5, to: 10, who: 'The crowd sings back as the person smiles and points at them', line: 'This is our night!' }
@@ -229,7 +235,7 @@
   // tier: 'std' (silent Kling) or 'ai' (Happy Horse with native sound). Spoken/sung lines go in double quotes with
   // timecodes, which is how Happy Horse 1.1 voices and lip-syncs them.
   function motionPrompt(sc, tier, dur) {
-    var p = sc.motion;
+    var p = tier === 'ai' ? sc.motion : (sc.motionStd || sc.motion);
     if (tier === 'ai') {
       if (sc.lyrics) {
         var lines = sc.lyrics.filter(function (l) { return l.to <= dur; });
@@ -263,7 +269,9 @@
     sceneId: sceneById(prefs.sceneId).id,
     sound: prefs.sound === 'ai' ? 'ai' : 'music',
     userSound: prefs.userSound || null,     // the sound mode the user picked themselves (kept across scenes)
+    userLen: LENGTHS.indexOf(prefs.userLen) >= 0 ? prefs.userLen : null, // likewise the length
     trackId: '', duration: 5,
+    retryJob: null,                          // { resume: job } (paid request to pick up again) or a "reuse the scene photo" stub
     photo: null,                             // { blob, url, thumb (data URL), small (data URL), w, h, seq, uploaded: {url, at} }
     consent: false,
     memKey: ''                               // used only if localStorage is blocked
@@ -275,7 +283,8 @@
     photoCard: $('#aiPhotoCard'), drop: $('#aiDrop'), pick: $('#aiPick'), selfie: $('#aiSelfie'), selfieImg: $('#aiSelfieImg'),
     change: $('#aiChange'), file: $('#aiFile'), consentRow: $('#aiConsentRow'), consent: $('#aiConsent'), photoStatus: $('#aiPhotoStatus'),
     target: $('#aiTargetArt'), targetName: $('#aiTargetName'),
-    make: $('#aiMake'), cost: $('#aiCost'),
+    make: $('#aiMake'), makeT: $('#aiMakeT'), cost: $('#aiCost'), stage: $('.ai-stage'), myVids: $('#aiMyVids'), myVidsN: $('#aiMyVidsN'),
+    tips: $('#aiTips'), connT: $('#aiConnT'), announce: $('#aiAnnounce'),
     sceneCard: $('#aiSceneCard'), scenes: $('#aiScenes'),
     sound: $('#aiSound'), soundHint: $('#aiSoundHint'), soundLock: $('#aiSoundLock'), music: $('#aiMusic'), tracks: $('#aiTracks'),
     aiNote: $('#aiAiNote'), len: $('#aiLen'), tier: $('#aiTier'),
@@ -289,7 +298,7 @@
     err: $('#aiErr'), errT: $('#aiErrT'), errP: $('#aiErrP'), errActions: $('#aiErrActions'),
     tapFinish: $('#aiTapFinish'), cancel: $('#aiCancel'), keepOpen: $('#aiKeepOpen'),
     res: $('#aiResult'), resTt: $('#aiResTt'), resClose: $('#aiResClose'), resVideo: $('#aiResVideo'), labelOv: $('#aiLabelOv'),
-    resMeta: $('#aiResMeta'), resNote: $('#aiResNote'), dl: $('#aiDownload'), share: $('#aiShare'), again: $('#aiAgain'),
+    resMeta: $('#aiResMeta'), resNote: $('#aiResNote'), dl: $('#aiDownload'), share: $('#aiShare'), again: $('#aiAgain'), againT: $('#aiAgainT'),
     other: $('#aiOther'), del: $('#aiDelete'), pill: $('#aiPill'), pillT: $('#aiPillT'), toasts: $('#toasts')
   };
   if (!el.ai) return; // page without the AI section
@@ -940,7 +949,7 @@
     var sc = sceneById(id);
     S.sceneId = sc.id;
     if (trackById(sc.defaultTrack)) S.trackId = sc.defaultTrack;
-    S.duration = sc.length || 5;
+    S.duration = S.userLen || sc.length || 5; // a length the user picked stays picked
     if (sc.audio === 'required') S.sound = 'ai';
     else if (S.userSound) S.sound = S.userSound;
     else S.sound = sc.audio === 'recommended' ? 'ai' : 'music';
@@ -1043,7 +1052,7 @@
       var bb = document.createElement('b'); bb.textContent = d + ' s';
       var sm = document.createElement('small'); sm.className = 'ai-len-cost';
       b.appendChild(bb); b.appendChild(sm);
-      b.addEventListener('click', function () { S.duration = d; savePrefs(); updateAll(); });
+      b.addEventListener('click', function () { S.duration = d; S.userLen = d; savePrefs(); updateAll(); });
       el.len.appendChild(b);
     });
   }
@@ -1068,17 +1077,19 @@
       b.classList.toggle('locked', req && b.getAttribute('data-sound') === 'music');
       if (b.getAttribute('data-sound') === 'music') b.setAttribute('aria-disabled', req ? 'true' : 'false');
     });
-    el.soundLock.hidden = !req;
-    if (req) el.soundLock.textContent = (sc.alt || sc.name) + ' needs AI sound so the video can really sing' + (sc.id === 'spanish' ? ' in Spanish.' : '.');
+    el.soundLock.hidden = true; // folded into the single AI-sound note below
     var music = S.sound === 'music';
     el.music.hidden = !music;
     el.aiNote.hidden = music;
+    el.aiNote.classList.toggle('req', req);
     if (!music) {
       var what = sc.lyrics ? 'singing' + (sc.id === 'spanish' ? ' in Spanish' : '') + ', friends and the room' : 'music, the crowd and the room';
       el.aiNote.innerHTML = '';
-      var b = document.createElement('b'); b.textContent = 'Real sound, made with the video.';
+      var b = document.createElement('b');
+      b.textContent = req ? (sc.alt || sc.name) + ' needs AI sound.' : 'Real sound, made with the video.';
       el.aiNote.appendChild(b);
-      el.aiNote.appendChild(document.createTextNode(' The video model creates the ' + what + ' together with the picture' + (sc.lyrics ? ', with lips matched to the song.' : '.')));
+      el.aiNote.appendChild(document.createTextNode((req ? ' So the video can really sing' + (sc.id === 'spanish' ? ' in Spanish' : '') + ', the' : ' The') +
+        ' video model creates the ' + what + ' together with the picture' + (sc.lyrics ? ', with lips matched to the song.' : '.')));
     }
     el.soundHint.textContent = music ? 'Music is free' : (sc.audio === 'required' ? 'Required for this scene' : (sc.audio === 'recommended' ? 'Recommended' : 'Premium'));
     Object.keys(trackCards).forEach(function (id) {
@@ -1100,15 +1111,25 @@
     var t3 = document.createElement('span'); t3.className = 'ai-tier-s'; t3.textContent = 'Scene photo by ' + MODEL_NAME[EP.still];
     el.tier.appendChild(t1); el.tier.appendChild(t2); el.tier.appendChild(t3);
   }
+  function soundName(sound) { return sound === 'ai' ? 'AI sound' : 'Built-in music'; }
+  // "10 s · AI sound · about $1.55": what the next run makes and what it costs.
+  function costLine(sound, dur) { return dur + ' s · ' + soundName(sound) + ' · about ' + money(estimate(sound, dur)); }
+  function pausedJob() { return S.retryJob && S.retryJob.resume ? S.retryJob.resume : null; }
   function updateCost() {
-    var c = estimate(S.sound, S.duration);
-    el.cost.textContent = running() ? 'Making your video · tap to see progress' : 'about ' + money(c) + ', charged by fal.ai to your account';
-    el.make.classList.toggle('idle', !S.photo);
+    var sc = sceneById(S.sceneId), sound = sc.audio === 'required' ? 'ai' : S.sound;
+    var main = 'Make my video', sub;
+    if (running()) { main = 'See progress'; sub = 'Making your video · ' + (UI.pct || 0) + '%'; }
+    else if (pausedJob()) { main = 'Finish my video'; sub = 'Already paid for — no extra cost'; }
+    else sub = costLine(sound, S.duration) + ' from your fal.ai credit';
+    if (el.makeT) el.makeT.textContent = main;
+    el.cost.textContent = sub;
+    el.make.classList.toggle('idle', !S.photo && !running() && !pausedJob());
     el.make.setAttribute('aria-describedby', 'aiCost');
     if (el.connRange) el.connRange.textContent = money(estimate('music', LENGTHS[0])) + '–' + money(estimate('ai', LENGTHS[LENGTHS.length - 1]));
+    if (el.conn && !el.conn.hidden && connectThen === 'make') el.keySave.textContent = 'Save & make my video · ' + money(estimate(sound, S.duration));
   }
   function updateAll() { updateSceneUI(); updateSoundUI(); updateCost(); }
-  function savePrefs() { lsSet(LS.prefs, JSON.stringify({ sceneId: S.sceneId, sound: S.sound, userSound: S.userSound, trackId: S.trackId, duration: S.duration })); }
+  function savePrefs() { lsSet(LS.prefs, JSON.stringify({ sceneId: S.sceneId, sound: S.sound, userSound: S.userSound, userLen: S.userLen, trackId: S.trackId, duration: S.duration })); }
 
   /* ------------------------------------------------------------------ *
    * Selfie
@@ -1170,7 +1191,7 @@
         S.photo = { blob: blob, url: URL.createObjectURL(blob), small: small, thumb: thumb, w: d.w, h: d.h, seq: ++photoSeq, uploaded: null };
         S.consent = false; // consent is per photo
         renderPhoto();
-        el.photoStatus.textContent = 'Photo ready. Please confirm the checkbox below.';
+        el.photoStatus.textContent = 'Photo ready — tick the box above to continue.';
         setTimeout(function () { if (el.photoStatus.textContent.indexOf('Photo ready') === 0) el.photoStatus.textContent = ''; }, 4000);
       } finally { d.close(); }
     } catch (e) {
@@ -1185,6 +1206,7 @@
   function renderPhoto() {
     var has = !!S.photo;
     el.drop.dataset.state = has ? 'photo' : 'empty';
+    el.photoCard.classList.toggle('has-photo', has);
     el.selfie.hidden = !has;
     el.pick.hidden = has;
     el.change.hidden = !has;
@@ -1221,8 +1243,16 @@
     setKeyMsg(has ? 'A key is saved on this device.' : '', has ? 'ok' : '');
     el.keySave.textContent = then === 'make' ? 'Save & make my video' : 'Save key';
     el.keySave.disabled = false;
-    openSheet(el.conn, el.key);
+    // On phones (and for first-timers who still need to read the steps) don't pop up the keyboard over the steps.
+    openSheet(el.conn, has && !COARSE() ? el.key : (el.connT || el.connClose));
+    updateCost();
   }
+  function COARSE() { return !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches); }
+  // Coming back from fal.ai with a fresh key copied: put the cursor in the box, ready to paste.
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden || el.conn.hidden || el.key.value) return;
+    setTimeout(function () { if (!el.conn.hidden && !el.key.value) { try { el.key.focus({ preventScroll: true }); } catch (e) { /* ignore */ } } }, 120);
+  });
   function setKeyMsg(t, kind) { el.keyMsg.textContent = t || ''; el.keyMsg.className = 'ai-keymsg' + (kind ? ' ' + kind : ''); }
   async function checkKey(k) {
     try {
@@ -1255,6 +1285,7 @@
     var then = connectThen; connectThen = null;
     if (resumeWaitingForKey) { resumeWaitingForKey = false; resumeIfAny(); return; }
     if (then === 'make') onMake();
+    else if (then === 'resume' && pausedJob()) onMake({ retry: true });
   }
   function removeKey() {
     lsDel(LS.key); S.memKey = '';
@@ -1269,8 +1300,11 @@
   var openStack = [], lastFocus = null;
   function bgNodes() { return [el.top, el.modes, el.ai, el.app, document.querySelector('.aurora')].filter(Boolean); }
   function setInert(on) { bgNodes().forEach(function (n) { if (on) n.setAttribute('inert', ''); else n.removeAttribute('inert'); }); el.pill.toggleAttribute('inert', on); }
+  // A sensible place for keyboard focus to come back to: the element itself if it is still on screen, else the CTA.
+  function usable(n) { return !!(n && n !== document.body && n.focus && document.contains(n) && !n.closest('[hidden]') && n.getClientRects().length); }
+  function focusHome() { var n = mode() === 'ai' ? el.make : null; if (n) { try { n.focus({ preventScroll: true }); } catch (e) { /* ignore */ } } }
   function openSheet(m, focusEl) {
-    if (!openStack.length) lastFocus = document.activeElement;
+    if (!openStack.length) lastFocus = usable(document.activeElement) ? document.activeElement : null;
     if (openStack.indexOf(m) < 0) openStack.push(m);
     m.hidden = false;
     document.body.style.overflow = 'hidden';
@@ -1282,9 +1316,12 @@
     m.hidden = true;
     openStack = openStack.filter(function (x) { return x !== m; });
     if (openStack.length) return;
+    // Photo Video's own sheets (export, result) manage the page while they are open.
+    if (document.querySelector('.modal:not([hidden])')) return;
     document.body.style.overflow = '';
     setInert(false);
-    if (lastFocus && lastFocus.focus && document.contains(lastFocus)) { try { lastFocus.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }
+    if (usable(lastFocus)) { try { lastFocus.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }
+    else focusHome();
   }
 
   /* ------------------------------------------------------------------ *
@@ -1364,7 +1401,7 @@
   }
 
   // Cancellable sleep: cancel and the browser's 'online' event wake it early.
-  var RUN = { job: null, cancelled: false, wakers: [] };
+  var RUN = { job: null, cancelled: false, wakers: [], persisted: false, release: null, starting: false };
   function nap(ms) {
     return new Promise(function (res) {
       var done = false, t = 0;
@@ -1402,11 +1439,14 @@
     var tries = 0;
     for (;;) {
       check(job);
+      claim(job); // a paid request: make sure no other Glow Studio page has taken this job over meanwhile
       var r;
       try {
+        // No "X-Fal-Store-IO: 0": with payload storage off fal keeps a result for only an hour, and a user who
+        // comes back later would pay again. The request stays in the user's own fal.ai history instead.
         r = await falFetch(QUEUE + endpoint, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Fal-Store-IO': '0', 'X-Fal-Object-Lifecycle-Preference': LIFECYCLE },
+          headers: { 'Content-Type': 'application/json', 'X-Fal-Object-Lifecycle-Preference': LIFECYCLE },
           body: JSON.stringify(input)
         }, true);
       } catch (e) {
@@ -1426,6 +1466,17 @@
       throw err;
     }
   }
+  // Errors that say nothing about the generation itself: the request at fal is still good (and may be finished and
+  // paid for), so the job keeps its handle and can be picked up again instead of being submitted a second time.
+  var LIVE_KINDS = ['auth', 'permission', 'credit', 'rate', 'network'];
+  function liveErr(e) { if (e && LIVE_KINDS.indexOf(e.kind) >= 0) e.live = true; return e; }
+  // A gateway hiccup (502/503/504 with no structured error from fal) is not a failed generation.
+  function gatewayHiccup(r) {
+    if (r.status !== 502 && r.status !== 503 && r.status !== 504) return false;
+    var b = r.body || {}, et = '';
+    try { et = (r.headers && r.headers.get && r.headers.get('x-fal-error-type')) || ''; } catch (e) { et = ''; }
+    return !Array.isArray(b.detail) && !b.error_type && !et;
+  }
   async function poll(job, h, onStatus) {
     var fails = 0;
     for (;;) {
@@ -1439,53 +1490,140 @@
         await nap(backoff(fails));
         continue;
       }
-      if (!r.ok && r.status !== 202) throw classify(r.status, r.body, r.headers);
+      if (!r.ok && r.status !== 202) throw liveErr(classify(r.status, r.body, r.headers));
       fails = 0;
       heartbeat(job);
       var st = r.body && r.body.status;
-      if (st === 'COMPLETED') return fetchResult(job, h);
+      if (st === 'COMPLETED') {
+        var out = await fetchResult(job, h, onStatus);
+        if (out !== NOT_READY) return out;
+        continue;
+      }
       onStatus({ status: st, position: r.body && r.body.queue_position });
       var slow = Date.now() - (h.at || Date.now()) > CFG.slowAfterMs;
       await nap(slow ? CFG.slowPollMs : CFG.pollMs);
     }
   }
-  async function fetchResult(job, h) {
-    var tries = 0;
+  // GET response_url is read-only and free, so it is repeated on connection trouble (like @fal-ai/client does for
+  // 429/502/503/504) until it works. Only a real failure (500, a structured model error, 422, 404, 499) ends it.
+  var NOT_READY = { notReady: true };
+  async function fetchResult(job, h, onStatus) {
+    var fails = 0, firstFail = 0, early = 0;
     for (;;) {
       check(job);
-      var r = null;
-      try { r = await falFetch(h.response_url, { method: 'GET' }, true); }
-      catch (e) { if (tries++ < 8) { await nap(backoff(tries)); continue; } throw e; }
+      var r = null, net = false;
+      try { r = await falFetch(h.response_url, { method: 'GET' }, true); } catch (e) { net = true; }
       check(job);
-      if (r.ok) return r.body || {};
-      if (r.status === 400 && /in progress/i.test(detailText(r.body)) && tries++ < 30) { await nap(1500); continue; }
-      if (r.status === 429 && tries++ < 8) { await nap(backoff(tries)); continue; }
-      throw classify(r.status, r.body, r.headers);
+      if (!net && r.ok) { if (fails && onStatus) onStatus({ reconnected: true }); return r.body || {}; }
+      if (!net && r.status === 400 && /in progress/i.test(detailText(r.body))) {
+        if (++early > 20) return NOT_READY; // go back to watching the status
+        await nap(1500); continue;
+      }
+      if (net || r.status === 429 || gatewayHiccup(r)) {
+        fails++;
+        if (!firstFail) firstFail = Date.now();
+        if (Date.now() - firstFail > CFG.resultRetryMs) throw FalErr('network', 'Couldn’t reach fal.ai to collect the result', { live: true });
+        if (onStatus) onStatus({ retry: true, offline: net, reconnecting: true });
+        heartbeat(job);
+        await nap(backoff(fails));
+        continue;
+      }
+      throw liveErr(classify(r.status, r.body, r.headers));
     }
   }
+  // PUT cancel_url. Resolves { status, state } where state is fal's answer: OK (left the queue),
+  // CANCELLATION_REQUESTED (already running), ALREADY_COMPLETED, NOT_FOUND — or '' if fal couldn't be reached.
   function cancelRemote(h) {
-    if (!h || !h.cancel_url || !getKey()) return Promise.resolve();
-    return falFetch(h.cancel_url, { method: 'PUT' }, true).catch(function () { /* best effort */ });
+    if (!h || !h.cancel_url || !getKey()) return Promise.resolve({ status: 0, state: '' });
+    return falFetch(h.cancel_url, { method: 'PUT' }, true).then(function (r) {
+      return { status: r.status, state: (r.body && typeof r.body.status === 'string') ? r.body.status : '' };
+    }, function () { return { status: 0, state: '' }; });
   }
 
   /* ------------------------------------------------------------------ *
    * Job persistence (resume after reload without paying again)
    * ------------------------------------------------------------------ */
+  var MEM_ONLY = ['inlineRef', 'localBlob']; // never written to localStorage
+  function jobCopy(job) { var copy = {}; Object.keys(job).forEach(function (k) { if (MEM_ONLY.indexOf(k) < 0) copy[k] = job[k]; }); return copy; }
   function saveJob(job) {
     if (RUN.job !== job) return; // cancelled or replaced: never bring it back
-    job.beat = Date.now(); job.owner = TAB;
-    var copy = {}; Object.keys(job).forEach(function (k) { if (k !== 'inlineRef') copy[k] = job[k]; });
-    lsSet(LS.job, JSON.stringify(copy));
+    job.beat = Date.now(); job.owner = INST;
+    if (lsSet(LS.job, JSON.stringify(jobCopy(job)))) RUN.persisted = true;
+  }
+  // A job that stopped but still holds something paid for (a live request at fal, or a finished video that still
+  // needs finishing). Kept so "Try again" or a reload picks it up instead of paying again.
+  function savePaused(job) {
+    job.paused = true; job.beat = 0; job.owner = INST;
+    lsSet(LS.job, JSON.stringify(jobCopy(job)));
   }
   function clearJob() { lsDel(LS.job); }
+  function storedJob() { var j = lsJSON(LS.job); return j && j.v === 1 ? j : null; }
+  // Another live page is running the stored job (fallback for browsers without Web Locks).
+  function liveElsewhere(j) { return !!(j && !j.paused && j.owner && j.owner !== INST && Date.now() - (j.beat || 0) < CFG.staleBeatMs); }
+  // Has another Glow Studio page taken this job over (it claimed the job after our claim looked stale)?
+  function lostOwnership(job) {
+    var s = storedJob();
+    if (!s) return RUN.persisted && lsWorks(); // finished or cancelled by the page that took over
+    return s.id !== job.id || (!!s.owner && s.owner !== INST);
+  }
+  function lsWorks() { var k = 'glow.ai.t'; if (!lsSet(k, '1')) return false; lsDel(k); return true; }
   var lastBeat = 0;
-  function heartbeat(job) { if (Date.now() - lastBeat > 2500) { lastBeat = Date.now(); if (RUN.job === job) saveJob(job); } }
+  function heartbeat(job) {
+    if (RUN.job !== job) return;
+    if (lostOwnership(job)) { standDown(job); throw CANCELLED; }
+    if (Date.now() - lastBeat > 2500) { lastBeat = Date.now(); saveJob(job); }
+  }
+  function claim(job) {
+    if (RUN.job !== job) throw CANCELLED;
+    if (RUN.persisted && lostOwnership(job)) { standDown(job); throw CANCELLED; }
+    lastBeat = Date.now(); saveJob(job);
+  }
+  // Stop working on a job locally because another page runs it now. Nothing is cancelled at fal.
+  function standDown(job) {
+    if (RUN.job !== job) return;
+    console.warn('[glow-ai] another Glow Studio page is running this video now');
+    RUN.job = null; RUN.persisted = false;
+    wakeAll(); releaseLock();
+    UI.state = 'idle';
+    clearInterval(UI.timer); clearTimeout(UI.msgTimer); clearInterval(UI.beatTimer);
+    closeProgressSheet(); setPill(null);
+    updateCost();
+    watchOtherTab();
+  }
   function running() { return !!RUN.job; }
+
+  // Web Locks: held for as long as this page runs a job, so a second page (duplicate tab, new window) waits.
+  function acquireLock(retried) {
+    if (!LOCKS || RUN.release) return Promise.resolve(true);
+    return new Promise(function (res) {
+      var p;
+      try {
+        p = navigator.locks.request('glow-ai-job', { ifAvailable: true }, function (lock) {
+          if (!lock) { res(false); return null; }
+          return new Promise(function (release) { RUN.release = release; res(true); });
+        });
+      } catch (e) { res(true); return; }
+      if (p && p.catch) p.catch(function () { res(true); });
+    }).then(function (ok) {
+      // a watching page holds the lock for a moment when it checks: ask once more
+      if (ok || retried) return ok;
+      return wait(200).then(function () { return acquireLock(true); });
+    });
+  }
+  function releaseLock() { var r = RUN.release; RUN.release = null; if (r) r(); }
 
   /* ------------------------------------------------------------------ *
    * Progress UI
    * ------------------------------------------------------------------ */
-  var UI = { stage: 'still', stageAt: {}, startAt: 0, timer: 0, msgTimer: 0, msgIdx: 0, sub: {}, minimized: false, monitorOn: true, state: 'idle' };
+  var UI = { stage: 'still', stageAt: {}, startAt: 0, timer: 0, msgTimer: 0, msgIdx: 0, sub: {}, minimized: false, monitorOn: true, state: 'idle',
+    pct: 0, pill: null, beatTimer: 0, lastStatus: {}, lastPos: {} };
+  var STEP_NAME = { still: 'Placing you in the scene', video: 'Bringing it to life', finish: 'Finishing your video' };
+  // Screen readers hear real changes (step, place in line, done) from a separate live region, not the rotating fun text.
+  function announce(t) {
+    if (!el.announce) return;
+    el.announce.textContent = '';
+    setTimeout(function () { el.announce.textContent = t; }, 60);
+  }
   var EXPECT = { still: 30, video: 140, videoAi: 200, finish: 12 };
   var MSGS = {
     still: ['Finding your best angle…', 'Setting up the lights…', 'Inviting the guests…', 'Matching your look exactly…'],
@@ -1500,12 +1638,14 @@
     if (sub != null) { var s = $('small', li); if (s) s.textContent = sub; }
   }
   function enterStage(stage, at) {
+    var changed = UI.stage !== stage || !UI.stageAt[stage];
     UI.stage = stage;
     UI.stageAt[stage] = UI.stageAt[stage] || Math.min(Date.now(), at || Date.now());
     el.pv.dataset.stage = stage;
     var order = ['still', 'video', 'finish'], k = order.indexOf(stage);
     order.forEach(function (s, i) { setStep(s, i < k ? 'done' : i === k ? 'active' : 'todo'); });
     UI.msgIdx = 0; rotateMsg(true);
+    if (changed) announce('Step ' + (k + 1) + ' of 3: ' + STEP_NAME[stage]);
   }
   function rotateMsg(now) {
     clearTimeout(UI.msgTimer);
@@ -1530,7 +1670,9 @@
     var order = ['still', 'video', 'finish'], W = { still: 0.18, video: 0.7, finish: 0.12 }, k = order.indexOf(UI.stage), f = 0;
     order.forEach(function (s, i) { f += W[s] * (i < k ? 1 : i === k ? (s === 'finish' && UI.finishFrac != null ? UI.finishFrac : stageFrac(s, job)) : 0); });
     var pct = Math.floor(clamp(f, 0, 0.99) * 100);
+    UI.pct = pct;
     el.pct.textContent = pct + '%';
+    el.cost.textContent = 'Making your video · ' + pct + '%';
     el.ringBar.style.strokeDashoffset = String(100 - pct);
     var h = UI.stage === 'still' ? job.still : job.video;
     var slow = h && h.at && Date.now() - h.at > CFG.slowAfterMs;
@@ -1538,25 +1680,50 @@
     else if (slow) el.eta.textContent = ' · taking longer than usual';
     else el.eta.textContent = UI.stage === 'still' ? ' · usually under a minute' : (job.sound === 'ai' ? ' · usually 2–5 min' : ' · usually 1–3 min');
     if (slow && !UI.slowSaid) { UI.slowSaid = true; holdMsg('Still working — fal.ai is busier than usual. We’ll keep checking.', 20000); }
-    el.pillT.textContent = (UI.stage === 'finish' ? 'Finishing your video' : 'Making your video') + ' · ' + pct + '%';
+    if (UI.pill === 'run') el.pillT.textContent = (UI.stage === 'finish' ? 'Finishing your video' : 'Making your video') + ' · ' + pct + '%';
   }
   function statusSub(stage, s) {
     var t;
-    if (s.retry) t = s.offline ? 'Connection lost — retrying…' : 'fal.ai is busy — retrying…';
+    if (s.reconnected) { t = 'Generating…'; UI.hold = 0; }
+    else if (s.retry && s.reconnecting) t = s.offline ? 'Connection lost — reconnecting…' : 'fal.ai is busy — reconnecting…';
+    else if (s.retry) t = s.offline ? 'Connection lost — retrying…' : 'fal.ai is busy — retrying…';
     else if (s.status === 'IN_QUEUE') t = (s.position > 0 ? 'In line at fal.ai · ' + s.position + ' ahead' : 'Starting…');
     else if (s.status === 'IN_PROGRESS') t = 'Generating…';
     else t = '';
     setStep(stage, null, t);
-    if (s.retry && s.offline) holdMsg('Connection lost — we’ll keep trying. Your video is safe at fal.ai.', 8000);
+    if (s.status) {
+      UI.lastStatus[stage] = s.status;
+      if (s.status === 'IN_QUEUE' && s.position > 0 && UI.lastPos[stage] !== s.position) announce(s.position + ' ahead of you in line at fal.ai');
+      UI.lastPos[stage] = s.status === 'IN_QUEUE' ? s.position : null;
+    }
+    if (s.retry && s.reconnecting) holdMsg(s.offline ? 'Connection lost — reconnecting. Your video is safe at fal.ai and won’t be charged twice.' : 'fal.ai is slow to answer — reconnecting. Your video is safe and won’t be charged twice.', 8000);
+    else if (s.retry && s.offline) holdMsg('Connection lost — we’ll keep trying. Your video is safe at fal.ai.', 8000);
   }
-  function openProgress() { UI.minimized = false; el.pill.hidden = true; openSheet(el.prog, el.min); }
+  function setPill(state) { UI.pill = state || null; renderPill(); }
+  function renderPill() {
+    var s = UI.pill;
+    // On phones the AI page's own button (fixed at the bottom) already shows the progress, so the bar would repeat it.
+    var phone = !(window.matchMedia && window.matchMedia('(min-width: 980px)').matches);
+    el.pill.hidden = !s || (s === 'run' && mode() === 'ai' && phone);
+    el.pill.classList.toggle('ready', s === 'ready');
+    el.pill.classList.toggle('error', s === 'error');
+    el.pill.classList.toggle('tap', s === 'tap');
+    if (s === 'ready') el.pillT.textContent = 'Your AI video is ready · tap to watch';
+    else if (s === 'tap') el.pillT.textContent = 'Tap to finish your AI video';
+    else if (s === 'error') el.pillT.textContent = 'Your AI video hit a snag · tap to see';
+    else if (s === 'run') el.pillT.textContent = (UI.stage === 'finish' ? 'Finishing your video' : 'Making your video') + ' · ' + (UI.pct || 0) + '%';
+  }
+  window.addEventListener('resize', function () { if (UI.pill) renderPill(); });
+  function openProgress() { UI.minimized = false; setPill(null); openSheet(el.prog, el.min); syncMonitor(); }
   function minimize() {
-    if (UI.state === 'running') { UI.minimized = true; closeSheet(el.prog); el.pill.hidden = false; toast('We’ll keep working — tap the bar at the bottom to check in.', 'info', 3000); }
+    if (UI.state === 'running') { UI.minimized = true; closeSheet(el.prog); setPill('run'); syncMonitor(); toast(el.pill.hidden ? 'We’ll keep working — tap “See progress” to check in.' : 'We’ll keep working — tap the bar at the bottom to check in.', 'info', 3000); }
     else closeProgressSheet();
   }
-  function closeProgressSheet() { closeSheet(el.prog); el.pill.hidden = true; }
+  function closeProgressSheet() { closeSheet(el.prog); if (UI.pill !== 'ready') setPill(null); }
   function resetProgressUI(job, resumed) {
     UI.state = 'running'; UI.stageAt = {}; UI.startAt = job.createdAt || Date.now(); UI.slowSaid = false; UI.finishFrac = null; UI.hold = 0;
+    UI.pct = 0; UI.lastStatus = {}; UI.lastPos = {}; UI.stage = '';
+    el.min.setAttribute('aria-label', 'Hide this and keep working in the background'); el.min.title = 'Keep working in the background';
     el.err.hidden = true; el.errActions.textContent = '';
     el.cancel.hidden = false; el.cancel.textContent = 'Cancel'; el.tapFinish.hidden = true; el.keepOpen.hidden = false;
     el.steps.hidden = false; el.mon.hidden = true; el.elapsed.parentNode.hidden = false; el.elapsed.textContent = '0:00 elapsed';
@@ -1595,20 +1762,37 @@
       still: null, stillUrl: null, video: null, videoUrl: null, tries: {}
     };
   }
+  // Resolves true when the job now runs in this page, false when another Glow Studio page is running one.
   function startRun(job, opts) {
-    RUN.job = job; RUN.cancelled = false;
-    readyItem = null; el.pill.classList.remove('ready');
-    saveJob(job);
-    resetProgressUI(job, opts && opts.resumed);
-    if (opts && opts.background) { UI.minimized = true; el.pill.hidden = false; } else openProgress();
-    updateCost();
-    runJob(job).catch(function (e) { console.warn('[glow-ai] run', e); });
+    opts = opts || {};
+    if (RUN.starting || running()) return Promise.resolve(false);
+    RUN.starting = true;
+    return acquireLock().then(function (ok) {
+      RUN.starting = false;
+      if (running()) return false;
+      if (!ok || (!LOCKS && liveElsewhere(storedJob()))) { releaseLock(); watchOtherTab(); return false; }
+      clearInterval(otherTabTimer);
+      job.paused = false;
+      S.retryJob = null; // in use now (failJob sets it again if needed)
+      RUN.job = job; RUN.cancelled = false; RUN.persisted = false;
+      readyItem = null;
+      saveJob(job);
+      resetProgressUI(job, opts.resumed);
+      if (opts.background) { UI.minimized = true; setPill('run'); } else openProgress();
+      updateCost();
+      clearInterval(UI.beatTimer);
+      UI.beatTimer = setInterval(function () { var j = RUN.job; if (j) { try { heartbeat(j); } catch (e) { /* stood down */ } } }, 3000);
+      runJob(job).catch(function (e) { console.warn('[glow-ai] run', e); });
+      return true;
+    });
   }
+  function endRun() { RUN.job = null; RUN.persisted = false; releaseLock(); clearInterval(UI.beatTimer); }
   async function runJob(job) {
     var sc = sceneById(job.sceneId);
     try {
+      var haveVideo = !!(job.videoUrl || job.localBlob);
       // 1 — the scene still
-      if (!job.stillUrl) {
+      if (!job.stillUrl && !haveVideo) {
         enterStage('still', job.still && job.still.at);
         if (!job.still) {
           var ref = job.ref || job.inlineRef;
@@ -1652,7 +1836,7 @@
         showStill(job.stillUrl, false);
       }
       // 2 — the video
-      if (!job.videoUrl) {
+      if (!haveVideo) {
         enterStage('video', job.video && job.video.at);
         var ep = job.sound === 'ai' ? EP.ai : EP.std;
         if (!job.video) {
@@ -1683,7 +1867,9 @@
       failJob(job, e);
     }
   }
-  function retryable(e) { return !!e && e.kind === 'server'; } // fal-side failures are free; anything else is final
+  // A generation that failed on fal's side (500, model error) isn't charged and may be submitted again. Connection
+  // trouble never lands here: the request is still good, so it is picked up again instead (see liveErr).
+  function retryable(e) { return !!e && e.kind === 'server' && !e.live; }
   function retryStill(job, e) {
     console.warn('[glow-ai] still failed on fal’s side, retrying', e);
     job.tries.still = (job.tries.still || 0) + 1;
@@ -1700,28 +1886,41 @@
     return runJob(job);
   }
 
+  // Downloads fal's finished clip. A 4xx means the file is gone; connection trouble is waited out (the video is
+  // paid for and safe at fal), and only after a long run of failures do we pause and let the user try again.
+  async function downloadVideo(job) {
+    var fails = 0, t0 = Date.now();
+    for (;;) {
+      check(job);
+      var r = null, blob = null;
+      try {
+        r = await fetch(job.videoUrl, { credentials: 'omit' });
+        if (r.ok) blob = await r.blob();
+      } catch (e) { blob = null; }
+      check(job);
+      if (blob && blob.size) return blob;
+      if (r && r.status >= 400 && r.status < 500 && r.status !== 408 && r.status !== 429) throw FalErr('gone', 'The video file is no longer available (' + r.status + ')', { status: r.status });
+      fails++;
+      if (navigator.onLine === false) {
+        setStep('finish', null, 'Waiting for the connection…');
+        holdMsg('You’re offline. Your video is ready at fal.ai — we’ll download it as soon as you’re back online.', 30000);
+        await nap(30000); // the 'online' event wakes this early
+        continue;
+      }
+      if (fails >= 8 && Date.now() - t0 > 30000) throw FalErr('download', 'Couldn’t download the finished video', { live: true });
+      setStep('finish', null, 'Download interrupted — retrying…');
+      await nap(backoff(fails));
+    }
+  }
   async function finishStage(job) {
     enterStage('finish');
     var sc = sceneById(job.sceneId);
     el.cancel.hidden = true;
     setStep('finish', null, 'Downloading your video…');
-    var raw = null;
-    for (var i = 0; i < 4 && !raw; i++) {
-      try {
-        var r = await fetch(job.videoUrl, { credentials: 'omit' });
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        raw = await r.blob();
-      } catch (e) {
-        check(job);
-        if (i === 3) break;
-        await nap(backoff(i + 1));
-      }
-    }
+    // The clip stays in memory, so "Try finishing again" in this visit doesn't download it again.
+    var raw = job.localBlob || null;
+    if (!raw) { raw = await downloadVideo(job); job.localBlob = raw; }
     check(job);
-    if (!raw) {
-      // Couldn't download the file (e.g. the host doesn't allow it). Show fal's file with the label on top.
-      return completeJob(job, { raw: true, remote: job.videoUrl, note: 'We couldn’t download the video into Glow Studio, so the AI label is shown on top of the player instead of inside the file.' });
-    }
     var fin = null, lastErr = null;
     for (var attempt = 0; attempt < 3 && !fin; attempt++) {
       try {
@@ -1740,10 +1939,10 @@
       }
     }
     check(job);
-    if (!fin) {
-      console.warn('[glow-ai] finishing failed', lastErr);
-      return completeJob(job, { raw: true, blob: raw, note: 'This browser couldn’t add the AI label inside the file, so here is the original video from fal.ai. Please keep it labelled as AI when you share it.' });
-    }
+    // A clip this browser couldn't play is downloaded afresh next time (it may have been damaged on the way).
+    if (!fin && lastErr && lastErr.code === 'decode') job.localBlob = null;
+    // Never hand out fal's original, unlabelled file: stop here and let the user try finishing again (no cost).
+    if (!fin) throw FalErr('finish', (lastErr && lastErr.message) || 'Finishing failed', { code: (lastErr && lastErr.code) || 'record', live: true });
     return completeJob(job, fin);
   }
   function needTap(job) {
@@ -1751,10 +1950,13 @@
       setStep('finish', null, 'Waiting for you…');
       holdMsg('Your video is ready to finish — tap the button to add the sound.', 60000);
       el.tapFinish.hidden = false;
-      if (UI.minimized) { openProgress(); }
-      el.tapFinish.onclick = function () { ensureAudio(); el.tapFinish.hidden = true; el.tapFinish.onclick = null; UI.hold = 0; res(); };
-      try { el.tapFinish.focus(); } catch (e) { /* ignore */ }
-      var iv = setInterval(function () { if (RUN.job !== job) { clearInterval(iv); res(); } }, 500);
+      var iv = 0;
+      var go = function () { clearInterval(iv); UI.tapWaiter = null; ensureAudio(); el.tapFinish.hidden = true; el.tapFinish.onclick = null; UI.hold = 0; res(); };
+      el.tapFinish.onclick = go;
+      UI.tapWaiter = go; // a tap on the bottom bar counts too (it is a user gesture)
+      if (UI.minimized || el.prog.hidden || mode() !== 'ai') { UI.minimized = true; setPill('tap'); toast('Your AI video is ready to finish — tap the bar at the bottom.', 'info', 5000); }
+      else { try { el.tapFinish.focus(); } catch (e) { /* ignore */ } }
+      iv = setInterval(function () { if (RUN.job !== job) { clearInterval(iv); UI.tapWaiter = null; res(); } }, 500);
     });
   }
   function whenVisible() {
@@ -1768,7 +1970,17 @@
   /* ------------------------------------------------------------------ *
    * Finishing: AI label burned in + music or AI audio, recorded in real time
    * ------------------------------------------------------------------ */
-  function canRecord() { return !!(window.MediaRecorder && window.MediaStream && typeof HTMLCanvasElement.prototype.captureStream === 'function'); }
+  function canRecord() {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    return !!(window.MediaRecorder && window.MediaStream && typeof HTMLCanvasElement.prototype.captureStream === 'function' &&
+      AC && typeof AC.prototype.createMediaStreamDestination === 'function');
+  }
+  function monitorWanted() { return UI.monitorOn && !UI.minimized && mode() === 'ai' && el.res.hidden && !el.prog.hidden && !document.hidden; }
+  function syncMonitor() {
+    if (!UI.mon || !actx) return;
+    var g = monitorWanted() ? 0.9 : 0;
+    try { UI.mon.gain.setTargetAtTime(g, actx.currentTime, 0.02); } catch (e) { UI.mon.gain.value = g; }
+  }
   function pickMime() {
     var u = window.GlowApp && window.GlowApp.util;
     if (u && typeof u.pickMime === 'function') return u.pickMime();
@@ -1856,9 +2068,10 @@
       draw();
       el.pv.classList.add('has-video');
 
-      // audio graph: source -> mix -> (recorder, optional speakers)
+      // audio graph: source -> mix -> (recorder, optional speakers). The speakers only get it while the user is
+      // watching the finishing preview, never in the background or over another video.
       var dest = ctx.createMediaStreamDestination(), mix = ctx.createGain(), mon = ctx.createGain();
-      mix.gain.value = 1; mon.gain.value = UI.monitorOn ? 0.9 : 0;
+      mix.gain.value = 1; mon.gain.value = monitorWanted() ? 0.9 : 0;
       mix.connect(dest); mix.connect(mon); mon.connect(ctx.destination);
       UI.mon = mon; el.mon.hidden = false;
       cleanup.push(function () { try { mix.disconnect(); } catch (e) { /* ignore */ } try { mon.disconnect(); } catch (e) { /* ignore */ } UI.mon = null; el.mon.hidden = true; });
@@ -1977,125 +2190,234 @@
   /* ------------------------------------------------------------------ *
    * Completion, errors, cancel
    * ------------------------------------------------------------------ */
+  function otherModalOpen() { return !!document.querySelector('.modal:not(.ai-modal):not([hidden])'); }
   async function completeJob(job, fin) {
     var sc = sceneById(job.sceneId);
     setStep('finish', 'done', 'Done');
     UI.finishFrac = 1; tick();
+    // Only ever a labelled file from finishVideo() lands here.
     var item = {
-      id: job.id, createdAt: Date.now(), sceneId: sc.id, sceneName: sc.name, sound: job.sound, trackId: job.sound === 'music' && fin.labelled ? job.trackId : null,
-      duration: fin.duration || job.duration, width: fin.width || (job.videoMeta && job.videoMeta.w) || null, height: fin.height || (job.videoMeta && job.videoMeta.h) || null,
-      type: fin.type || (fin.blob && fin.blob.type) || (job.videoMeta && job.videoMeta.type) || 'video/mp4',
-      size: fin.blob ? fin.blob.size : 0, blob: fin.blob || null, thumb: fin.thumb || null,
-      rawUrl: job.videoUrl, stillUrl: job.stillUrl, remote: fin.remote || null, labelled: !!fin.labelled, note: fin.note || ''
+      id: job.id, createdAt: Date.now(), sceneId: sc.id, sceneName: sc.name, sound: job.sound, trackId: job.sound === 'music' ? job.trackId : null,
+      duration: fin.duration || job.duration, width: fin.width || null, height: fin.height || null,
+      type: fin.type || (fin.blob && fin.blob.type) || 'video/webm',
+      size: fin.blob ? fin.blob.size : 0, blob: fin.blob, thumb: fin.thumb || null,
+      rawUrl: job.videoUrl, stillUrl: job.stillUrl, labelled: true, note: ''
     };
     if (!item.thumb && job.stillUrl) item.thumbUrl = job.stillUrl;
     await historyAdd(item);
     clearJob();
-    RUN.job = null;
+    endRun();
+    S.retryJob = null;
     UI.state = 'done';
     clearInterval(UI.timer); clearTimeout(UI.msgTimer);
-    var quiet = UI.minimized || mode() !== 'ai' || !el.conn.hidden || !el.res.hidden;
+    var quiet = UI.minimized || mode() !== 'ai' || !el.conn.hidden || !el.res.hidden || otherModalOpen();
     closeSheet(el.prog);
-    updateCost();
     UI.minimized = false;
+    updateCost();
+    announce('Your AI video is ready');
     if (quiet) {
       readyItem = item;
-      el.pill.classList.add('ready'); el.pill.hidden = false;
-      el.pillT.textContent = 'Your AI video is ready · tap to watch';
+      setPill('ready');
       toast('Your AI video is ready!', 'ok', 4000);
     } else {
-      el.pill.hidden = true;
+      setPill(null);
       showResult(item, { fresh: true });
     }
   }
   var readyItem = null;
+  function videoPrice(job) { return (job.sound === 'ai' ? PRICE.ai : PRICE.std) * (job.duration || 5); }
   function errorView(e, job) {
-    var sc = sceneById(job && job.sceneId), kind = e && e.kind || (e && e.code) || 'server';
+    var kind = e && e.kind || (e && e.code) || 'server';
     var detail = e && e.detail ? String(e.detail) : (e && e.message ? String(e.message) : '');
     var paid = job && job.stillUrl ? ' Your scene photo is saved, so trying again only makes the video.' : '';
+    var safe = ' Your video is safe at fal.ai and already paid for, so trying again costs nothing extra.';
+    var live = !!(e && e.live);
     switch (kind) {
-      case 'auth': return { t: 'fal.ai didn’t accept your key', p: 'Check that you pasted the whole key (two parts joined by a colon), or create a new one on fal.ai.', a: ['key', 'keys'] };
-      case 'credit': return { t: 'Your fal.ai balance needs a top-up', p: 'fal.ai says this account is out of credit or locked. Add credit on fal.ai, then try again — nothing was charged for this attempt.' + paid, a: ['billing', 'retry'] };
+      case 'auth': return { t: 'fal.ai didn’t accept your key', p: 'Check that you pasted the whole key (two parts joined by a colon), or create a new one on fal.ai.' + (live ? ' Then we’ll pick up your video again without paying twice.' : ''), a: ['key', 'keys'] };
+      case 'credit': return { t: 'Your fal.ai balance needs a top-up', p: 'fal.ai says this account is out of credit or locked. Add credit on fal.ai, then try again' + (live ? '.' : ' — nothing was charged for this attempt.') + paid, a: ['billing', 'retry'] };
       case 'permission': return { t: 'This key can’t use the AI models', p: 'When you create the key on fal.ai, choose the “API” preset (or allow these models). Then paste the new key here.', a: ['keys', 'key'] };
-      case 'moderation': return { t: 'This one didn’t pass fal.ai’s safety check', p: 'Their content filter stopped this photo or scene, and we respect that. Try a different photo — one person, face clearly visible, everyday clothes — or pick another scene. Blocked results aren’t charged.', a: ['photo', 'scene'] };
+      case 'moderation': return { t: 'This one didn’t pass fal.ai’s safety check', p: 'Their content filter stopped this photo or scene, and we respect that. Try a different photo — one person, face clearly visible, everyday clothes — or pick another scene. ' + (job && job.stillUrl ? 'The scene photo was charged; the blocked video wasn’t.' : 'Blocked results aren’t charged.'), a: ['photo', 'scene'] };
       case 'face': return { t: 'We couldn’t find a clear face', p: 'Use a photo where your face is clearly visible, in good light, with just you in it.', a: ['photo'] };
       case 'photo': return { t: 'fal.ai couldn’t use this photo', p: (detail ? detail + ' ' : '') + 'Try another photo, at least 300 px on each side.', a: ['photo', 'retry'] };
       case 'validation': return { t: 'fal.ai couldn’t start this one', p: (detail || 'The request was rejected.') + paid, a: ['retry', 'scene'] };
       case 'nomedia': return { t: 'The AI didn’t make anything this time', p: 'That can happen with some photos. Try again, or use a different photo or scene.' + (detail && detail.length < 200 ? ' (' + detail + ')' : ''), a: ['retry', 'photo'] };
-      case 'notfound': return { t: 'This request has expired', p: 'fal.ai no longer has this result (results are kept for about an hour). Please start again.', a: ['retry'] };
-      case 'network': return { t: 'Couldn’t reach fal.ai', p: 'Check your internet connection and try again.' + paid, a: ['retry'] };
+      case 'notfound': return { t: 'This request has expired', p: 'fal.ai no longer has this result. Please start again.', a: ['retry'] };
+      case 'network': return { t: 'Couldn’t reach fal.ai', p: 'Check your internet connection and try again.' + (live ? safe : paid), a: live ? ['retry', 'discard'] : ['retry'] };
+      case 'download': return { t: 'Your video is made, but it didn’t download', p: 'We couldn’t download the finished video from fal.ai. Check your connection and try again.' + safe, a: ['finish', 'discard'] };
+      case 'gone': return { t: 'fal.ai’s file for this video is no longer available', p: 'The finished video was removed from fal.ai before it could be downloaded. Making it again costs about ' + money(videoPrice(job)) + '.' + paid, a: ['retry'] };
+      case 'finish':
+        if (e.code === 'unsupported') return { t: 'This browser can’t finish AI videos', p: 'Adding the AI label and the sound needs a browser that can record video. Open Glow Studio in Chrome, Edge or Safari.' + safe, a: ['finish', 'discard'] };
+        if (e.code === 'decode') return { t: 'This browser couldn’t open the video', p: 'Your video is made, but this browser can’t play fal.ai’s file to add the AI label. Try again, or use Chrome, Edge or Safari.' + safe, a: ['finish', 'discard'] };
+        return { t: 'Finishing didn’t complete', p: 'Adding the AI label and the sound stopped halfway. Keep this tab open and in front while it finishes, then try again.' + safe, a: ['finish', 'discard'] };
       case 'upload': return { t: 'Your photo didn’t upload', p: 'Check your connection and try again.', a: ['retry'] };
       case 'nophoto': return { t: 'Add your photo again', p: 'The page was reloaded before your photo was sent. Please choose it again — nothing was charged.', a: ['photo'] };
-      case 'rate': return { t: 'fal.ai is very busy', p: 'Please try again in a minute.', a: ['retry'] };
+      case 'rate': return { t: 'fal.ai is very busy', p: 'Please try again in a minute.' + (live ? safe : ''), a: ['retry'] };
       case 'cancelled': return { t: 'This request was cancelled', p: 'Start again whenever you like.', a: ['retry'] };
       default: return { t: 'fal.ai had a problem making this video', p: 'Their servers couldn’t finish it. fal.ai only charges for successful results. Try again in a moment.' + paid + (detail && detail.length < 160 ? ' (' + detail + ')' : ''), a: ['retry'] };
     }
   }
+  // What "Try again" may reuse when nothing at fal can be picked up again: the scene photo (paid for, and it depends
+  // only on the photo and the scene, so the sound and length can still change).
+  function stillStub(job) {
+    return { sceneId: job.sceneId, sound: job.sound, trackId: job.trackId, duration: job.duration, stillUrl: job.stillUrl, thumb: job.thumb, photoSeq: job.photoSeq, ref: job.ref || null };
+  }
+  function resumable(job, e) {
+    if (!e || !e.live) return false;
+    return !!(job.videoUrl || job.video || job.still);
+  }
   function failJob(job, e) {
     console.warn('[glow-ai] job failed', e);
-    RUN.job = null;
+    endRun();
     UI.state = 'error';
     clearInterval(UI.timer); clearTimeout(UI.msgTimer);
-    clearJob();
     var v = errorView(e, job);
-    var keepStill = job.stillUrl && e.kind !== 'moderation' && e.kind !== 'auth';
-    S.retryJob = keepStill ? { sceneId: job.sceneId, sound: job.sound, trackId: job.trackId, duration: job.duration, stillUrl: job.stillUrl, thumb: job.thumb, photoSeq: job.photoSeq } : null;
+    if (resumable(job, e)) {
+      // Something paid for is still at fal (or already here): keep it so "Try again" or a reload picks it up.
+      savePaused(job);
+      S.retryJob = { resume: job };
+    } else {
+      clearJob();
+      var keepStill = job.stillUrl && e.kind !== 'moderation' && e.kind !== 'auth';
+      S.retryJob = keepStill ? stillStub(job) : null;
+    }
     el.pv.classList.add('error');
     el.err.hidden = false;
     el.errT.textContent = v.t; el.errP.textContent = v.p;
     el.errActions.textContent = '';
     v.a.forEach(function (a, i) {
       var b = document.createElement(a === 'billing' || a === 'keys' ? 'a' : 'button');
-      b.className = 'btn ' + (i === 0 ? 'primary' : 'glass');
+      b.className = 'btn ' + (a === 'discard' ? 'text ai-danger' : i === 0 ? 'primary' : 'glass');
       if (b.tagName === 'A') { b.href = a === 'billing' ? BILLING_URL : KEYS_URL; b.target = '_blank'; b.rel = 'noopener'; }
       else b.type = 'button';
-      b.textContent = { key: 'Fix my key', keys: 'Open fal.ai keys', billing: 'Add credit on fal.ai', retry: 'Try again', photo: 'Choose another photo', scene: 'Pick another scene' }[a];
-      b.addEventListener('click', function () { errAction(a); });
+      var retryLabel = S.retryJob && S.retryJob.resume ? 'Try again — no extra cost' : 'Try again · about ' + money(S.retryJob && S.retryJob.stillUrl ? videoPrice(job) : estimate(job.sound, job.duration));
+      b.textContent = { key: 'Fix my key', keys: 'Open fal.ai keys', billing: 'Add credit on fal.ai', retry: retryLabel, finish: 'Try finishing again', photo: 'Choose another photo', scene: 'Pick another scene', discard: 'Discard this video' }[a];
+      if (a === 'discard') b.dataset.armed = '';
+      b.addEventListener('click', function () {
+        if (a === 'discard' && !b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'Tap again to discard it (it was paid for)'; return; }
+        errAction(a);
+      });
       el.errActions.appendChild(b);
     });
     el.cancel.hidden = false; el.cancel.textContent = 'Close';
+    el.min.setAttribute('aria-label', 'Close'); el.min.title = 'Close';
     el.tapFinish.hidden = true; el.keepOpen.hidden = true; el.mon.hidden = true;
     el.progTt.textContent = 'Something went wrong';
     setMsg('');
     el.eta.textContent = '';
     ['still', 'video', 'finish'].forEach(function (s) { var li = el.steps.querySelector('[data-step="' + s + '"]'); if (li && li.dataset.state === 'active') { li.dataset.state = 'error'; setStep(s, null, 'Stopped'); } });
     el.elapsed.parentNode.hidden = true;
-    if (UI.minimized || el.prog.hidden) openProgress();
-    el.pill.hidden = true;
     updateCost();
+    // Working in the background (minimized, in Photo Video, or another sheet is open): don't pop up over it.
+    var background = UI.minimized || el.prog.hidden || mode() !== 'ai' || otherModalOpen() || !el.res.hidden || !el.conn.hidden;
+    if (background) {
+      UI.minimized = true;
+      setPill('error');
+      toast('Your AI video hit a snag — tap the bar at the bottom to see what happened.', 'warn', 5000);
+      return;
+    }
+    setPill(null);
     setTimeout(function () { var f = el.errActions.querySelector('.btn'); if (f) try { f.focus(); } catch (x) { /* ignore */ } }, 60);
   }
   function errAction(a) {
     if (a === 'billing' || a === 'keys') return; // links open fal.ai in a new tab
+    if (mode() !== 'ai') setMode('ai');
     closeProgressSheet();
-    if (a === 'key') openConnect();
+    if (a === 'key') openConnect(pausedJob() ? 'resume' : null);
     else if (a === 'photo') { attention(el.photoCard); openPicker(); }
     else if (a === 'scene') { attention(el.sceneCard); var b = sceneBtns[S.sceneId]; if (b) try { b.btn.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }
-    else if (a === 'retry') onMake({ retry: true });
+    else if (a === 'retry' || a === 'finish') onMake({ retry: true });
+    else if (a === 'discard') discardPaused();
+  }
+  function discardPaused() {
+    var j = pausedJob();
+    S.retryJob = null;
+    if (j) {
+      var s = storedJob();
+      if (s && s.id === j.id && s.paused) clearJob();
+      if (j.video && !j.videoUrl) cancelRemote(j.video);
+      else if (j.still && !j.stillUrl) cancelRemote(j.still);
+    }
+    updateCost();
+    toast('Discarded. You can make a new video any time.', 'info', 3000);
+  }
+  // The scene photo had already finished when Cancel was tapped: keep it for next time.
+  function collectStill(job, h) {
+    return falFetch(h.response_url, { method: 'GET' }, true).then(function (r) {
+      var img = r.ok && r.body && Array.isArray(r.body.images) ? r.body.images[0] : null;
+      if (!img || typeof img.url !== 'string') return false;
+      if (!running() && !S.retryJob) { job.stillUrl = img.url; S.retryJob = stillStub(job); updateCost(); }
+      return true;
+    }, function () { return false; });
   }
   function cancelJob() {
     var job = RUN.job;
     if (!job) { closeProgressSheet(); return; }
     if (UI.stage === 'finish') return; // already paid for: always finish
     RUN.cancelled = true;
-    var h = job.video || job.still;
-    RUN.job = null;
-    wakeAll();
+    var stage = job.video ? 'video' : job.still ? 'still' : '', h = job.video || job.still;
+    var wasRunning = UI.lastStatus[stage] === 'IN_PROGRESS';
+    endRun(); wakeAll();
     clearJob();
     UI.state = 'idle';
     clearInterval(UI.timer); clearTimeout(UI.msgTimer);
-    closeProgressSheet();
+    closeProgressSheet(); setPill(null);
+    // The scene photo is paid for once it exists: the next "Make my video" (same photo and scene) only makes the video.
+    S.retryJob = job.stillUrl ? stillStub(job) : null;
     updateCost();
-    if (h) cancelRemote(h);
-    toast('Cancelled — fal.ai only charges for finished results.', 'info', 4000);
+    if (!h) { toast('Cancelled — nothing was charged.', 'info', 4000); return; }
+    var still = money(PRICE.still);
+    cancelRemote(h).then(function (res) {
+      if (res.state === 'ALREADY_COMPLETED') {
+        if (stage === 'video' && !running()) {
+          // It finished just as Cancel was tapped and is paid for: keep it.
+          toast('Your video had just finished, so we’re keeping it — no extra cost.', 'ok', 5000);
+          job.tries = job.tries || {};
+          startRun(job, { resumed: true });
+          return;
+        }
+        collectStill(job, h).then(function (ok) {
+          toast(ok ? 'Cancelled. Your scene photo (about ' + still + ') had just been made — we’ll reuse it if you try this scene again.' : 'Cancelled. The scene photo had just been made, so fal.ai charges for it (about ' + still + ').', 'info', 7000);
+        });
+        return;
+      }
+      var maybe = res.state === 'CANCELLATION_REQUESTED' || (res.state !== 'OK' && wasRunning);
+      var t;
+      if (!res.status) t = 'Cancelled here, but fal.ai couldn’t be reached to stop it, so it may still be charged.';
+      else if (stage === 'still') t = maybe ? 'Cancelled. The scene photo was already being made, so fal.ai may still charge for it (about ' + still + ').' : 'Cancelled — nothing was charged.';
+      else t = (maybe ? 'Cancelled. The video was already being made, so fal.ai may still charge for it. ' : 'Cancelled — the video wasn’t charged. ') +
+        'Your scene photo (about ' + still + ') was already made — we’ll reuse it if you try this scene again.';
+      toast(t, 'info', 7000);
+    });
   }
 
   /* ------------------------------------------------------------------ *
    * Make
    * ------------------------------------------------------------------ */
+  var MAX_JOB_AGE = 24 * 3600e3; // fal keeps results (payload storage on) and the CDN keeps files for a day
+  function paidStarted(j) { return !!(j && (j.stillUrl || j.still || j.video || j.videoUrl)); }
+  function refuseUnsupported() {
+    toast('This browser can’t finish AI videos (adding the AI label needs video recording). Open Glow Studio in Chrome, Edge or Safari.', 'warn', 8000);
+  }
   function onMake(opts) {
     ensureAudio(); // unlock audio with this tap so finishing can record sound
     if (running()) { openProgress(); return; }
+    if (RUN.starting) return;
+    // Something already paid for comes first: a paused job, or one a closed page left behind.
+    var pj = pausedJob();
+    if (!pj) {
+      var s = storedJob();
+      if (s && paidStarted(s) && (LOCKS || !liveElsewhere(s)) && Date.now() - (s.createdAt || 0) < MAX_JOB_AGE) pj = s;
+    }
+    if (pj) {
+      if (!getKey()) { S.retryJob = { resume: pj }; openConnect('resume'); return; }
+      if (!canRecord()) { refuseUnsupported(); return; }
+      if (navigator.onLine === false) { toast('You’re offline. Connect to the internet to finish your video.', 'warn', 4500); return; }
+      pj.tries = pj.tries || {};
+      startRun(pj, { resumed: true }).then(function (ok) {
+        if (ok && !(opts && opts.retry)) toast('First, let’s finish the video you already paid for.', 'info', 4000);
+      });
+      return;
+    }
     var rj = S.retryJob && S.retryJob.stillUrl && S.retryJob.sceneId === S.sceneId && (!S.photo || S.retryJob.photoSeq === S.photo.seq) ? S.retryJob : null;
     if (!S.photo && !rj) {
       toast('Add your selfie first.', 'warn');
@@ -2110,49 +2432,77 @@
       setTimeout(function () { try { el.consent.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }, 300);
       return;
     }
+    // Refuse before anything is paid for: the AI label can only be burned in where the browser can record video.
+    if (!canRecord()) { refuseUnsupported(); return; }
     if (!getKey()) { openConnect('make'); return; }
     if (navigator.onLine === false) { toast('You’re offline. Connect to the internet to make a video.', 'warn', 4500); return; }
-    if (!canRecord()) toast('This browser can’t add the label and music itself — you’ll get the original video from fal.ai.', 'warn', 6000);
     var job = newJob();
-    // After a failure, trying again reuses the scene photo that was already made (and paid for): it depends only on
-    // the photo and the scene, so the sound and length can still change.
+    // After a failure or a cancel, trying again reuses the scene photo that was already made (and paid for).
     if (rj) {
       job.stillUrl = rj.stillUrl; job.stage = 'video';
       if (!job.thumb) job.thumb = rj.thumb;
       job.photoSeq = rj.photoSeq;
+      if (rj.ref) job.ref = rj.ref;
     }
-    S.retryJob = null;
     startRun(job, {});
   }
 
   var resumeWaitingForKey = false;
-  function resumeIfAny() {
-    var job = lsJSON(LS.job);
-    if (!job || job.v !== 1 || running()) return;
-    if (Date.now() - (job.createdAt || 0) > 24 * 3600e3) { clearJob(); return; }
-    if (job.owner && job.owner !== TAB && Date.now() - (job.beat || 0) < 12000) { watchOtherTab(); return; }
-    var paidStarted = job.stillUrl || job.still || job.video || job.videoUrl;
-    if (!paidStarted) { clearJob(); return; } // nothing was sent to the paid models yet
+  function resumeIfAny(opts) {
+    var job = storedJob();
+    if (!job || running() || RUN.starting) return;
+    if (Date.now() - (job.createdAt || 0) > MAX_JOB_AGE) { clearJob(); return; }
+    // With Web Locks, startRun() finds out for sure whether another page runs it; the claim's age is only a fallback.
+    if (!LOCKS && liveElsewhere(job)) { watchOtherTab(); return; }
+    if (!paidStarted(job)) { if (!LOCKS) clearJob(); return; } // nothing was sent to the paid models yet
+    // A paused job (it stopped on an error) waits for the user, unless this page was just loaded.
+    if (job.paused && opts && opts.fromWatch) { S.retryJob = { resume: job }; updateCost(); loadHistory(); return; }
+    job.tries = job.tries || {};
     if (!getKey()) {
       resumeWaitingForKey = true;
+      S.retryJob = { resume: job }; updateCost();
       toast('Connect fal.ai again to finish the video you started.', 'warn', 6000);
       return;
     }
-    job.tries = job.tries || {};
     startRun(job, { resumed: true });
   }
-  var otherTabTimer = 0;
+  // Another page runs the job: wait until it is done (or closed), then show the result here / take over.
+  var otherTabTimer = 0, watching = false;
   function watchOtherTab() {
+    if (watching) return;
+    watching = true;
     toast('Your video is being made in another Glow Studio tab.', 'info', 5000);
+    if (LOCKS) {
+      var p = null;
+      try { p = navigator.locks.request('glow-ai-job', function () { watching = false; setTimeout(afterOtherTab, 0); }); } catch (e) { p = null; }
+      if (p && p.catch) p.catch(function () { watching = false; });
+      if (p) return;
+    }
     clearInterval(otherTabTimer);
     otherTabTimer = setInterval(function () {
-      var job = lsJSON(LS.job);
-      if (!job) { clearInterval(otherTabTimer); loadHistory(); return; }
-      if (Date.now() - (job.beat || 0) > 15000) { clearInterval(otherTabTimer); resumeIfAny(); }
-    }, 5000);
+      var j = storedJob();
+      if (!j || j.paused || !liveElsewhere(j)) { clearInterval(otherTabTimer); watching = false; afterOtherTab(); }
+    }, 4000);
+  }
+  function afterOtherTab() {
+    if (running()) return;
+    var j = storedJob();
+    if (!j) { loadHistory(); return; }
+    resumeIfAny({ fromWatch: true });
   }
   window.addEventListener('storage', function (e) {
-    if (e.key === LS.job && !e.newValue && !running()) loadHistory();
+    if (e.key === LS.job) {
+      if (RUN.job) {
+        // Another page claimed (or finished) the job this page was running: stop here, without cancelling at fal.
+        var n = null;
+        try { n = e.newValue ? JSON.parse(e.newValue) : null; } catch (x) { n = null; }
+        if (n ? (n.id !== RUN.job.id || (!!n.owner && n.owner !== INST)) : RUN.persisted) standDown(RUN.job);
+      } else if (!e.newValue) {
+        // another page finished (or discarded) the job: nothing is left here to pick up
+        if (pausedJob()) { S.retryJob = null; updateCost(); }
+        loadHistory();
+      }
+    }
     if (e.key === LS.key) updateKeyUI();
   });
 
@@ -2161,28 +2511,49 @@
    * ------------------------------------------------------------------ */
   var resUrl = null, resItem = null;
   function extOf(type) { return /mp4/i.test(type || '') ? 'mp4' : /webm/i.test(type || '') ? 'webm' : /quicktime|mov/i.test(type || '') ? 'mov' : 'mp4'; }
-  function fileName(item) { return 'glow-ai-' + item.sceneId + (item.labelled ? '' : '-original') + '.' + extOf(item.type); }
+  function fileName(item) { return 'glow-ai-' + item.sceneId + '.' + extOf(item.type); }
+  function isLabelled(item) { return !!(item && item.labelled && item.blob instanceof Blob); }
+  // Only labelled files are ever shown for download. Items saved by an older version without the burned-in label
+  // (or only as a link to fal's file) are finished now instead: download, label, save — no extra cost.
+  function finishLegacy(item) {
+    if (running() || RUN.starting) { toast('Please wait until the current video is done.', 'warn', 3500); return; }
+    var other = storedJob();
+    if (pausedJob() || (other && paidStarted(other) && other.id !== item.id)) { toast('First finish the video you already started — tap “Finish my video”.', 'warn', 4500); return; }
+    if (!canRecord()) { refuseUnsupported(); return; }
+    if (!item.rawUrl && !(item.blob instanceof Blob)) { toast('This older video can’t be finished any more — you can delete it.', 'warn', 5000); return; }
+    var sc = sceneById(item.sceneId);
+    var job = {
+      v: 1, id: item.id, createdAt: Date.now(), sceneId: sc.id, sound: item.sound === 'ai' ? 'ai' : 'music',
+      trackId: trackById(item.trackId) ? item.trackId : (trackById(sc.defaultTrack) ? sc.defaultTrack : S.trackId),
+      duration: item.duration || sc.length || 5, stage: 'finish', thumb: '', photoSeq: 0,
+      still: null, stillUrl: item.stillUrl || null, video: null, videoUrl: item.rawUrl || null, tries: {}
+    };
+    if (item.blob instanceof Blob) job.localBlob = item.blob;
+    toast('Adding the AI label to this video — no extra cost.', 'info', 3500);
+    startRun(job, {});
+  }
   function showResult(item, opts) {
+    if (!isLabelled(item)) { finishLegacy(item); return; }
     resItem = item;
     if (resUrl) { try { URL.revokeObjectURL(resUrl); } catch (e) { /* ignore */ } resUrl = null; }
-    var src = item.blob ? (resUrl = URL.createObjectURL(item.blob)) : (item.remote || item.rawUrl || '');
+    var src = resUrl = URL.createObjectURL(item.blob);
     var w = item.width || 9, h = item.height || 16;
     el.res.querySelector('.res-video').style.setProperty('--resar', (w / h).toFixed(5));
     el.resVideo.src = src;
-    el.labelOv.hidden = !!item.labelled;
-    el.dl.href = src || '#';
+    el.labelOv.hidden = true;
+    el.dl.href = src;
     el.dl.setAttribute('download', fileName(item));
-    el.dl.toggleAttribute('data-remote', !item.blob);
     var bits = [item.sceneName || sceneById(item.sceneId).name, fmt(item.duration)];
     if (item.width && item.height) bits.push(item.width + '×' + item.height);
     if (item.size) bits.push(fmtBytes(item.size));
     bits.push(extOf(item.type).toUpperCase());
-    bits.push(item.sound === 'ai' ? 'AI sound' : ((trackById(item.trackId) || {}).name || (item.labelled ? 'Music' : 'No music added')));
+    bits.push(item.sound === 'ai' ? 'AI sound' : ((trackById(item.trackId) || {}).name || 'Music'));
     el.resMeta.textContent = bits.join(' · ');
-    el.resNote.hidden = !item.note; el.resNote.textContent = item.note || '';
+    el.resNote.hidden = true; el.resNote.textContent = '';
     var fresh = !!(opts && opts.fresh);
     el.resTt.textContent = fresh ? 'Your AI video is ready' : (item.sceneName || 'Your AI video');
-    el.again.hidden = !fresh; el.other.hidden = !fresh; el.del.hidden = fresh;
+    el.again.hidden = !fresh || !S.photo; el.other.hidden = !fresh; el.del.hidden = fresh;
+    if (el.againT) el.againT.textContent = 'Make again · ' + money(estimate(item.sound, item.duration || 5));
     el.del.textContent = 'Delete from this device'; el.del.dataset.armed = '';
     var file = null;
     try { file = item.blob ? new File([item.blob], fileName(item), { type: item.blob.type || item.type }) : null; } catch (e) { file = null; }
@@ -2197,12 +2568,14 @@
     el.res.classList.toggle('one-row', el.share.hidden);
     window.GlowAI.lastResult = { id: item.id, size: item.size, type: item.type, name: fileName(item), width: item.width, height: item.height, duration: item.duration, labelled: item.labelled, blob: item.blob };
     openSheet(el.res, el.dl);
+    syncMonitor(); // a video still finishing in the background stays silent while this one plays
     var pr = el.resVideo.play && el.resVideo.play();
     if (pr && pr.catch) pr.catch(function () { /* autoplay blocked or unsupported codec */ });
   }
   function closeResult() {
     try { el.resVideo.pause(); } catch (e) { /* ignore */ }
     closeSheet(el.res);
+    syncMonitor();
   }
 
   /* ------------------------------------------------------------------ *
@@ -2277,6 +2650,7 @@
     el.hist.textContent = '';
     var n = H.list.length;
     el.histCount.textContent = n ? n + ' saved' + (H.mem ? ' (this visit only)' : '') : '';
+    if (el.myVids) { el.myVids.hidden = !n; el.myVidsN.textContent = String(n); }
     el.histEmpty.hidden = n > 0;
     el.histEmpty.textContent = H.mem ? 'This browser isn’t saving history right now (private mode?). Download your videos to keep them.' : 'Your finished videos are saved here, on this device.';
     H.list.forEach(function (item) {
@@ -2294,7 +2668,9 @@
       else { var cv = document.createElement('canvas'); cv.width = 180; cv.height = 320; paintScene(cv, item.sceneId); play.appendChild(cv); }
       var dur = document.createElement('span'); dur.className = 'ai-h-dur'; dur.textContent = fmt(item.duration); play.appendChild(dur);
       var ic = document.createElement('span'); ic.className = 'ai-h-ico'; ic.setAttribute('aria-hidden', 'true'); ic.innerHTML = ICON_PLAY; play.appendChild(ic);
-      if (item.sound === 'ai') { var sb = document.createElement('span'); sb.className = 'ai-h-snd'; sb.textContent = 'AI sound'; play.appendChild(sb); }
+      var done = isLabelled(item);
+      if (!done) { var nb = document.createElement('span'); nb.className = 'ai-h-snd ai-h-fin'; nb.textContent = 'Needs label'; play.appendChild(nb); play.setAttribute('aria-label', 'Add the AI label to ' + (item.sceneName || sc.name) + ', ' + dayLabel(item.createdAt) + ' (no extra cost)'); }
+      else if (item.sound === 'ai') { var sb = document.createElement('span'); sb.className = 'ai-h-snd'; sb.textContent = 'AI sound'; play.appendChild(sb); }
       play.addEventListener('click', function () { showResult(item, { fresh: false }); });
       li.appendChild(play);
       var meta = document.createElement('div'); meta.className = 'ai-h-meta';
@@ -2302,10 +2678,16 @@
       var dt = document.createElement('small'); dt.textContent = dayLabel(item.createdAt); meta.appendChild(dt);
       li.appendChild(meta);
       var acts = document.createElement('div'); acts.className = 'ai-h-acts';
-      var dl = document.createElement('a'); dl.className = 'ai-h-btn'; dl.setAttribute('aria-label', 'Download ' + (item.sceneName || sc.name));
-      dl.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10.5l5 5 5-5M5 19.5h14"/></svg>';
-      if (item.blob) { dl.href = '#'; dl.addEventListener('click', function (e) { e.preventDefault(); downloadItem(item); }); }
-      else { dl.href = item.remote || item.rawUrl || '#'; dl.target = '_blank'; dl.rel = 'noopener'; }
+      var dl;
+      if (done) {
+        dl = document.createElement('a'); dl.className = 'ai-h-btn'; dl.setAttribute('aria-label', 'Download ' + (item.sceneName || sc.name));
+        dl.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10.5l5 5 5-5M5 19.5h14"/></svg>';
+        dl.href = '#'; dl.addEventListener('click', function (e) { e.preventDefault(); downloadItem(item); });
+      } else {
+        dl = document.createElement('button'); dl.type = 'button'; dl.className = 'ai-h-btn'; dl.setAttribute('aria-label', 'Add the AI label to ' + (item.sceneName || sc.name) + ' (no extra cost)');
+        dl.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l1.9 5.2 5.2 1.9-5.2 1.9-1.9 5.2-1.9-5.2-5.2-1.9 5.2-1.9z"/></svg>';
+        dl.addEventListener('click', function () { finishLegacy(item); });
+      }
       var del = document.createElement('button'); del.type = 'button'; del.className = 'ai-h-btn ai-h-del'; del.setAttribute('aria-label', 'Delete ' + (item.sceneName || sc.name));
       del.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V5h4v2M7 7l1 12.5h8L17 7"/></svg>';
       del.addEventListener('click', function () {
@@ -2319,7 +2701,7 @@
     });
   }
   function downloadItem(item) {
-    if (!item.blob) return;
+    if (!isLabelled(item)) return;
     var u = URL.createObjectURL(item.blob);
     var a = document.createElement('a'); a.href = u; a.download = fileName(item);
     document.body.appendChild(a); a.click(); a.remove();
@@ -2339,6 +2721,8 @@
     el.consentRow.classList.toggle('on', S.consent);
     el.consentRow.classList.remove('need');
     if (S.consent && el.photoStatus.textContent.indexOf('Photo ready') === 0) el.photoStatus.textContent = '';
+    // the next step is the button: make sure it is on screen
+    if (S.consent) { try { el.make.scrollIntoView({ behavior: REDUCED ? 'auto' : 'smooth', block: 'nearest' }); } catch (e) { /* ignore */ } }
   });
   el.make.addEventListener('click', function () { onMake(); });
   Array.prototype.forEach.call(el.sound.querySelectorAll('.ai-snd'), function (b, i, all) {
@@ -2368,25 +2752,40 @@
   el.min.addEventListener('click', minimize);
   el.prog.addEventListener('click', function (e) { if (e.target === el.prog) minimize(); });
   el.pill.addEventListener('click', function () {
+    ensureAudio();
     if (mode() !== 'ai') setMode('ai');
-    if (readyItem) { var it = readyItem; readyItem = null; el.pill.hidden = true; el.pill.classList.remove('ready'); showResult(it, { fresh: true }); return; }
+    if (readyItem) { var it = readyItem; readyItem = null; setPill(null); showResult(it, { fresh: true }); return; }
+    var tap = UI.tapWaiter;
     openProgress();
+    if (tap) tap(); // this tap unlocks the sound, so finishing can go on at once
   });
   el.cancel.addEventListener('click', function () { if (UI.state === 'running') cancelJob(); else closeProgressSheet(); });
   el.mon.addEventListener('click', function () {
     UI.monitorOn = !UI.monitorOn;
     el.mon.setAttribute('aria-pressed', UI.monitorOn ? 'true' : 'false');
     el.mon.setAttribute('aria-label', UI.monitorOn ? 'Mute sound while finishing' : 'Play sound while finishing');
-    if (UI.mon && actx) { try { UI.mon.gain.setTargetAtTime(UI.monitorOn ? 0.9 : 0, actx.currentTime, 0.02); } catch (e) { UI.mon.gain.value = UI.monitorOn ? 0.9 : 0; } }
+    syncMonitor();
   });
   el.resClose.addEventListener('click', closeResult);
   el.res.addEventListener('click', function (e) { if (e.target === el.res) closeResult(); });
   el.dl.addEventListener('click', function (e) {
-    if (!resItem) { e.preventDefault(); return; }
-    if (resItem.blob) toast('Saving your video…', 'ok', 2000);
-    else { e.preventDefault(); window.open(resItem.remote || resItem.rawUrl, '_blank', 'noopener'); }
+    if (!isLabelled(resItem)) { e.preventDefault(); return; }
+    toast('Saving your video…', 'ok', 2000);
   });
-  el.again.addEventListener('click', function () { closeResult(); onMake(); });
+  // "Make again": the same scene, sound and length as the video on screen (a new take, at the price on the button).
+  el.again.addEventListener('click', function () {
+    var it = resItem;
+    closeResult();
+    if (it) {
+      var sc = sceneById(it.sceneId);
+      S.sceneId = sc.id;
+      if (sc.audio !== 'required') S.sound = it.sound === 'ai' ? 'ai' : 'music';
+      if (LENGTHS.indexOf(it.duration) >= 0) S.duration = it.duration;
+      if (it.trackId && trackById(it.trackId)) S.trackId = it.trackId;
+      savePrefs(); updateAll();
+    }
+    onMake();
+  });
   el.other.addEventListener('click', function () {
     closeResult();
     attention(el.sceneCard);
@@ -2406,14 +2805,37 @@
     else if (!el.conn.hidden) { connectThen = null; closeSheet(el.conn); }
     else if (!el.prog.hidden) minimize();
   });
-  document.addEventListener('glow:mode', function (e) { if (e.detail && e.detail.mode !== 'ai') stopTrackPreview(); });
-  document.addEventListener('visibilitychange', function () { if (document.hidden) stopTrackPreview(); });
+  document.addEventListener('glow:mode', function (e) {
+    if (e.detail && e.detail.mode !== 'ai') stopTrackPreview();
+    syncMonitor(); renderPill(); fitStage();
+  });
+  document.addEventListener('visibilitychange', function () { if (document.hidden) stopTrackPreview(); syncMonitor(); });
   // Leaving the page releases the job at once, so a reload or another tab can pick it up without waiting.
   window.addEventListener('pagehide', function () {
     if (!RUN.job) return;
-    var j = lsJSON(LS.job);
-    if (j && j.id === RUN.job.id) { j.beat = 0; lsSet(LS.job, JSON.stringify(j)); }
+    var j = storedJob();
+    if (j && j.id === RUN.job.id && j.owner === INST) { j.beat = 0; lsSet(LS.job, JSON.stringify(j)); }
   });
+  // Back from the back/forward cache: someone else may have picked the job up meanwhile.
+  window.addEventListener('pageshow', function (e) {
+    if (!e.persisted || !RUN.job) return;
+    var job = RUN.job;
+    if (lostOwnership(job)) standDown(job); else saveJob(job);
+  });
+  if (el.myVids) el.myVids.addEventListener('click', function () {
+    try { el.histCard.scrollIntoView({ behavior: REDUCED ? 'auto' : 'smooth', block: 'start' }); } catch (e) { el.histCard.scrollIntoView(); }
+    var first = el.hist.querySelector('.ai-h-play');
+    setTimeout(function () { if (first) { try { first.focus({ preventScroll: true }); } catch (e) { /* ignore */ } } }, REDUCED ? 0 : 450);
+  });
+  // Desktop: the selfie column stays in view while scenes are picked, unless it is taller than the window
+  // (then it scrolls normally, and the button sticks to the bottom of the window instead).
+  function fitStage() {
+    if (!el.stage) return;
+    var wide = window.matchMedia && window.matchMedia('(min-width: 980px)').matches;
+    el.ai.classList.toggle('stage-free', !!wide && el.stage.offsetHeight > window.innerHeight - 32);
+  }
+  window.addEventListener('resize', fitStage);
+  if (window.ResizeObserver && el.stage) { try { new ResizeObserver(function () { fitStage(); }).observe(el.stage); } catch (e) { /* ignore */ } }
   window.addEventListener('beforeunload', function (e) {
     if (running() && UI.stage === 'finish') { e.preventDefault(); e.returnValue = ''; }
   });
@@ -2456,7 +2878,9 @@
       return {
         mode: mode(), sceneId: S.sceneId, sound: S.sound, trackId: S.trackId, duration: S.duration, hasPhoto: !!S.photo, consent: S.consent,
         hasKey: !!getKey(), running: running(), stage: running() ? UI.stage : null, ui: UI.state, estimate: estimate(S.sound, S.duration),
-        history: H.list.length, historyPersistent: !H.mem, job: lsJSON(LS.job)
+        history: H.list.length, historyPersistent: !H.mem, job: lsJSON(LS.job), inst: INST, locks: LOCKS,
+        retry: S.retryJob ? (S.retryJob.resume ? 'resume' : 'still') : null, pill: el.pill.hidden ? null : UI.pill,
+        monitor: UI.mon ? UI.mon.gain.value : null
       };
     }
   };
@@ -2468,7 +2892,7 @@
     var sc = sceneById(S.sceneId);
     S.trackId = trackById(prefs.trackId) ? prefs.trackId : (trackById(sc.defaultTrack) ? sc.defaultTrack : (tracks[0] ? tracks[0].id : ''));
     if (!S.trackId) S.sound = 'ai';
-    S.duration = LENGTHS.indexOf(prefs.duration) >= 0 ? prefs.duration : (sc.length || 5);
+    S.duration = S.userLen || (sc.length || 5);
     if (sc.audio === 'required') S.sound = 'ai';
     else if (!prefs.sound) S.sound = sc.audio === 'recommended' ? 'ai' : 'music';
   })();
@@ -2478,5 +2902,17 @@
   updateAll();
   loadHistory();
   setTimeout(resumeIfAny, 60);
+  fitStage();
+  // Desktop app (served from this computer): "More apps" points at the website, and a launcher that had to use
+  // another port than usual says why the saved key and videos (kept per address) seem to be missing.
+  (function desktopApp() {
+    // The Windows launcher injects a keep-alive ping into the page it serves.
+    var app = Array.prototype.some.call(document.scripts, function (sc) { return /__glow\/ping/.test(sc.textContent || ''); });
+    if (!app) return;
+    Array.prototype.forEach.call(document.querySelectorAll('a.more-apps'), function (a) { a.href = 'https://tendha2020-ai.github.io/account-shop/'; a.target = '_blank'; a.rel = 'noopener'; });
+    if (location.port && location.port !== '47821') {
+      setTimeout(function () { toast('Glow Studio opened on a different address than usual, so your saved fal.ai key and videos may not show. Close other copies of Glow Studio and start it again.', 'warn', 9000); }, 900);
+    }
+  })();
   if (!MU) setTimeout(function () { if (mode() === 'ai') toast('Music didn’t load — choose AI sound, or refresh the page.', 'warn', 6000); }, 400);
 })();

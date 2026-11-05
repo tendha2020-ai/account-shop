@@ -22,6 +22,7 @@ package main
 //	GLOW_NVIDIA_SMI          nvidia-smi replacement
 //	GLOW_FAKE_DISK_FREE_GB   pretend this much disk is free
 //	GLOW_DL_STALL_SEC, GLOW_DL_BACKOFF_MS   download stall timeout / first retry delay
+//	GLOW_QUEUE_POLL_MS       how often ComfyUI's /queue is asked whether it renders (default 5000)
 //	GLOW_PORT, GLOW_IDLE_EXIT (main.go)     launcher port / idle-exit delay
 
 import (
@@ -64,15 +65,27 @@ type Engine struct {
 	runningVersion string
 	dynVRAM        *bool
 	startedAt      time.Time
-	lastBusy       time.Time
+
+	// What ComfyUI's /queue said (polled by watchQueue while it is ready), so
+	// the idle exit never stops a render (see comfyBusy).
+	lastBusy   time.Time // a prompt was seen running/queued, or was just posted
+	qBusy      bool      // the last answer had running or queued prompts
+	qFailSince time.Time // /queue has not answered since then (zero: it answers)
 
 	logs *ringLog
 
 	gpuMu   sync.Mutex
 	gpu     *gpuInfo
-	gpuAt   time.Time
+	gpuAt   time.Time     // when gpu was detected (zero: never yet)
+	gpuRun  chan struct{} // closed when the running nvidia-smi check ends
 	ramOnce sync.Once
 	ram     int64
+
+	// Exclusive lock on the install folder, taken when an install or the
+	// engine starts, so that two copies of the launcher (e.g. on different
+	// ports) never download into or run from the same folder.
+	dirUnlock func()
+	lockedDir string
 
 	port         int // the launcher's own port, for Origin/Host checks
 	shutdownOnce sync.Once
@@ -80,14 +93,23 @@ type Engine struct {
 
 // Manifest is <installDir>\glow-engine.json.
 type Manifest struct {
-	Launcher        string                `json:"launcher"`
-	Catalog         string                `json:"catalog"`
-	ComfyVersion    string                `json:"comfyVersion,omitempty"`
-	EngineExtracted bool                  `json:"engineExtracted"`
-	Packs           map[string]PackRecord `json:"packs"`
-	Files           map[string]FileRecord `json:"files"`
-	Pending         []string              `json:"pending,omitempty"` // packs of an unfinished install
-	Updated         string                `json:"updated"`
+	Launcher        string `json:"launcher"`
+	Catalog         string `json:"catalog"`
+	ComfyVersion    string `json:"comfyVersion,omitempty"`
+	EngineExtracted bool   `json:"engineExtracted"`
+	// Written when the engine is unpacked: how many files it has (the full list
+	// is in engine-files.tsv) and a few key files with their sizes, checked on
+	// every status so a quarantined DLL or Python file is noticed.
+	EngineFiles int              `json:"engineFiles,omitempty"`
+	EngineKey   map[string]int64 `json:"engineKey,omitempty"`
+	// EngineSuspect: ComfyUI crashed in a way that means engine files are
+	// missing; the next repair unpacks the engine again.
+	EngineSuspect bool                  `json:"engineSuspect,omitempty"`
+	Packs         map[string]PackRecord `json:"packs"`
+	Files         map[string]FileRecord `json:"files"`
+	Pending       []string              `json:"pending,omitempty"` // packs of an unfinished install
+	PendingRepair bool                  `json:"pendingRepair,omitempty"`
+	Updated       string                `json:"updated"`
 }
 
 type PackRecord struct {
@@ -128,7 +150,49 @@ func (m *Manifest) save(dir string) error {
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, filepath.Join(dir, manifestName))
+	if err := renameRetry(tmp, filepath.Join(dir, manifestName)); err != nil {
+		return justWrittenError(err, filepath.Join(dir, manifestName))
+	}
+	return nil
+}
+
+// engineDefaultDir is the install folder used unless the user picks another.
+func engineDefaultDir() string {
+	d := os.Getenv("GLOW_ENGINE_DIR")
+	if d == "" {
+		d = defaultEngineDir()
+	}
+	return filepath.Clean(d)
+}
+
+// instancePath names the file in which a running launcher records its port
+// (%LOCALAPPDATA%\GlowStudio\instance.json), so a second start opens a window
+// on it even when it had to use a random port.
+func instancePath() string { return filepath.Join(filepath.Dir(engineDefaultDir()), "instance.json") }
+
+const lockName = ".glow-lock"
+
+// lockDirLocked takes the install-folder lock (see Engine.dirUnlock).
+func (e *Engine) lockDirLocked(dir string) error {
+	if e.dirUnlock != nil && samePath(e.lockedDir, dir) {
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return dirError(err, dir)
+	}
+	release, err := lockFile(filepath.Join(dir, lockName))
+	if errors.Is(err, errLocked) {
+		return friendly(err, "Glow Studio is already running in the background and is using this AI folder. Close this window and open Glow Studio again: it opens the copy that is running.")
+	}
+	if err != nil {
+		e.logs.addf("[launcher] could not lock %s: %v", dir, err)
+		return nil // an odd file system: carry on without the lock
+	}
+	if e.dirUnlock != nil {
+		e.dirUnlock()
+	}
+	e.dirUnlock, e.lockedDir = release, dir
+	return nil
 }
 
 func newEngine(port int) *Engine {
@@ -149,11 +213,7 @@ func newEngine(port int) *Engine {
 			}
 		}
 	}
-	e.defaultDir = os.Getenv("GLOW_ENGINE_DIR")
-	if e.defaultDir == "" {
-		e.defaultDir = defaultEngineDir()
-	}
-	e.defaultDir = filepath.Clean(e.defaultDir)
+	e.defaultDir = engineDefaultDir()
 	e.configPath = filepath.Join(filepath.Dir(e.defaultDir), "launcher.json")
 	e.installDir = e.defaultDir
 	var cfg struct {
@@ -167,18 +227,15 @@ func newEngine(port int) *Engine {
 		// The last install did not finish (the app was closed): show it as
 		// paused so the setup page can offer "Resume".
 		j := newJob(e.man.Pending, e.installDir)
+		j.Repair = e.man.PendingRepair
 		j.State, j.Step = "cancelled", "Paused. Press Resume to continue."
 		items, _ := e.planLocked(e.installDir, e.man, e.man.Pending)
-		for _, it := range items {
-			if it.needed {
-				j.OverallTotal += it.f.Size
-				j.done[it.key] = it.onDisk
-			}
-		}
+		pb := e.progressBaseLocked(e.installDir, e.man, j.Packs, j.Repair, items)
+		j.OverallTotal, j.done = pb.total, pb.done
 		j.recount()
 		e.job = j
 	}
-	go e.gpuInfo(false)
+	e.gpuInfo(false, 0) // starts nvidia-smi in the background
 	return e
 }
 
@@ -265,6 +322,13 @@ func extractedIn(dir string, m *Manifest) bool {
 			return false
 		}
 	}
+	// A few key files recorded at unpack time (Python, PyTorch's DLLs, ComfyUI
+	// core): if an antivirus removed one, the engine needs unpacking again.
+	for rel, size := range m.EngineKey {
+		if st, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel))); err != nil || st.Size() != size {
+			return false
+		}
+	}
 	return true
 }
 
@@ -291,6 +355,7 @@ type planItem struct {
 	key    string
 	dest   string
 	kind   string // "tool" | "engine" | "model"
+	pack   string // the tool and the engine belong to "core"
 	needed bool
 	onDisk int64
 }
@@ -299,8 +364,8 @@ type planItem struct {
 // bytes of disk it still needs.
 func (e *Engine) planLocked(dir string, m *Manifest, packs []string) ([]planItem, int64) {
 	var items []planItem
-	add := func(f FileSpec, kind string) {
-		it := planItem{f: f, key: fileKey(f), dest: fileDest(dir, f), kind: kind}
+	add := func(f FileSpec, kind, pack string) {
+		it := planItem{f: f, key: fileKey(f), dest: fileDest(dir, f), kind: kind, pack: pack}
 		it.needed = !verifiedIn(dir, m, f)
 		if it.needed {
 			it.onDisk = onDiskBytes(it.dest, f)
@@ -309,13 +374,13 @@ func (e *Engine) planLocked(dir string, m *Manifest, packs []string) ([]planItem
 	}
 	extracted := extractedIn(dir, m)
 	if !extracted {
-		add(e.cat.Tool, "tool")
-		add(e.cat.Engine, "engine")
+		add(e.cat.Tool, "tool", "core")
+		add(e.cat.Engine, "engine", "core")
 	}
 	for _, id := range packs {
 		if p := e.cat.pack(id); p != nil {
 			for _, f := range p.Files {
-				add(f, "model")
+				add(f, "model", id)
 			}
 		}
 	}
@@ -329,6 +394,52 @@ func (e *Engine) planLocked(dir string, m *Manifest, packs []string) ([]planItem
 		need += engineUnpackedBytes
 	}
 	return items, need
+}
+
+type progressBase struct {
+	total   int64
+	done    map[string]int64
+	counted map[string]bool // packs whose files make up the overall bar
+}
+
+// progressBaseLocked works out the overall progress of an install so that it
+// stays the same across Resume, Try again and app restarts: it counts every file
+// of the packs being installed (verified files as done; 7-Zip and the engine
+// archive as done once the engine is unpacked), not only what is left. A pack
+// that was installed before (adding an add-on later) does not count, unless it
+// is being repaired or has files to fetch again.
+func (e *Engine) progressBaseLocked(dir string, m *Manifest, packs []string, repair bool, items []planItem) progressBase {
+	pb := progressBase{done: map[string]int64{}, counted: map[string]bool{}}
+	for _, id := range packs {
+		if repair || !m.Packs[id].Installed {
+			pb.counted[id] = true
+		}
+	}
+	for _, it := range items {
+		if it.needed {
+			pb.counted[it.pack] = true
+		}
+	}
+	for _, it := range items {
+		if !pb.counted[it.pack] {
+			continue
+		}
+		pb.total += it.f.Size
+		switch {
+		case !it.needed && repair && it.kind == "model":
+			pb.done[it.key] = 0 // hashed again by this repair
+		case !it.needed:
+			pb.done[it.key] = it.f.Size
+		default:
+			pb.done[it.key] = min(it.onDisk, it.f.Size)
+		}
+	}
+	if pb.counted["core"] && extractedIn(dir, m) {
+		n := e.cat.Tool.Size + e.cat.Engine.Size
+		pb.total += n
+		pb.done["engine:unpacked"] = n
+	}
+	return pb
 }
 
 func normalizePacks(in []string, cat *Catalog) ([]string, error) {
@@ -457,14 +568,35 @@ type gpuInfo struct {
 	MinDriver string `json:"minDriver"`
 }
 
-func (e *Engine) gpuInfo(refresh bool) *gpuInfo {
+// gpuInfo returns the last nvidia-smi result without waiting for nvidia-smi
+// (which can take many seconds while a laptop GPU wakes up or a driver is
+// being updated): a check runs in the background when there is no result yet,
+// when it is older than 2 minutes, or on refresh ("Check again"). It waits at
+// most wait for a running check. pending is true while there is no result yet.
+func (e *Engine) gpuInfo(refresh bool, wait time.Duration) (g *gpuInfo, pending bool) {
+	e.gpuMu.Lock()
+	if (refresh || e.gpuAt.IsZero() || time.Since(e.gpuAt) > 2*time.Minute) && e.gpuRun == nil {
+		run := make(chan struct{})
+		e.gpuRun = run
+		go func() {
+			found := detectGPU()
+			e.gpuMu.Lock()
+			e.gpu, e.gpuAt, e.gpuRun = found, time.Now(), nil
+			e.gpuMu.Unlock()
+			close(run)
+		}()
+	}
+	run := e.gpuRun
+	e.gpuMu.Unlock()
+	if run != nil && wait > 0 {
+		select {
+		case <-run:
+		case <-time.After(wait):
+		}
+	}
 	e.gpuMu.Lock()
 	defer e.gpuMu.Unlock()
-	if !refresh && !e.gpuAt.IsZero() && time.Since(e.gpuAt) < 2*time.Minute {
-		return e.gpu
-	}
-	e.gpu, e.gpuAt = detectGPU(), time.Now()
-	return e.gpu
+	return e.gpu, e.gpuAt.IsZero()
 }
 
 func detectGPU() *gpuInfo {
@@ -481,7 +613,7 @@ func detectGPU() *gpuInfo {
 		if _, err := os.Stat(c); err != nil {
 			continue
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 		cmd := exec.CommandContext(ctx, c, "--query-gpu=name,memory.total,driver_version", "--format=csv,noheader,nounits")
 		hideWindow(cmd)
 		out, err := cmd.Output()
@@ -546,6 +678,7 @@ type statusJSON struct {
 	InstallDir   string              `json:"installDir"`
 	DefaultDir   string              `json:"defaultInstallDir"`
 	GPU          *gpuInfo            `json:"gpu"`
+	GPUPending   bool                `json:"gpuPending"` // nvidia-smi has not answered yet: gpu null means "still checking"
 	RAMGB        *float64            `json:"ramGB"`
 	DiskFreeGB   float64             `json:"diskFreeGB"`
 	DiskMarginGB float64             `json:"diskMarginGB"`
@@ -558,13 +691,20 @@ func round1(x float64) float64 { return math.Round(x*10) / 10 }
 func round2(x float64) float64 { return math.Round(x*100) / 100 }
 
 func (e *Engine) status(refreshGPU bool) statusJSON {
-	gpu := e.gpuInfo(refreshGPU)
+	// Never held up by nvidia-smi: "Check again" (refresh=1) waits a little for
+	// a fresh answer, the very first status waits up to 1 s (no flicker), the
+	// rest return the cached answer at once.
+	wait := time.Second
+	if refreshGPU {
+		wait = 6 * time.Second
+	}
+	gpu, pending := e.gpuInfo(refreshGPU, wait)
 	e.ramOnce.Do(func() { e.ram = totalRAM() })
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	s := statusJSON{
 		Launcher: launcherVersion, OS: runtime.GOOS, InstallDir: e.installDir, DefaultDir: e.defaultDir,
-		GPU: gpu, DiskMarginGB: diskMarginBytes / 1e9, Packs: map[string]packJSON{},
+		GPU: gpu, GPUPending: pending, DiskMarginGB: diskMarginBytes / 1e9, Packs: map[string]packJSON{},
 	}
 	if e.ram > 0 {
 		r := round1(float64(e.ram) / (1 << 30)) // RAM is sold in GiB ("32 GB")
@@ -639,6 +779,12 @@ func (e *Engine) Shutdown() {
 			}
 		}
 		e.stopEngine()
+		e.mu.Lock()
+		if e.dirUnlock != nil {
+			e.dirUnlock()
+			e.dirUnlock = nil
+		}
+		e.mu.Unlock()
 	})
 }
 
@@ -698,6 +844,9 @@ func (e *Engine) handleInstall(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Packs      []string `json:"packs"`
 		InstallDir *string  `json:"installDir"`
+		// Repair: check every file again (sha256 of each model, the full file
+		// list of the unpacked engine) and fetch or unpack again what is damaged.
+		Repair bool `json:"repair"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
 		errJSON(w, http.StatusBadRequest, "The request was not understood.")
@@ -733,11 +882,24 @@ func (e *Engine) handleInstall(w http.ResponseWriter, r *http.Request) {
 		errJSON(w, http.StatusBadRequest, userMsg(err))
 		return
 	}
+	if req.Repair && !changing && engineOn {
+		// Repairing replaces files ComfyUI has open: stop it first, but never
+		// in the middle of a video.
+		if e.renderingNow() {
+			errJSON(w, http.StatusConflict, "A video is being made right now. Wait until it is finished, then press “Check & repair files” again.")
+			return
+		}
+		e.stopEngine()
+	}
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.job != nil && e.job.state() == "running" {
 		errJSON(w, http.StatusConflict, "An install is already running.")
+		return
+	}
+	if err := e.lockDirLocked(dir); err != nil {
+		errJSON(w, http.StatusConflict, userMsg(err))
 		return
 	}
 	man := e.man
@@ -765,17 +927,22 @@ func (e *Engine) handleInstall(w http.ResponseWriter, r *http.Request) {
 		e.saveConfigLocked()
 		e.state, e.engErr = "stopped", ""
 	}
-	e.man.Pending = packs
+	e.man.Pending, e.man.PendingRepair = packs, req.Repair
 	if err := e.man.save(dir); err != nil {
 		errJSON(w, http.StatusBadRequest, userMsg(dirError(err, dir)))
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	j := newJob(packs, dir)
+	j.Repair = req.Repair
 	j.Step = "Getting ready…"
 	e.job, e.jobCancel, e.jobDone = j, cancel, make(chan struct{})
 	e.logs.openFile(filepath.Join(dir, "logs"))
-	e.logs.addf("[install] starting: %s into %s", strings.Join(packs, ", "), dir)
+	verb := "starting"
+	if req.Repair {
+		verb = "checking and repairing"
+	}
+	e.logs.addf("[install] %s: %s in %s", verb, strings.Join(packs, ", "), dir)
 	go e.runInstall(ctx, j, e.jobDone)
 	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
 }
@@ -840,7 +1007,8 @@ type Job struct {
 	Err          string
 	Packs        []string
 	InstallDir   string
-	done         map[string]int64 // bytes on disk per file of this job
+	Repair       bool             // a "Check & repair files" run
+	done         map[string]int64 // bytes on disk (or checked) per file of this job
 	net          atomic.Int64
 }
 
@@ -858,6 +1026,7 @@ type jobJSON struct {
 	EtaSec       *float64 `json:"etaSec"`
 	Packs        []string `json:"packs"`
 	InstallDir   string   `json:"installDir"`
+	Repair       bool     `json:"repair"`
 }
 
 func newJob(packs []string, dir string) *Job {
@@ -889,7 +1058,7 @@ func (j *Job) snapshot() jobJSON {
 	defer j.mu.Unlock()
 	s := jobJSON{Kind: j.Kind, State: j.State, Step: j.Step, BytesDone: j.BytesDone, BytesTotal: j.BytesTotal,
 		OverallDone: j.OverallDone, OverallTotal: j.OverallTotal, SpeedBps: math.Round(j.SpeedBps),
-		Packs: append([]string{}, j.Packs...), InstallDir: j.InstallDir}
+		Packs: append([]string{}, j.Packs...), InstallDir: j.InstallDir, Repair: j.Repair}
 	if j.File != "" {
 		f := j.File
 		s.File = &f
