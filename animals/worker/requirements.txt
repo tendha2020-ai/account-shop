@@ -4,7 +4,8 @@ python-multipart
 requests
 numpy
 pillow
-gradio_client
+gradio_client==2.7.2  # (the GPU guard relies on how it raises, cancels and times out: gpu.settled, wait_job)
+httpx==0.28.1  # (gradio_client's HTTP client: its errors are what gpu.settled tells apart)
 huggingface_hub
 yt-dlp
 faster-whisper

@@ -34,7 +34,10 @@ ZeroGPU use past the daily free time is billed to pre-paid credits by itself, so
 (one at a time) the worker reads your quota (`/api/spaces/zero-gpu/quota`, with your own key). A call goes only if
 what is left covers what the Space books for that picture plus 30 s. If paid seconds ever show up, all AI work stops
 until you tap Resume in Settings; the stop is kept in `gpu.json` in the same private dataset, with a note of the call
-running right now (a worker restarted mid-call waits for it). A call that takes too long, or fails in a way that
+running right now (a worker restarted mid-call waits for it). Two workers never spend the same free time: when Update
+my worker starts the new one while the old container still runs, the new one writes its id to the dataset
+(`worker_gen.json`) before it reads `gpu.json`, makes no AI call for 5 minutes, then reads `gpu.json` again; the old
+one reads that id before each call (after its note is saved) and stops making calls. A call that takes too long, or fails in a way that
 may leave it running in the Space (a slow answer, a proxy error page), is cancelled and stays counted for 30 min, so
 the next engine never runs next to it uncounted. If your key can't read the quota and your account could be charged
 (PRO, Team, Enterprise), the worker makes no AI calls until it can, and Settings says so; a free account goes on with
@@ -54,3 +57,17 @@ clip library (library.json) lists only CC0, public domain and CC BY clips; their
 ("Clip (edited): ..." for CC BY, as the licence asks).
 A Together video in the posting plan carries its clips' credit lines in its caption too (also when the owner
 writes their own), and #aivideo only when AI made any of it.
+
+Sing videos (sing.py, sing_audio.py): one or two animals sing a song from My songs. Each song is made ready to sing
+once, on this Space's CPU, and kept next to it in the same private dataset (`songs/<id>.sing/`: the voice and the
+music split apart, and `sing.json` with the sung lines' times, never their words): the quick split with Spleeter
+2-stems (MIT weights, through sherpa-onnx, Apache-2.0), then the best one with Kim's Mel-Band RoFormer (MIT, through
+audio-separator on torch-cpu) when it is installed; the lines with faster-whisper `small` (MIT). The animals' voices
+are WORLD (pyworld, MIT), or Rubber Band without it. The stage pictures come from Together's free composer engines,
+the singing from free lip-sync Spaces (LongCat-Video-Avatar 1.5, MIT; LTX-2 audio-to-video, LTX-2 Community License:
+free under US$10M revenue, machine-generated content disclosed; Kandinsky S2V, MIT) or the owner's own PC
+(InfiniteTalk, Apache-2.0; with its duet model, the lines both animals sing are one two-shot). Every ZeroGPU call
+goes through the GPU guard (gpu.py) inside the free time, and Sing
+keeps to its share of the day (`sing_settings.json`, with each engine's 5-second test result). Without the guard,
+Sing makes no AI call at all. No song, stem or lyric is ever part of this Space or the app: they stay in the
+owner's private dataset.

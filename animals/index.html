@@ -18,6 +18,8 @@
   <script defer src="app.js"></script>
   <!-- Together: several animals in one video (loaded after app.js; app.js calls it through window.Together) -->
   <script defer src="together.js"></script>
+  <!-- (Sing) Sing: animals sing a song (loaded after together.js; app.js calls it through window.Sing) -->
+  <script defer src="sing.js"></script>
 </head>
 <body>
   <header class="bar">
@@ -80,9 +82,11 @@
         <section class="block step" id="step1">
           <h2 class="step-title"><span class="step-num" aria-hidden="true">1</span><span id="step1Title">Your video</span></h2>
           <!-- Together: One animal | Together (together.js) -->
-          <div class="mode-seg" id="modeSeg" role="group" aria-label="How many animals" hidden>
+          <div class="mode-seg" id="modeSeg" role="group" aria-label="What to make" hidden>
             <button type="button" data-v="one">One animal</button>
             <button type="button" data-v="together">Together<small id="modeNeed" hidden>Update needed</small></button>
+            <!-- (Sing) the third mode (sing.js) -->
+            <button type="button" data-v="sing" id="singModeBtn" hidden>Sing 🎤<small id="singNeed" hidden>Update needed</small></button>
           </div>
           <div id="oneBox">
           <div class="field" id="linkField">
@@ -108,7 +112,7 @@
           </div>
           <!-- Together: 2-4 animals in order, the first one is the star (together.js) -->
           <div id="castBox" hidden>
-            <p class="note bad cast-update" id="castUpdate" hidden><span>Your worker needs an update for Together videos (2–5 min, once).</span> <button type="button" id="castUpdateBtn" class="plain">Update my worker</button></p>
+            <p class="note bad cast-update" id="castUpdate" hidden><span>Your worker needs an update for Together videos (about 10–20 min, once).</span> <button type="button" id="castUpdateBtn" class="plain">Update my worker</button></p>
             <div class="cast" id="castRow"></div>
             <div class="cast-tools" id="castTools" hidden>
               <button type="button" id="castSwap" class="plain">⇄ Swap places</button>
@@ -139,6 +143,48 @@
             </div>
             <p class="fine cast-rule">Use your own videos or the free clips. Other people's videos need their OK.</p>
           </div>
+          <!-- (Sing) Who sings: 1 singer (solo) or 2 (duet, left and right on the stage) (sing.js) -->
+          <div id="singBox" hidden>
+            <p class="note bad cast-update" id="singUpdate" hidden><span>Your worker needs an update for Sing videos (about 10–20 min, once).</span> <button type="button" id="singUpdateBtn" class="plain">Update my worker</button></p>
+            <div id="singWho">
+              <div class="cast sing-cast" id="singRow"></div>
+              <div class="cast-tools" id="singTools" hidden>
+                <button type="button" id="singSwap" class="plain">⇄ Swap places</button>
+                <span class="fine" id="singCount"></span>
+              </div>
+              <div class="alt cast-add sing-add">
+                <label class="tile" id="singFileTile">
+                  <input type="file" id="singFile" accept="video/*,image/*" multiple>
+                  <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M12 15V4m0 0L7.5 8.5M12 4l4.5 4.5M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+                  <span>Your video<small>or a photo</small></span>
+                </label>
+                <button type="button" class="tile surprise" id="singPickBtn" aria-expanded="false">
+                  <span class="tile-emoji" aria-hidden="true">🐻</span>
+                  <span>Pick an animal<small>no video needed</small></span>
+                </button>
+                <button type="button" class="tile lib" id="singLibBtn">
+                  <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round" d="M4 5h16v14H4zM10 9.5v5l4.5-2.5z"/></svg>
+                  <span>Free clips<small>free to use</small></span>
+                </button>
+                <button type="button" class="tile" id="singLinkBtn">
+                  <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>
+                  <span>Paste a link<small>TikTok, YouTube…</small></span>
+                </button>
+              </div>
+              <div class="field cast-link" id="singLinkField" hidden>
+                <input type="url" id="singLink" inputmode="url" placeholder="Paste a video link" aria-label="Singer video link" autocomplete="off">
+                <button type="button" id="singLinkAdd" class="mini">Add</button>
+              </div>
+              <div class="sing-pick" id="singPick" hidden>
+                <div class="sing-animals" id="singAnimals" role="group" aria-label="Pick an animal"></div>
+                <label class="opt-line sing-look-in">
+                  <span>Its look<small>optional</small></span>
+                  <input type="text" id="singLookIn" class="small-input" maxlength="60" placeholder="e.g. big brown bear with a gold chain" aria-label="Its look (optional)">
+                </label>
+              </div>
+              <p class="fine cast-rule">Use your own videos, the free clips, or a painted animal. Other people's videos need their OK.</p>
+            </div>
+          </div>
         </section>
 
         <section class="block step" id="step2">
@@ -157,6 +203,34 @@
           <p class="fine" id="ideaFine">Empty? antics picks a funny idea. You can also say the song and length.</p>
           <h3 class="sub-label" id="styleLabel">Style</h3>
           <div class="chips-wrap" id="styleRow"></div>
+        </section>
+
+        <!-- (Sing) Step 2 in Sing: the song, the part, and the honest time line (sing.js) -->
+        <section class="block step" id="singSongStep" hidden>
+          <h2 class="step-title"><span class="step-num" aria-hidden="true">2</span>The song</h2>
+          <div class="song-tiles sing-songs" id="singSongs" role="group" aria-label="Which song"></div>
+          <div class="row sing-song-add">
+            <label class="link-btn add-song-link" id="singAddSong" hidden>
+              <input type="file" id="singAddSongFile" accept="audio/*,video/*,.mp3,.m4a,.wav,.aac,.ogg,.mp4,.mov">
+              + Add a song
+            </label>
+            <label class="link-btn add-song-link" id="singOwnSong" hidden>
+              <input type="file" id="singOwnSongFile" accept="audio/*,.mp3,.m4a,.wav,.aac,.ogg">
+              + Use my own song
+            </label>
+          </div>
+          <input type="file" id="singKnownFile" accept="audio/*,video/*,.mp3,.m4a,.wav,.aac,.ogg,.mp4,.mov" hidden>
+          <p class="fine" id="singSongNote" hidden></p>
+          <div id="singPartBox">
+            <h3 class="sub-label">Part</h3>
+            <div class="look-seg sing-parts" id="singPartSeg" role="group" aria-label="Which part"></div>
+            <p class="sing-hear-row"><button type="button" id="singHearPart" class="plain">▶ Hear this part</button> <span class="fine" id="singPartTimes"></span></p>
+            <p class="note bad sing-nosing" id="singNoSinging" hidden>No singing found in this part. Pick another part.</p>
+          </div>
+          <div class="sing-time" id="singTime" hidden>
+            <p class="sing-time-head">⏱ How long it takes</p>
+            <ul id="singTimeLines"></ul>
+          </div>
         </section>
       </div>
 
@@ -200,6 +274,27 @@
           <p id="musicNote" class="fine" hidden>TikTok may mute songs it has no rights to. Its own sounds are safest.</p>
         </section>
 
+        <!-- (Sing) Step 3 in Sing: the stage, the shots, who sings what, and each singer's voice (sing.js) -->
+        <section class="block step" id="singStageStep" hidden>
+          <h2 class="step-title"><span class="step-num" aria-hidden="true">3</span>Stage and voices</h2>
+          <div class="scene-cards sing-looks" id="singLooks" role="group" aria-label="Stage"></div>
+          <div class="opt-line" id="singShotsLine">
+            <span>Shots<small id="singShotsSub"></small></span>
+            <div class="seg" id="singShotsSeg">
+              <button type="button" data-v="cuts">Music video</button>
+              <button type="button" data-v="one">One shot</button>
+            </div>
+          </div>
+          <div id="singWhoBox" hidden>
+            <h3 class="sub-label">Who sings what</h3>
+            <div class="look-seg sing-who" id="singWhoSeg" role="group" aria-label="Who sings what"></div>
+            <p class="fine" id="singWhoHelp"></p>
+          </div>
+          <h3 class="sub-label">Voices</h3>
+          <div id="singVoices" class="sing-voices"></div>
+          <p class="fine" id="singVoiceHelp"></p>
+        </section>
+
         <details class="block extras" id="extras">
           <summary>
             <span class="extras-head">Extras <span class="tag-opt">optional</span></span>
@@ -226,6 +321,15 @@
               <label class="opt-line switch-line" id="outroLine">
                 <span>Follow me ending<small>Ends with “Follow @TENDHA2”</small></span>
                 <input type="checkbox" id="outroOpt" class="sw-input" checked><span class="sw" aria-hidden="true"></span>
+              </label>
+              <!-- (Sing) only in Sing (sing.js) -->
+              <label class="opt-line switch-line" id="singTitleLine" hidden>
+                <span>Song title on video<small>“♪ the song · the artist” for 3 s</small></span>
+                <input type="checkbox" id="singTitleOpt" class="sw-input" checked><span class="sw" aria-hidden="true"></span>
+              </label>
+              <label class="opt-line switch-line" id="singZoomLine" hidden>
+                <span>Beat zooms<small>A small punch-in on the beat</small></span>
+                <input type="checkbox" id="singZoomOpt" class="sw-input" checked><span class="sw" aria-hidden="true"></span>
               </label>
               <label class="opt-line switch-line">
                 <span>Text on video<small>A funny line on the video</small></span>
@@ -280,6 +384,35 @@
             <input type="checkbox" id="previewOpt" class="sw-input" checked><span class="sw" aria-hidden="true"></span>
           </label>
           <p class="fine" id="exportHelp"></p>
+          <!-- (Sing) Step 4 in Sing: online / my PC / both, the 5-second test, what it costs (sing.js) -->
+          <div id="singMake" hidden>
+            <div id="singTest" class="sing-test" hidden>
+              <p class="sing-test-head">First, a 5-second test</p>
+              <p class="fine" id="singTestWhy"></p>
+              <div class="chips-wrap sing-test-engines" id="singTestEngines" role="group" aria-label="Which singing AI to test"></div>
+              <p class="fine sing-test-cost" id="singTestCost"></p>
+            </div>
+            <div id="singAllBad" class="note bad sing-allbad" hidden>
+              <span>The AI can't make this animal sing well yet.</span>
+              <button type="button" id="singDance" class="plain">Dance to the song instead</button>
+            </div>
+            <div class="look-line" id="singEngineLine" hidden>
+              <span class="look-label">Made by</span>
+              <div class="look-seg" id="singEngineSeg" role="group" aria-label="Who makes it"></div>
+            </div>
+            <div class="opt-line" id="singSharpLine" hidden>
+              <span>Picture<small>on your PC</small></span>
+              <div class="seg" id="singSharpSeg">
+                <button type="button" data-v="sharp">Sharp</button>
+                <button type="button" data-v="fast">Faster</button>
+              </div>
+            </div>
+            <label class="opt-line switch-line" id="singDraftLine">
+              <span>Preview first<small>Sings the first shot (~5 s) so you can see it. Finish sings the rest.</small></span>
+              <input type="checkbox" id="singDraftOpt" class="sw-input"><span class="sw" aria-hidden="true"></span>
+            </label>
+            <p class="fine" id="singCost"></p>
+          </div>
         </section>
 
         <div class="make-bar">
@@ -318,6 +451,9 @@
       <img id="playerPicture" class="player-picture" alt="The animals together in one picture" hidden>
       <div class="player-info">
         <p id="playerKind" class="player-kind" hidden></p>
+        <!-- (Sing) a series' parts, the 5-second test's question, the stage pictures' strip (sing.js; above the
+             picture check's buttons, so every picture shows without scrolling) -->
+        <div class="sing-player" id="singPlayer" hidden></div>
         <div class="row player-check" id="playerCheck" hidden></div>
         <div class="row player-acts">
           <button type="button" id="finishBtn" class="go small" hidden>Finish video</button>
@@ -340,12 +476,12 @@
       <h2>Edit video</h2>
       <p class="fine edit-legend" id="editIntro"><span class="lg"><span class="kind fast">fast</span> ready in seconds</span> <span class="lg"><span class="kind slow">new animation</span> 1–2 min a part</span></p>
 
-      <h3 class="edit-label">Text on each 5 s part <span class="kind fast">fast</span></h3>
+      <h3 class="edit-label" id="editTextsLabel">Text on each 5 s part <span class="kind fast">fast</span></h3>
       <div id="editTexts" class="edit-texts"></div>
       <p class="fine" id="editRedoHelp">↻ = a new idea and animation for that part.</p>
 
-      <h3 class="edit-label">Music <span class="kind fast">fast</span></h3>
-      <div class="music-pick">
+      <h3 class="edit-label" id="editMusicLabel">Music <span class="kind fast">fast</span></h3>
+      <div class="music-pick" id="editMusicPick">
         <select id="editMusic" aria-label="Music"></select>
         <button type="button" id="editHear" class="mini" aria-label="Play this song">▶</button>
       </div>
@@ -373,7 +509,9 @@
         </div>
       </div>
 
-      <h3 class="edit-label">Length, speed, extras <span class="kind fast">fast</span></h3>
+      <!-- (Sing) the "Song and stage" box of a Sing video (sing.js) -->
+      <div id="editSing" class="edit-sing" hidden></div>
+      <h3 class="edit-label" id="editLenLabel">Length, speed, extras <span class="kind fast">fast</span></h3>
       <div class="opt-line">
         <span>Length</span>
         <div class="seg" id="editLenSeg">
@@ -414,6 +552,15 @@
         <label class="opt-line switch-line">
           <span>Text on video</span>
           <input type="checkbox" id="editCaptions" class="sw-input"><span class="sw" aria-hidden="true"></span>
+        </label>
+        <!-- (Sing) -->
+        <label class="opt-line switch-line" id="editSingTitleLine" hidden>
+          <span>Song title on video</span>
+          <input type="checkbox" id="editSingTitle" class="sw-input"><span class="sw" aria-hidden="true"></span>
+        </label>
+        <label class="opt-line switch-line" id="editSingZoomLine" hidden>
+          <span>Beat zooms</span>
+          <input type="checkbox" id="editSingZoom" class="sw-input"><span class="sw" aria-hidden="true"></span>
         </label>
         <label class="opt-line switch-line" id="editBrandLine">
           <span>My name on video</span>
@@ -471,6 +618,8 @@
         <div class="post-steps">
           <p id="postCutNote" class="fine post-cut-note" hidden>🔇 No song in this version, so TikTok won't mute it. You add the song in TikTok.</p>
           <p id="postCutFail" class="fine post-cut-note" hidden>Couldn't take the song out this time, so this is your video with its song. TikTok may mute it.</p>
+          <!-- (Sing) sung videos: song inside vs TikTok's sound, and the personal account tip (sing.js) -->
+          <p id="postSingNote" class="fine post-cut-note sing-post-note" hidden></p>
           <label class="opt-line switch-line post-song" id="postSongLine" hidden>
             <span>Use the video with the song<small>TikTok may mute songs inside a video. Off is safer: add the sound in TikTok.</small></span>
             <input type="checkbox" id="postSongOpt" class="sw-input"><span class="sw" aria-hidden="true"></span>
@@ -515,6 +664,40 @@
     </div>
   </dialog>
 
+  <!-- (Sing) the free clips for a singer, the duet's "Choose lines" sheet, and the test clips side by side (sing.js) -->
+  <dialog id="singLibrary" class="sheet library">
+    <div class="sheet-body">
+      <h2>Free clips</h2>
+      <p class="fine">Free to use, also on TikTok. Tap a clip to make it a singer, tap it again to take it out.</p>
+      <div class="chips-wrap lib-filters" id="singLibFilters" role="group" aria-label="Which animals"></div>
+      <p id="singLibNote" class="note" hidden></p>
+      <div class="lib-grid" id="singLibGrid"></div>
+      <div class="lib-foot">
+        <span class="fine" id="singLibCount"></span>
+        <button type="button" id="singLibDone" class="go small">Done</button>
+      </div>
+    </div>
+  </dialog>
+  <dialog id="singLines" class="sheet sing-lines-sheet">
+    <div class="sheet-body">
+      <h2>Who sings each line</h2>
+      <p class="fine">Lines are shown by time only. Tap ▶ to hear one, then pick who sings it.</p>
+      <div id="singLineRows" class="sing-line-rows"></div>
+      <div class="lib-foot">
+        <button type="button" id="singLinesReset" class="link-btn">Take turns again</button>
+        <button type="button" id="singLinesDone" class="go small">Done</button>
+      </div>
+    </div>
+  </dialog>
+  <dialog id="singCompare" class="sheet sing-compare-sheet">
+    <div class="sheet-body">
+      <h2>The tests side by side</h2>
+      <p class="fine">Which one sings with the words? Pick it, and it makes your Sing videos.</p>
+      <div id="singCompareGrid" class="sing-compare-grid"></div>
+      <button type="button" id="singCompareClose" class="plain close">Close</button>
+    </div>
+  </dialog>
+
   <!-- Setup / settings -->
   <dialog id="settings" class="sheet">
     <div class="sheet-body">
@@ -533,7 +716,7 @@
         <ul id="steps" class="steps" hidden>
           <li data-step="key">Checking your key</li>
           <li data-step="create">Creating your worker</li>
-          <li data-step="build">Building it (2–5 min, only once)</li>
+          <li data-step="build">Building it (about 10–20 min, only once)</li>
           <li data-step="ready">Ready</li>
         </ul>
         <p id="setupNote" class="note" hidden></p>
@@ -630,6 +813,34 @@
             </label>
           </div>
           <p id="songsNote" class="note" hidden></p>
+        </div>
+
+        <!-- (Sing) workers with 'sing': today's GPU time, how much of it singing may use, each singing AI's test
+             result, and singing on the PC (sing.js) -->
+        <div class="friends-box sing-set" id="singSet" hidden>
+          <div class="opt">
+            <span>Singing</span>
+            <span id="singSetState" class="fine"></span>
+          </div>
+          <p class="fine sing-gpu-line" id="singGpuLine" hidden></p>
+          <p class="note bad" id="singGpuAlert" hidden></p>
+          <div class="opt-line sing-share-line">
+            <span>Singing may use<small id="singShareSub"></small></span>
+            <div class="seg" id="singShareSeg" aria-label="How much of the day's GPU time singing may use">
+              <button type="button" data-v="25">25%</button>
+              <button type="button" data-v="50">50%</button>
+              <button type="button" data-v="75">75%</button>
+              <button type="button" data-v="100">100%</button>
+            </div>
+          </div>
+          <h3 class="sub-label">Singing AIs</h3>
+          <div id="singEngines" class="friend-list sing-engines"></div>
+          <div class="row">
+            <button type="button" id="singRetest" class="plain">Test singing again</button>
+            <button type="button" id="singPcTest" class="plain">Test singing on my PC</button>
+          </div>
+          <p class="fine" id="singPcLine"></p>
+          <p id="singSetNote" class="note" hidden></p>
         </div>
 
         <div class="friends-box">

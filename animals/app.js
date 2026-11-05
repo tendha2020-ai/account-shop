@@ -7,8 +7,9 @@ const SPACE_NAME = 'antics-worker';
 const DATASET_NAME = 'antics-videos';
 const WORKER_FILES = ['Dockerfile', 'README.md', 'requirements.txt', 'worker.py', 'ideas.py', 'beats.py', 'meme.py', 'sfx.py',
   'voice.py', 'webpush.py', 'chorus.py', 'posting.py', 'gpu.py',
-  'together.py', 'library.json']; // Together (v13): several animals in one video, and the free clips
-const WORKER_VERSION = '13'; // bump with VERSION in worker/worker.py
+  'together.py', 'library.json', // Together (v13): several animals in one video, and the free clips
+  'sing.py', 'sing_audio.py']; // (Sing) v14: animals sing a song (the song's voice and music, the lip-sync AIs)
+const WORKER_VERSION = '14'; // bump with VERSION in worker/worker.py
 const KEYS = {
   worker: 'antics.worker', clips: 'antics.clips', captions: 'antics.captions', style: 'antics.style', music: 'antics.music',
   track: 'antics.track', part: 'antics.part', seconds: 'antics.seconds', speed: 'antics.speed', animal: 'antics.animal',
@@ -85,7 +86,8 @@ const state = {
   part: 'auto',
   seconds: 5,
   speed: 'normal',
-  setupMode: 'setup', // or 'update': send the newest worker files to the Space (made again only if its own key broke)
+  setupMode: 'setup', // or 'update': send the newest worker files to the Space (made again only if its own key broke);
+  // 'rebuild': the worker is up to date but an optional part of its build failed: Hugging Face builds it again
   brand: true,
   songStart: 0, // seconds into the song, when Song part is "Pick myself"
   songDuration: 0,
@@ -437,7 +439,9 @@ function randomKey() {
 }
 
 async function setupWorker() {
-  const updating = state.setupMode === 'update' && Boolean(state.worker);
+  const rebuilding = state.setupMode === 'rebuild' && Boolean(state.worker);
+  const updating = (state.setupMode === 'update' || rebuilding) && Boolean(state.worker);
+  const before = state.health; // (the worker that answers now: an update is done only once ANOTHER run answers)
   const token = $('#token').value.trim();
   const msg = $('#setupNote');
   if (!/^hf_[A-Za-z0-9]{20,}$/.test(token)) {
@@ -486,6 +490,8 @@ async function setupWorker() {
     // Every worker file is read first, so a file the site can't serve stops the setup before anything
     // on Hugging Face is touched.
     const summary = updating ? 'Update the Animal Antics worker' : 'Set up the Animal Antics worker';
+    // (a factory rebuild, or an older worker: this version's big image is built from scratch there)
+    const fresh = rebuilding || !before || before.version !== WORKER_VERSION;
     const lines = [{ key: 'header', value: { summary, description: '' } }];
     for (const name of WORKER_FILES) {
       const res = await fetch(`worker/${name}`, { cache: 'no-store' });
@@ -529,33 +535,50 @@ async function setupWorker() {
       if (!created.ok) throw new Error(await hfError(created));
     }
 
-    const commit = await hf(`/api/spaces/${space}/commit/main`, token, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-ndjson' },
-      body: lines.map((l) => JSON.stringify(l)).join('\n'),
-    });
-    if (!commit.ok) throw new Error(await hfError(commit));
+    if (rebuilding && inPlace) {
+      // Up to date, but a part of the build (an optional step: the singing part) didn't install: the same files,
+      // built again from scratch. Sending them again would change nothing, so nothing would be built.
+      const restart = await hf(`/api/spaces/${space}/restart?factory=true`, token, { method: 'POST' });
+      if (!restart.ok) throw new Error(await hfError(restart));
+    } else {
+      const commit = await hf(`/api/spaces/${space}/commit/main`, token, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-ndjson' },
+        body: lines.map((l) => JSON.stringify(l)).join('\n'),
+      });
+      if (!commit.ok) throw new Error(await hfError(commit));
+    }
     step('create', 'done');
 
     step('build', 'active');
     $('#token').value = '';
-    // After an update in place the old worker keeps answering until the new one is built.
-    const url = await waitForBuild(space, inPlace ? { version: WORKER_VERSION, token } : {});
+    // After an update in place the old worker keeps answering until the new one is built: only a worker on the new
+    // version that is ANOTHER run than the one before (its boot) is the new one.
+    const url = await waitForBuild(space, inPlace ? {
+      version: WORKER_VERSION, token, boot: (before && before.boot) || null, kicked: rebuilding, fresh,
+    } : { fresh: true });
     const changed = !state.worker || state.worker.url !== url || state.worker.key !== key;
     state.worker = { space, url, key };
     save(KEYS.worker, state.worker);
     if (changed) resetPings(); // a new worker: its own notifications
     renderConnect();
     await waitForHealth();
-    refreshHealth();
+    await refreshHealth();
     step('build', 'done');
     step('ready', 'done');
     state.setupMode = 'setup';
     renderWorkerDot(true);
-    note(msg, updating ? 'Updated. All the new options work now.' : 'All set. You can make videos now.', 'good');
-    toast(updating ? 'Worker updated' : 'Worker ready');
+    // (Sing) the singing part is an optional step of the build: say so when it didn't install this time either
+    const singMissing = Boolean(state.health && state.health.version === WORKER_VERSION && state.health.sing
+      && !state.health.sing.ready);
+    if (updating && singMissing) {
+      note(msg, `${rebuilding ? 'Rebuilt' : 'Updated'}, but the singing part of your worker didn't install. Everything else works. Tap Rebuild my worker on Sing to try once more, or open huggingface.co/spaces/${space} to see its build log.`, 'bad');
+    } else {
+      note(msg, rebuilding ? 'Rebuilt. Singing works now.' : updating ? 'Updated. All the new options work now.' : 'All set. You can make videos now.', 'good');
+    }
+    toast(rebuilding ? 'Worker rebuilt' : updating ? 'Worker updated' : 'Worker ready');
     refreshJobs();
-    if (updating) setTimeout(() => closeDialog($('#settings')), 1500);
+    if (updating && !singMissing) setTimeout(() => closeDialog($('#settings')), 1500);
     if (state.pending) {
       const pending = state.pending;
       state.pending = null;
@@ -589,13 +612,16 @@ async function healthOf(url) {
 }
 
 // Polls the Space until Docker has built it. Returns its web address. With a version (an update in
-// place), it also waits until the worker itself answers with that version.
-async function waitForBuild(space, { version = null, token = null } = {}) {
+// place), it also waits until the worker itself answers with that version, and (boot: the run that answered
+// before) is another run than the one before: a worker already on that version must really be built again.
+// The worker with Sing is a big image (about 5 GB): its first build takes 10–20 min on Hugging Face.
+const BUILD_LIMIT = 45 * 60 * 1000; // (then it gives up: "taking too long")
+async function waitForBuild(space, { version = null, token = null, boot = null, kicked = false, fresh = true } = {}) {
   const started = Date.now();
   let errors = 0;
   let building = false;
-  let kicked = false;
-  while (Date.now() - started < 15 * 60 * 1000) {
+  const usual = fresh ? 'usually 10–20 min the first time' : 'usually 2–10 min';
+  while (Date.now() - started < BUILD_LIMIT) {
     await sleep(6000);
     let rt;
     try {
@@ -608,9 +634,10 @@ async function waitForBuild(space, { version = null, token = null } = {}) {
     const stage = rt.stage || '';
     if (stage !== 'RUNNING') building = true;
     const mins = Math.floor((Date.now() - started) / 60000);
+    const still = mins >= 20 ? ', still building: it goes on' : '';
     $('#steps [data-step="build"]').textContent = version
-      ? `Building the new version (${mins} min so far, 2–5 min)`
-      : `Building it (${mins} min so far, 2–5 min, only once)`;
+      ? `Building the new version (${mins} min so far, ${usual}${still})`
+      : `Building it (${mins} min so far, ${usual}, only once${still})`;
     // Right after a rebuild the old stage can linger, so only a repeated error after a short wait counts.
     errors = /ERROR/.test(stage) && Date.now() - started > 45000 ? errors + 1 : 0;
     if (errors >= 2) {
@@ -621,10 +648,10 @@ async function waitForBuild(space, { version = null, token = null } = {}) {
       const url = domain ? `https://${domain.domain}` : `https://${space.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase()}.hf.space`;
       if (!version) return url;
       const health = await healthOf(url);
-      if (health && health.version === version) return url;
+      if (health && health.version === version && !(boot && health.boot === boot)) return url;
       // Still the old worker. Hugging Face starts the new build by itself a few seconds after the files
       // arrive; if it hasn't after 3 minutes, ask it to (once).
-      if (!building && !kicked && token && Date.now() - started > 3 * 60 * 1000) {
+      if (!building && !kicked && token && Date.now() - started > 3 * 60 * 1000) { // (the same files: no build)
         kicked = true;
         await hf(`/api/spaces/${space}/restart?factory=true`, token, { method: 'POST' }).catch(() => {});
       }
@@ -681,6 +708,10 @@ function setSurprise(on) {
 
 async function onMake(e) {
   e.preventDefault();
+  if (window.Sing && Sing.on()) { // (Sing) sing.js checks the singers, the song and the test, then calls submit
+    Sing.make();
+    return;
+  }
   if (window.Together && Together.on()) { // Together: several animals (together.js checks them, then calls submit)
     Together.make();
     return;
@@ -713,7 +744,7 @@ async function submit(what) {
   if (sending) return;
   const msg = $('#note');
   const music = musicNow();
-  if (music === 'upload' && !state.songFile) {
+  if (music === 'upload' && !state.songFile && what.kind !== 'sing') { // (Sing: the song is picked in its own step)
     note(msg, 'Choose your song file first (Music, Upload a song), or pick other music.', 'bad');
     return;
   }
@@ -739,7 +770,7 @@ async function submit(what) {
     form.append('draft', String(draft));
     form.append('clips', String(state.clips));
     form.append('captions', String(state.captions));
-    if (what.kind !== 'together') form.append('template', state.style); // Together: the scene is the style
+    if (what.kind !== 'together' && what.kind !== 'sing') form.append('template', state.style); // Together: the scene is the style
     // A surprise scene has no sound of its own, so it gets a meme song instead.
     form.append('music', what.kind === 'surprise' && music === 'mine' ? 'funny' : music);
     if (music === 'mysong') form.append('song_id', state.songId); // (from its meme part, whatever the length)
@@ -750,7 +781,7 @@ async function submit(what) {
     form.append('seconds', String(state.seconds));
     form.append('speed', state.speed);
     form.append('idea', $('#idea').value.trim());
-    if (what.kind !== 'together') form.append('animal', $('#animalOpt').value.trim()); // Together: each has its own
+    if (what.kind !== 'together' && what.kind !== 'sing') form.append('animal', $('#animalOpt').value.trim()); // Together: each has its own
     if (music === 'upload') form.append('song', state.songFile);
     for (const x of EXTRAS) if (canDo(x.key)) form.append(x.key, extraValue(x.key));
     const missing = []; // never let the name tag or the Follow me card stop a video
@@ -770,6 +801,7 @@ async function submit(what) {
       }
     }
     if (what.kind === 'together') await Together.addCast(form, btn); // Together: mode, scene, look, cast, cast_files
+    if (what.kind === 'sing') await Sing.addSing(form, btn); // (Sing) mode, singers, song, part, voices... (sing.js)
     if (what.kind === 'link') form.append('url', what.url);
     if (what.kind === 'surprise') form.append('surprise', 'true');
     if (what.kind === 'file') {
@@ -814,6 +846,7 @@ async function submit(what) {
     const kind = draft && made[0].draft ? 'preview' : 'video';
     const got = made.length > 1 ? `${made.length} ${kind}s on the way` : `Your ${kind} is on the way`;
     toast(`${got}${missing.length ? ` (without ${missing.join(' and ')} this time)` : ''}. You can close the app, it keeps working.`);
+    if (what.kind === 'sing') Sing.sent(made, missing); // (Sing) the singers stay; the test says what comes next
     // On a phone the list is below the form: show the new card.
     if (!matchMedia('(min-width: 960px)').matches) {
       const card = $('#jobs .job');
@@ -871,6 +904,7 @@ function renderMake() {
   if (out) note($('#note'), `You've used all your videos. Ask ${hostName()} for more.`);
   else if ($('#note').textContent.startsWith("You've used all")) note($('#note'), '');
   if (window.Together) Together.renderMake(); // Together: the Look and its cost line
+  if (window.Sing) Sing.renderMake(); // (Sing) online / my PC / both, the 5-second test, the Make button's words
 }
 
 async function sendJob(form) {
@@ -1389,7 +1423,8 @@ function renderJobs() {
       hint.hidden = false;
     }
     // Together: the picture check and the out-of-time card have their own buttons (together.js)
-    const own = job.kind === 'together' && window.Together ? Together.actions(job) : null;
+    const own = job.kind === 'together' && window.Together ? Together.actions(job)
+      : job.kind === 'sing' && window.Sing ? Sing.actions(job) : null; // (Sing) the test, picture check, waits
     if (own) own.forEach(([label, cls, fn]) => add(label, cls, fn));
     else if (job.status === 'done') {
       add(job.draft ? '▶ Watch' : '▶ Watch & save', 'open', () => openPlayer(job));
@@ -1410,6 +1445,7 @@ function renderJobs() {
     if (!own && job.status === 'waiting' && job.gpu_wait !== 'stopped') add('Try now', '', () => retryJob(job));
     if (!own && job.status !== 'working') add('Delete', 'del', () => deleteJob(job));
     if (job.kind === 'together' && window.Together) Together.decorate(card, job); // Together: tag, picture, note
+    if (job.kind === 'sing' && window.Sing) Sing.decorate(card, job); // (Sing) tag, parts, what it is doing
     box.appendChild(card);
   }
   const drafts = state.jobs.filter(finishable);
@@ -1569,6 +1605,10 @@ function renderPlayerTip(job) {
     }
     tip.appendChild(li);
   };
+  if (job.kind === 'sing' && window.Sing) { // (Sing) the song is inside, in sync; the TikTok tips (sing.js)
+    Sing.tip(job, line);
+    return;
+  }
   if (job.music_used === 'funny') line(['Music: '], [`"${songLabel(job.track || '')}"`, true], [' is already in (credit in the caption).']);
   else if (job.music_used === 'upload') line(['Your song is already in.']);
   else if (job.music_used === 'mysong') {
@@ -1976,13 +2016,15 @@ function renderOptions() {
   renderExtras();
   renderMake();
   if (window.Together) Together.render(); // Together: the switch, the animals, scene cards, Look, Ideas to try
+  if (window.Sing) Sing.render(); // (Sing) the third mode: who sings, the song, the stage and voices
 }
 
 const canDo = (key) => Boolean(state.health && (state.health.features || []).includes(key));
 
 // The Real → AI opening needs real video: a link or an uploaded video, not a surprise or a photo.
 // (Together: at least one animal with a real video.)
-const noRealVideo = () => (window.Together && Together.on() ? Together.noRealVideo()
+const noRealVideo = () => (window.Sing && Sing.on() ? Sing.noRealVideo() // (Sing) a singer from a video
+  : window.Together && Together.on() ? Together.noRealVideo()
   : state.surprise || Boolean(state.file && !isVideoFile(state.file)));
 
 // Whether an extra is on for the next video: the worker makes it, it is switched on, and it fits.
@@ -2011,6 +2053,7 @@ function renderExtras() {
   const animal = $('#animalOpt').value.trim();
   if (animal && !(window.Together && Together.on())) on.push(animal); // Together: each animal has its own
   $('#extrasSum').textContent = on.length ? on.join(' · ') : 'All off';
+  if (window.Sing) Sing.renderExtras(); // (Sing) its own extras: song title, beat zooms (no pet voice, speed, animal)
 }
 
 function openPlayer(job) {
@@ -2018,7 +2061,8 @@ function openPlayer(job) {
   state.playing = job;
   state.playingBlob = null;
   const video = $('#playerVideo');
-  video.src = mediaUrl(job, 'video');
+  const src = (window.Sing && Sing.playerSrc(job)) || mediaUrl(job, 'video'); // (Sing) watch so far, a test clip
+  video.src = src;
   $('#playerCaption').textContent = job.caption || '';
   const ready = job.status === 'done';
   const draft = ready && job.draft;
@@ -2033,10 +2077,11 @@ function openPlayer(job) {
   $('#saveBtn').className = draft ? 'plain' : 'go small';
   $('#saveBtn').textContent = draft ? 'Save preview' : 'Save video';
   renderPlayerTip(job);
+  if (window.Sing) Sing.playerOpen(job); // (Sing) a series' parts, the test's question
   openDialog($('#player'));
   video.play().catch(() => {});
   // Fetch the file now so Save can open the share sheet straight away.
-  fetch(mediaUrl(job, 'video'))
+  fetch(src)
     .then((r) => (r.ok ? r.blob() : null))
     .then((blob) => {
       if (state.playing === job) state.playingBlob = blob;
@@ -2196,6 +2241,7 @@ function openEditor(job) {
   });
   note($('#editNote'), '');
   if (window.Together) Together.editorOpen(job); // Together: "Scene and look" in place of style and Animal
+  if (window.Sing) Sing.editorOpen(job); // (Sing) "Song and stage" in place of texts, music, length and story
   renderEditor();
   openDialog($('#editor'));
   loadEditSongDuration();
@@ -2214,6 +2260,8 @@ function willAnimate() {
   const job = edit.job;
   const together = window.Together ? Together.editAnimates() : null; // Together: its own rules (null: these)
   if (together !== null) return together;
+  const sing = window.Sing ? Sing.editAnimates() : null; // (Sing) its own rules (null: these)
+  if (sing !== null) return sing;
   if ($('#editIdea').value.trim().replace(/\s+/g, ' ') !== (job.idea || '')) return true;
   if (edit.style !== (job.template || 'random')) return true;
   const animal = cleanAnimal($('#editAnimal').value);
@@ -2227,6 +2275,8 @@ function losesAnimation() {
   const job = edit.job;
   const together = window.Together ? Together.editLoses() : null; // Together: its own rules (null: these)
   if (together !== null) return together;
+  const sing = window.Sing ? Sing.editLoses() : null; // (Sing) its own rules (null: these)
+  if (sing !== null) return sing;
   if ($('#editIdea').value.trim().replace(/\s+/g, ' ') !== (job.idea || '')) return animatedClips(job) > 0;
   if (edit.style !== (job.template || 'random')) return animatedClips(job) > 0;
   const animal = cleanAnimal($('#editAnimal').value);
@@ -2323,6 +2373,7 @@ function renderEditor() {
   $('#editVoicePick').hidden = $('#editVoiceLine').hidden || !$('#editVoice').checked;
   renderVoices($('#editVoiceSeg'), edit.voice);
   if (window.Together) Together.editorRender(); // Together: the Scene and look box
+  if (window.Sing) Sing.editorRender(); // (Sing) the Song and stage box
   const animate = willAnimate();
   const blocked = left <= 0 && losesAnimation();
   $('#editSave').disabled = blocked;
@@ -2337,6 +2388,7 @@ function renderEditor() {
 async function saveEdit() {
   unlockSound();
   const job = edit.job;
+  if (job.kind === 'sing' && window.Sing) return Sing.saveEdit(job); // (Sing) its own fields (sing.js)
   const form = new FormData();
   form.append('texts', JSON.stringify([...document.querySelectorAll('#editTexts input')].map((i) => i.value.trim())));
   form.append('idea', $('#editIdea').value.trim());
@@ -2657,7 +2709,8 @@ function styleFromName(name) {
 
 // Reads orders out of what was said. Returns { text: the tidied description, orders, labels }.
 // together: Together is on there, so scene and look words count too (together.js).
-function understand(said, currentStyle, together = false) {
+// sing: Sing can be asked for there ("make my cat sing", "karaoke", "the whole song"; sing.js).
+function understand(said, currentStyle, together = false, sing = false) {
   let text = ` ${said} `;
   const orders = {};
   const take = (pattern, fn) => {
@@ -2727,6 +2780,7 @@ function understand(said, currentStyle, together = false) {
   });
   // Together: "make them dance together", "VS screen", "free version", "one by one" (scene and look)
   if (together && window.Together) Together.understand(take, orders, said);
+  if (sing && window.Sing) Sing.understand(take, orders, said); // (Sing) sing words, parts, voices, animals
 
   // Tidy what's left: chit-chat and filler words go, the description stays.
   text = text
@@ -2751,7 +2805,7 @@ function understand(said, currentStyle, together = false) {
   }
   if (text) text = text[0].toUpperCase() + text.slice(1);
 
-  if (!together && !orders.style && (currentStyle || 'random') === 'random') { // (Together: no styles)
+  if (!together && !orders.sing && !orders.style && (currentStyle || 'random') === 'random') { // (Together, Sing: no styles)
     const found = STYLE_WORDS.find(([, re]) => re.test(text));
     if (found) orders.style = found[0];
   }
@@ -2869,10 +2923,12 @@ function applyOrders(o, target) {
 function heard(box, before, said) {
   const target = box.id === 'editIdea' ? 'edit' : 'main';
   const together = Boolean(window.Together && Together.spoken(target)); // Together: scene and look words
-  const { text, orders } = understand(said, target === 'edit' ? edit.style : state.style, together);
-  const labels = [...(together ? Together.labels(orders, target) : []), ...orderLabels(orders, target)];
+  const sing = Boolean(window.Sing && Sing.listens(target)); // (Sing) "make my cat sing", "the whole song"...
+  const { text, orders } = understand(said, target === 'edit' ? edit.style : state.style, together, sing);
+  const labels = [...(sing ? Sing.labels(orders) : []), ...(together ? Together.labels(orders, target) : []), ...orderLabels(orders, target)];
   const undoOptions = applyOrders(orders, target);
   const undoTogether = together ? Together.applyOrders(orders, target) : () => {};
+  const undoSing = sing ? Sing.applyOrders(orders) : () => {};
   const piece = before.trim() && text ? text[0].toLowerCase() + text.slice(1) : text; // adding to what's there
   typed(box, piece ? joinText(before, piece, box.maxLength) : before);
   const line = document.getElementById(`${box.id}Heard`);
@@ -2882,6 +2938,7 @@ function heard(box, before, said) {
   $('.heard-undo', line).onclick = () => {
     undoOptions();
     undoTogether();
+    undoSing();
     typed(box, joinText(before, said, box.maxLength));
     line.hidden = true;
   };
@@ -3227,8 +3284,10 @@ function showLinked(jobs) {
 
 // ---------- Settings ----------
 
-function openUpdate() {
-  state.setupMode = 'update';
+// mode 'rebuild' (Sing): the worker is on the newest version, but its singing part didn't install (an optional
+// build step): a factory rebuild, not the same update again. (As a click handler it gets the event: an update.)
+function openUpdate(mode) {
+  state.setupMode = mode === 'rebuild' ? 'rebuild' : 'update';
   state.updateAnyway = false;
   openSettings();
 }
@@ -4033,7 +4092,8 @@ async function addToPlan(job) {
     save(KEYS.planAsked, true);
     openPlanBox();
   }
-  toast('Added to your posting plan');
+  const parts = job.kind === 'sing' ? (job.posts || []).length : 0; // (Sing) a long song goes in as its parts
+  toast(parts > 1 ? `All ${parts} parts are in your posting plan, in order` : 'Added to your posting plan');
 }
 
 // ---------- Posting plan: the Post screen ----------
@@ -4101,7 +4161,8 @@ function postVideoUrl(item, cut) {
   const w = state.worker;
   const job = state.jobs.find((j) => j.id === item.job);
   const v = cut ? `cut${item.cut_rev ?? ''}` : job ? job.rev ?? 0 : `plan${item.cut_rev ?? ''}`;
-  return `${w.url}/jobs/${item.job}/video?key=${encodeURIComponent(w.key)}${cut ? '&cut=tiktok' : ''}&v=${v}`;
+  const part = item.part ? `&part=${item.part}` : ''; // (Sing) one TikTok part of a long sung video
+  return `${w.url}/jobs/${item.job}/video?key=${encodeURIComponent(w.key)}${cut ? '&cut=tiktok' : ''}${part}&v=${v}`;
 }
 
 function renderPost() {
@@ -4135,6 +4196,7 @@ function renderPost() {
   $('#postReset').hidden = !item.custom;
   renderPostSteps(item, ready);
   pollCut(item);
+  if (window.Sing) Sing.renderPost(item, job); // (Sing) song inside vs TikTok's sound, the personal account tip
 }
 
 // The video is downloaded once: the file fetched for the share sheet is also the one that plays (data-src: the
@@ -4216,7 +4278,8 @@ function renderPostSteps(item, ready) {
   };
   if (save) line(['Open TikTok, tap '], ['+', true], [', then '], ['Upload', true], [' and pick the video']);
   line(['Paste the caption']);
-  const song = item.song && !cutFailed(item) ? item.song : null;
+  const sungJob = state.jobs.find((j) => j.id === item.job && j.kind === 'sing'); // (Sing: its own line, to a tenth)
+  const song = item.song && !cutFailed(item) && !(sungJob && window.Sing) ? item.song : null;
   const named = song && song.name && song.name !== 'your song'; // (an uploaded song without a name: the same one)
   if (named) line(['Add sound: '], [song.name, true], [` — start at ${clock(song.start || 0)}`]);
   else if (song) line(['Add sound: '], ['the same song', true], [` from TikTok's sounds — start at ${clock(song.start || 0)}`]);
@@ -4225,6 +4288,7 @@ function renderPostSteps(item, ready) {
   if (!(job && job.kind === 'together' && window.Together && Together.tip(job, line))) {
     line(['More options → '], ['AI-generated content: ON', true]);
   }
+  if (job && job.kind === 'sing' && window.Sing) Sing.postLines(item, job, line); // (Sing) lining up, parts in order
   line(['Post']);
 }
 
@@ -4346,6 +4410,7 @@ async function refreshHealth() {
   renderMake();
   renderPings();
   syncPings();
+  if (window.Sing) Sing.healthChanged(); // (Sing) the singing AIs' test results, the song's state
 }
 
 // The GPU guard (workers with 'gpu', owner only): the free AI time left today in Settings, and a red banner with
@@ -4460,21 +4525,25 @@ function renderSettings() {
     renderPings();
     return;
   }
-  const updating = state.setupMode === 'update' && Boolean(state.worker);
+  const rebuilding = state.setupMode === 'rebuild' && Boolean(state.worker);
+  const updating = (state.setupMode === 'update' || rebuilding) && Boolean(state.worker);
   const ready = Boolean(state.worker) && !updating;
   $('#setupPane').hidden = ready;
   $('#optionsPane').hidden = !ready;
-  $('#setupTitle').textContent = updating ? 'Update your worker' : 'One-time setup';
+  $('#setupTitle').textContent = rebuilding ? 'Rebuild your worker' : updating ? 'Update your worker' : 'One-time setup';
   const rebuild = updating && keyBroken();
+  const time = state.health && state.health.version === WORKER_VERSION && !rebuilding ? '2–10 min' : 'about 10–20 min the first time';
   $('#setupIntro').textContent = rebuild
-    ? 'Paste a new Hugging Face Write key. Your worker is made again with this key and the newest version (2–5 min). Your videos and connections are kept.'
-    : updating
-      ? 'Paste a Hugging Face Write key. Your worker gets the newest version (2–5 min). Nothing is deleted: your videos and connections stay.'
-      : 'Your videos are made on your own free Hugging Face worker, so it keeps going when your phone is locked.';
-  $('#setupBtn').textContent = updating ? 'Update my worker' : 'Set up my worker';
+    ? `Paste a new Hugging Face Write key. Your worker is made again with this key and the newest version (${time}). Your videos and connections are kept.`
+    : rebuilding
+      ? "Your worker is up to date, but its singing part didn't install. Paste a Hugging Face Write key: Hugging Face builds it again from scratch (about 10–20 min). Nothing is deleted: your videos and connections stay."
+      : updating
+        ? `Paste a Hugging Face Write key. Your worker gets the newest version (${time}). Nothing is deleted: your videos and connections stay.`
+        : 'Your videos are made on your own free Hugging Face worker, so it keeps going when your phone is locked.';
+  $('#setupBtn').textContent = rebuilding ? 'Rebuild my worker' : updating ? 'Update my worker' : 'Set up my worker';
   $('#steps [data-step="create"]').textContent = rebuild ? 'Making your worker again'
-    : updating ? 'Sending the new version' : 'Creating your worker';
-  $('#steps [data-step="build"]').textContent = 'Building it (2–5 min)';
+    : rebuilding ? 'Asking Hugging Face to build it again' : updating ? 'Sending the new version' : 'Creating your worker';
+  $('#steps [data-step="build"]').textContent = `Building it (${updating ? time : 'about 10–20 min'})`;
   if (ready) {
     const link = $('#workerLink');
     link.href = `${HF}/spaces/${state.worker.space}`;
@@ -4485,6 +4554,7 @@ function renderSettings() {
   renderSongsBox();
   renderPlanBox();
   renderPings();
+  if (window.Sing) Sing.renderSettings(); // (Sing) the Singing box: GPU today, its share, the tests, the PC
 }
 
 function init() {

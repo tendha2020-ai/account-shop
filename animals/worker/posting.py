@@ -405,6 +405,9 @@ def _item(raw, done=False):
             'reminded_at': _num(raw.get('reminded_at')), 'done_at': _num(raw.get('done_at')),
             'by': raw['by'] if isinstance(raw.get('by'), str) else None,
             'cut_rev': raw['cut_rev'] if isinstance(raw.get('cut_rev'), int) else None}
+    part = raw.get('part')  # (Sing) one TikTok part of a long sung video (Part n/N), posted on its own
+    if isinstance(part, int) and not isinstance(part, bool) and 1 <= part <= 99:
+        item['part'] = part
     if done:
         item['label'] = str(raw.get('label') or 'A video')[:80]
     return item
