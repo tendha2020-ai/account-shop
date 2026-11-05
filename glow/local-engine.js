@@ -2,7 +2,7 @@
  *
  * Talks to the Glow Studio Windows launcher, which installs and runs a private ComfyUI (v0.44.0 portable) on this PC
  * and exposes it under the page's own origin:
- *   /__glow/engine/{status,install,cancel,start,stop}   launcher endpoints (JSON)
+ *   /__glow/engine/{status,install,cancel,start,stop,cleanup}   launcher endpoints (JSON)
  *   /__glow/comfy/<path>                               reverse proxy to ComfyUI (incl. WebSocket /__glow/comfy/ws)
  * On the public website those paths do not exist, so detect() resolves null ("local engine unavailable").
  *
@@ -15,7 +15,10 @@
  *     -> GET /view for every output (file names are always read from /history, never assumed)
  * Progress comes over the ComfyUI WebSocket; GET /history/<id> is polled every 2 s whenever the socket is not open
  * (and every few seconds as a safety net when it is). The running job is kept in localStorage so a reload can
- * re-attach with GlowLocalAI.resume().
+ * re-attach with GlowLocalAI.resume(). With {keep: true} the record (and the engine's files) stay until
+ * GlowLocalAI.release(job), so a page can fetch the outputs again if its own finishing step is interrupted.
+ * Privacy: once a video is handed over (or cancelled, discarded, failed), the launcher deletes the selfie copy and
+ * the unlabelled outputs ComfyUI kept for it, and ComfyUI forgets the prompts (POST /__glow/engine/cleanup).
  *
  * Classic script, no dependencies. Test hooks: window.__GLOW_LOCALAI_TEST__ = { historyPollMs, safetyPollMs,
  * statusPollMs, wsConnectMs, readyTimeoutMs, noWebSocket, forceProbe }.
@@ -268,19 +271,21 @@
     notInstalled: 'Free AI isn’t fully set up on this PC. Open “Free AI on this PC” to finish setting it up (only missing files are downloaded).',
     missingPack: 'The Singing add-on isn’t installed yet. Add it in “Free AI on this PC”.',
     engineFailed: 'The AI engine couldn’t start. Open “Free AI on this PC” for details, or restart your PC and try again.',
-    engineStopped: 'The AI engine stopped. Open “Free AI on this PC” and press “Start engine”.',
+    engineStopped: 'The AI engine stopped. Try again — Glow Studio starts it again by itself.',
     readyTimeout: 'The AI engine is taking too long to start. Close other heavy apps and try again.',
     busy: 'A video is already being made on this PC. Please wait for it to finish.',
     installBusy: 'A download is already running.',
     oom: 'Your PC ran out of graphics memory. Close games, video apps and extra browser tabs, then try again — or switch to Fast mode.',
-    missingModel: 'Some AI files are missing or damaged. Open “Free AI on this PC” and choose “Repair” to fix them.',
-    driver: 'Your NVIDIA driver is too old for the AI engine. Please update it, restart your PC and try again.',
+    missingModel: 'Some AI files are missing or damaged. Press “Check & repair files” to fix them — only what is damaged is downloaded again.',
+    driver: 'Your NVIDIA driver is too old for the AI engine. Press “Update NVIDIA driver”, install the update and restart your PC, then try again.',
+    vcredist: 'Windows is missing a free Microsoft component the AI engine needs (Visual C++ Redistributable). Press “Get the Microsoft component”, install it, then try again.',
+    outputGone: 'The finished files are no longer on this PC. Please make the video again — it’s free.',
     badPhoto: 'This photo couldn’t be used. Please try another photo (JPEG or PNG).',
     missingStill: 'The picture from the first step is missing. Please start the video again.',
     interrupted: 'The video was stopped before it was finished.',
     lost: 'The AI engine restarted, so this video was lost. Please try again.',
     failed: 'Something went wrong while making the video. Please try again.',
-    rejected: 'The AI engine didn’t accept this job. Open “Free AI on this PC” and choose “Repair”.',
+    rejected: 'The AI engine didn’t accept this job. Press “Check & repair files” to check the AI files.',
     download: 'The finished video couldn’t be loaded from the AI engine. Please try again.'
   };
 
@@ -386,20 +391,23 @@
   function start() { return postEngine('/start', {}, 'engine-failed', MSG.engineFailed); }
   function stop() { return postEngine('/stop', {}, 'stop-failed', 'The AI engine couldn’t be stopped.'); }
 
+  // e.code: 'vcredist' (missing Microsoft component), 'driver' (old NVIDIA driver), 'missing-model' (engine files
+  // damaged: "Check & repair files"), else 'engine-failed'. The launcher's own plain sentence wins over the log patterns
+  // (it knows, e.g., that a "c10.dll" error means a removed file rather than a missing component).
   function engineErrorFrom(s) {
     var log = (s && s.engine && s.engine.log) || [];
-    var text = log.join('\n') + '\n' + ((s && s.engine && s.engine.error) || '');
-    var msg = MSG.engineFailed;
-    if (/c10\.dll|vcruntime|msvcp|VC\+\+|WinError 126/i.test(text)) {
-      msg = 'The AI engine needs a free Microsoft component (Visual C++ Redistributable). Install it from aka.ms/vc14/vc_redist.x64.exe, then press “Start engine” again.';
-    } else if (/driver|CUDA (?:error|driver)|no kernel image|cudaGetDeviceCount/i.test(text)) {
-      msg = MSG.driver;
-    } else if (/out of memory|not enough memory|MemoryError/i.test(text)) {
-      msg = MSG.oom;
-    } else if (launcherSentence(s && s.engine && s.engine.error)) {
-      msg = s.engine.error.trim(); // the launcher already explains it in plain words (e.g. "Another program was using the AI engine's port…")
-    }
-    return LocalAIError('engine-failed', msg, text.trim().slice(-4000));
+    var err = String((s && s.engine && s.engine.error) || '');
+    var text = log.join('\n') + '\n' + err;
+    var plain = launcherSentence(err);
+    var code = 'engine-failed', msg = MSG.engineFailed;
+    if (plain && /Check & repair files/i.test(err)) { code = 'missing-model'; msg = err.trim(); }
+    else if (/Visual C\+\+|vc_redist/i.test(err) || (!plain && /c10\.dll|vcruntime|msvcp|VC\+\+|WinError 126/i.test(text))) { code = 'vcredist'; msg = MSG.vcredist; }
+    else if (/driver is too old|driver version is insufficient|up-to-date driver/i.test(err) || (!plain && /driver|CUDA (?:error|driver)|no kernel image|cudaGetDeviceCount/i.test(text))) { code = 'driver'; msg = plain && /graphics card was found/i.test(err) ? err.trim() : MSG.driver; }
+    else if (plain) msg = err.trim(); // the launcher already explains it in plain words (e.g. "Another program was using the AI engine's port…")
+    else if (/out of memory|not enough memory|MemoryError/i.test(text)) msg = MSG.oom;
+    var e = LocalAIError(code, msg, text.trim().slice(-4000));
+    e.engine = true; // about the engine process, not this video: the job record is kept
+    return e;
   }
 
   // A launcher error that reads like a sentence for people (not a raw exit code or Python error).
@@ -845,6 +853,7 @@
   }
   function fetchFile(file, signal) {
     return request('GET', viewUrl(file), undefined, { timeout: 180000, signal: signal }).then(function (res) {
+      if (res.status === 404) throw LocalAIError('lost', MSG.outputGone, 'HTTP 404 for ' + file.filename);
       if (!res.ok) throw LocalAIError('download', MSG.download, 'HTTP ' + res.status + ' for ' + file.filename);
       return res.blob();
     }).then(function (b) {
@@ -927,6 +936,21 @@
     try { var r = JSON.parse(s); return r && r.v === 1 && r.id ? r : null; } catch (e) { return null; }
   }
   function clearRec(id) { var r = loadRec(); if (!r || !id || r.id === id) lsDel(LS_JOB); }
+  // Ask the launcher to delete the selfie copy and the unlabelled outputs of this job, and ComfyUI to forget its prompts.
+  function cleanupJob(rec, afterMs) {
+    if (!rec || !rec.id || !isLoopbackPage()) return Promise.resolve();
+    var prompts = (rec.promptIds || []).concat(rec.promptId ? [rec.promptId] : []).filter(function (p, i, a) { return p && a.indexOf(p) === i; });
+    var go = function () { return request('POST', ENGINE + '/cleanup', { job: safeJob(rec.id), prompts: prompts }, { timeout: 15000 }).then(function () {}, function () { /* swept at the next engine start */ }); };
+    // after an abort: now, and once more a moment later (the interrupted prompt may still write a file as it stops)
+    return go().then(function () { return afterMs ? delay(afterMs).then(go) : undefined; });
+  }
+  // Forget a job (and delete the engine's files for it). For a record kept with {keep: true} once the page is done.
+  function release(job) {
+    var r = loadRec();
+    if (!r || (job && r.id !== job)) return Promise.resolve(false);
+    clearRec(r.id);
+    return cleanupJob(r).then(function () { return true; });
+  }
 
   function videoPlan(rec) {
     var sing = rec.singing && rec.singing.lipSync;
@@ -1001,7 +1025,8 @@
     var stageList = ['starting'].concat(rec.selfie ? [] : ['upload'], stagesOf(rec), ['download']);
     var weights = {};
     stageList.forEach(function (s) { weights[s] = stageSec(rec, s); });
-    var ctx = makeCtx(stageList, weights, onProgress, signal);
+    var reached = null; // the last stage reported (an engine that stops after 'starting' stopped in the middle of the video)
+    var ctx = makeCtx(stageList, weights, function (p) { reached = p.stage; p.job = rec.id; safeCall(onProgress, p); }, signal);
     var result = { stillBlob: null, stillUrl: null, video: null, audio: undefined };
     var socket = null;
 
@@ -1016,6 +1041,7 @@
         var reuse = !!state && state !== 'lost';   // still queued/running/finished in ComfyUI: re-attach to it
         promptId = reuse ? resumeId : uuid();
         rec.stage = stage; rec.promptId = promptId; rec.stageStartedAt = reuse ? (rec.stageStartedAt || t0) : t0;
+        rec.promptIds = (rec.promptIds || []).filter(function (x) { return x !== promptId; }).concat([promptId]);
         saveRec(rec);
         ctx.stage(stage, 0, spec.message);
         var queued = reuse ? Promise.resolve(promptId) : queuePrompt(spec.graph, promptId, rec.clientId, signal);
@@ -1085,14 +1111,21 @@
       result.job = rec.id;
       if (!result.audio) delete result.audio;
       ctx.stage('download', 1, 'Done!');
-      clearRec(rec.id);
+      if (opt.keep) { rec.delivered = true; saveRec(rec); } // kept until release(job)
+      else { clearRec(rec.id); cleanupJob(rec); }
       return result;
     });
 
     return p.then(function (r) { finish(); return r; }, function (e) {
       finish();
-      if (isAbort(e) || (e && /^(failed|oom|missing-model|missing-still|bad-photo|rejected|interrupted|lost|driver)$/.test(e.code))) clearRec(rec.id);
-      if (result.stillUrl && !isAbort(e)) e.stillUrl = result.stillUrl; // let the UI keep the still that did work
+      if (isAbort(e) || (e && !e.engine && /^(failed|oom|missing-model|missing-still|bad-photo|rejected|interrupted|lost|driver)$/.test(e.code))) {
+        clearRec(rec.id);
+        cleanupJob(rec, isAbort(e) ? 3000 : 0); // after an abort, give the interrupted prompt a moment to stop writing
+      }
+      if (e && typeof e === 'object' && !isAbort(e)) {
+        if (result.stillUrl) e.stillUrl = result.stillUrl; // let the UI keep the still that did work
+        if (!e.stage) e.stage = reached;                     // where it stopped ('starting' = the engine never got going)
+      }
       throw e;
     });
     function finish() { if (socket) socket.close(); if (active === token) active = null; }
@@ -1135,33 +1168,38 @@
       };
       if (!rec.prompts.still) throw LocalAIError('bad-request', 'A scene description is needed.', 'opts.stillPrompt is empty');
       if (!rec.prompts.motion) rec.prompts.motion = 'The person dances happily toward the camera, smiling, natural motion, handheld smartphone video.';
-      return runJob(rec, onProgress, signal, { photo: opts.photo });
+      return runJob(rec, onProgress, signal, { photo: opts.photo, keep: !!opts.keep });
     });
   }
 
-  // Re-attach to a job that was running when the page was reloaded.
+  // Re-attach to a job that was running when the page was reloaded (or one kept with {keep: true}).
   function resume() {
     var rec = loadRec();
     if (!rec) return Promise.resolve(null);
-    if (now() - (rec.updatedAt || 0) > CFG.maxJobAgeMs) { clearRec(rec.id); return Promise.resolve(null); }
+    if (now() - (rec.updatedAt || 0) > CFG.maxJobAgeMs) { clearRec(rec.id); cleanupJob(rec); return Promise.resolve(null); }
     return detect().then(function (s) {
       if (!s) return null;
       var ready = s.engine.state === 'ready';
-      var st = rec.promptId && ready ? promptState(rec.promptId).catch(function () { return 'unknown'; }) : Promise.resolve(rec.promptId ? (ready ? 'unknown' : 'lost') : 'not-started');
+      // every stage is done: only the outputs are fetched again (they are files on disk, whatever ComfyUI remembers)
+      var made = !!(rec.done && rec.done.video);
+      var st = made ? Promise.resolve('done')
+        : rec.promptId && ready ? promptState(rec.promptId).catch(function () { return 'unknown'; }) : Promise.resolve(rec.promptId ? (ready ? 'unknown' : 'lost') : 'not-started');
       return st.then(function (state) {
         return {
           promptId: rec.promptId, job: rec.id, stage: rec.stage, state: state, startedAt: rec.startedAt, quality: rec.quality,
           singing: !!rec.singing, lipSync: !!(rec.singing && rec.singing.lipSync), seed: rec.seed, stillReady: !!rec.done.still,
+          made: made, delivered: !!rec.delivered,
           canAttach: !!rec.selfie,
           // continue the job: waits for the running prompt, runs what is left, resolves with the same Result as generate()
+          // (o.keep: keep the record until release(job), as with generate)
           attach: function (onProgress, o) {
             var cur = loadRec();
             if (!cur || cur.id !== rec.id) return Promise.reject(LocalAIError('lost', MSG.lost, 'job record gone'));
-            if (!cur.selfie) { clearRec(cur.id); return Promise.reject(LocalAIError('lost', MSG.lost, 'photo was never uploaded')); }
-            return runJob(cur, onProgress, o && o.signal);
+            if (!cur.selfie) { clearRec(cur.id); cleanupJob(cur); return Promise.reject(LocalAIError('lost', MSG.lost, 'photo was never uploaded')); }
+            return runJob(cur, onProgress, o && o.signal, { keep: !!(o && o.keep) });
           },
-          cancel: function () { var id = rec.promptId; clearRec(rec.id); return id ? interruptPrompt(id).then(function () {}) : Promise.resolve(); },
-          discard: function () { clearRec(rec.id); }
+          cancel: function () { var id = rec.promptId; clearRec(rec.id); var c = id && !made ? interruptPrompt(id) : Promise.resolve(); return c.then(function () { cleanupJob(rec, id && !made ? 3000 : 0); }); },
+          discard: function () { clearRec(rec.id); cleanupJob(rec); }
         };
       });
     });
@@ -1297,6 +1335,7 @@
     estimate: estimate,
     generate: generate,
     resume: resume,
+    release: release,
     warmup: warmup,
     graphs: graphs,
     diskNeededGB: diskNeededGB,

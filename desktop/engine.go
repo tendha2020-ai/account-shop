@@ -8,6 +8,7 @@ package main
 //	POST /__glow/engine/cancel    -> 200 (partial downloads are kept)
 //	POST /__glow/engine/start     -> 202 (ComfyUI headless, "starting" -> "ready")
 //	POST /__glow/engine/stop      -> 200
+//	POST /__glow/engine/cleanup   {"job":"<id>","prompts":[...]} -> 200 (deletes that video's selfie + raw outputs, see cleanup.go)
 //	ANY  /__glow/comfy/<path>     -> reverse proxy to ComfyUI (see proxy.go)
 //
 // Test hooks (environment variables; see engine_test.go and test.sh):
@@ -825,6 +826,7 @@ func (e *Engine) apiHandler() http.Handler {
 		}
 		post := map[string]func(http.ResponseWriter, *http.Request){
 			"install": e.handleInstall, "cancel": e.handleCancel, "start": e.handleStart, "stop": e.handleStop,
+			"cleanup": e.handleCleanup,
 		}
 		h, ok := post[name]
 		if !ok {

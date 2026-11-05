@@ -4,6 +4,8 @@
  * In the Windows app: 1 Check this PC -> 2 Choose packs -> 3 Install (progress, cancel/resume, survives reload)
  *                     -> 4 Start engine (+ optional warm-up test) -> 5 Ready -> back to AI Scenes.
  * The view is derived from the launcher's status (polled), plus a few local choices.
+ * AI Scenes can open it for a purpose: engine.html?add=singing (the pack chooser with the Singing add-on ticked) or
+ * engine.html?repair=1 (a "Repair free AI" card with "Check & repair files" first).
  */
 (function () {
   'use strict';
@@ -71,6 +73,14 @@
   /* ---------------- state ---------------- */
   var S = null;                 // last launcher status (null on the website)
   var prefs = lsJSON(PREF_KEY) || {};
+  // What AI Scenes sent the user here for (read once; dropped from the address so a reload starts normally).
+  var INTENT = (function () {
+    var q = '';
+    try { q = location.search || ''; } catch (e) { q = ''; }
+    var it = /[?&]add=singing\b/.test(q) ? 'singing' : /[?&]repair=1\b/.test(q) ? 'repair' : null;
+    if (it) { try { history.replaceState(null, '', location.pathname + location.hash); } catch (e) { /* ignore */ } }
+    return it;
+  })();
   var ui = {
     view: null, shape: null,
     passedCheck: false,         // pressed Continue on step 1
@@ -84,8 +94,10 @@
     connecting: false,          // in the app, but the launcher did not answer yet (retrying)
     offline: 0, startingSince: 0,
     warm: { state: 'idle' }, warmCtl: null,
-    speeds: [], sysRamGB: null
+    speeds: [], sysRamGB: null,
+    intent: INTENT              // 'singing' | 'repair' | null (see INTENT)
   };
+  if (INTENT === 'singing' && ui.sel.indexOf('singing') < 0) ui.sel.push('singing');
   function installed(id) { return !!(S && S.packs && S.packs[id] && S.packs[id].installed); }
   function packInfo(id) {
     var p = L.packs.filter(function (x) { return x.id === id; })[0] || {}, sp = S && S.packs && S.packs[id];
@@ -103,12 +115,18 @@
     var job = S.job;
     if (job && job.state === 'running') return 'install';
     if (ui.force) return ui.force;
+    if (ui.intent === 'repair') return 'repair';
     if (job && (job.state === 'cancelled' || job.state === 'error') && !ui.dismissJob) return 'install';
     if (!installed('core')) return ui.passedCheck ? 'packs' : 'check';
     if (S.engine.state === 'ready' && (ui.finished || !ui.engineStep)) return 'ready';
     return 'engine';
   }
   var STEP_OF = { check: 1, packs: 2, install: 3, engine: 4, ready: 5 };
+  function osInfo() {
+    var ua = navigator.userAgent || '';
+    var coarse = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+    return { windows: /Windows/i.test(ua) && !/Windows Phone/i.test(ua), touch: coarse || /Android|iPhone|iPad|Mobile/i.test(ua) };
+  }
 
   /* ---------------- views ---------------- */
   function pcChecks() {
@@ -154,7 +172,7 @@
     return { rows: rows, verdict: verdict, blocker: blocker, driverBad: driverBad, pending: pending };
   }
 
-  function driverLink(cls) { return '<a class="eg-btn ' + (cls || 'glass') + '" href="' + esc(L.driverUrl) + '" target="_blank" rel="noopener">Update NVIDIA driver' + ICON.ext + '<span class="eg-live">(opens NVIDIA’s website)</span></a>'; }
+  function driverLink(cls, primary) { return '<a class="eg-btn ' + (cls || 'glass') + '" href="' + esc(L.driverUrl) + '" target="_blank" rel="noopener"' + (primary ? ' data-primary' : '') + '>Update NVIDIA driver' + ICON.ext + '<span class="eg-live">(opens NVIDIA’s website)</span></a>'; }
 
   function vConnecting() {
     return {
@@ -165,8 +183,14 @@
   }
 
   function vWebsite() {
+    var os = osInfo(), onPC = os.windows && !os.touch;
+    var core = L.diskNeededGB(['core'], null), all = L.diskNeededGB(L.packs.map(function (p) { return p.id; }), null);
+    var dl = '<a class="eg-btn ' + (onPC ? 'primary big wide' : 'text') + '" href="../downloads/GlowStudio.exe" download' + (onPC ? ' data-primary' : '') + '>' + ICON.dl + (onPC ? 'Download Glow Studio for Windows' : 'Download for Windows anyway') + '</a>';
+    // On a phone or a Mac the .exe is no use: the main action is getting this page to the Windows PC.
+    var other = onPC ? '' : '<div class="eg-verdict warn">' + dot('warn', '') + '<div><b>Open this page on your Windows PC</b><p>Free AI runs on a Windows PC with an NVIDIA graphics card. Copy the link and open it there, or send it to yourself.</p></div></div>' +
+      '<div class="eg-actions"><button type="button" class="eg-btn primary" data-act="copyLink" data-primary>' + (ui.copied ? 'Link copied' : 'Copy the link') + '</button>' + dl + '</div>';
     return {
-      shape: 'website', say: '',
+      shape: 'website:' + (onPC ? 1 : 0) + ':' + (ui.copied ? 1 : 0), say: '',
       html: '<section class="eg-card eg-website" aria-labelledby="egH">' +
         '<div class="eg-pc">' + ICON.pc + '</div>' +
         '<h2 id="egH">Free AI needs the Glow Studio app</h2>' +
@@ -174,11 +198,16 @@
         '<ul class="eg-req" aria-label="What you need">' +
         '<li>' + ICON.win + '<span>Windows 10 or 11</span></li>' +
         '<li>' + ICON.gpu + '<span>An NVIDIA RTX graphics card with 8 GB or more (for example RTX 3060, 4060 or 5060)</span></li>' +
-        '<li>' + ICON.disk + '<span>About 120 GB of free space, ideally on an SSD</span></li>' +
+        '<li>' + ICON.disk + '<span>About ' + core + ' GB of free space (' + all + ' GB with all add-ons), ideally on an SSD</span></li>' +
         '<li>' + ICON.ram + '<span>32 GB of memory recommended</span></li>' +
         '</ul>' +
-        '<a class="eg-btn primary big wide" href="../downloads/GlowStudio.exe" download data-primary>' + ICON.dl + 'Download Glow Studio for Windows</a>' +
-        '<p class="eg-note">Free. After installing, open Glow Studio and choose “Free AI on this PC”.</p>' +
+        (onPC ? dl : other) +
+        '<ol class="eg-howto" aria-label="After the download">' +
+        '<li><b>Keep the file.</b> Your browser may say GlowStudio.exe “isn’t commonly downloaded”: choose “Keep” (in Edge: “…”, then “Keep anyway”).</li>' +
+        '<li><b>Open it.</b> Windows may say “Windows protected your PC”, because the app is new and not signed yet: click “More info”, then “Run anyway”. Do this only for the file from this page.</li>' +
+        '<li><b>Choose “Free on this PC”.</b> Glow Studio opens in a window. In AI Scenes, press “Set up free AI”: it checks your PC and downloads the AI once (a few hours).</li>' +
+        '</ol>' +
+        '<p class="eg-note">Free. Nothing to install: after opening, Glow Studio runs from the downloaded file.</p>' +
         '<div class="eg-alt"><p>No NVIDIA card, or not on Windows? You can still make AI scenes online.</p><a class="eg-btn glass" href="./#ai">' + ICON.back + 'Back to AI Scenes</a></div>' +
         '</section>'
     };
@@ -235,10 +264,13 @@
         '<span class="eg-small">Pick a folder on a fast drive (SSD) with lots of free space, for example D:\\GlowStudio. Avoid OneDrive and Program Files.</span><span class="eg-small" data-f="dirWarn"></span>'
       : '<div class="eg-folder-row"><span class="eg-path" data-f="dir">' + esc(S.installDir) + '</span><button type="button" class="eg-btn glass eg-mini" data-act="dirChange">Change</button></div>';
     var back = installed('core') ? 'Back' : 'Back to the PC check';
+    var sing = ui.intent === 'singing' && installed('core') && !installed('singing'), sp = packInfo('singing');
+    var head = sing ? 'Add the Singing add-on' : 'Choose what to install';
+    var intro = sing ? '<p>The Singing add-on writes a short Spanish party song and makes you sing it: ' + (sp.leftGB >= 0.0005 ? 'a <b>' + gb1(sp.leftGB) + '</b> download (' + dlHours(sp.leftGB) + ' on a typical home connection)' : 'its files are already downloaded') + ', then about ' + minRange(estimateFor('singing')) + ' per singing video. It’s ticked below — press the button to start.</p>'
+      : '<p>Start with dance &amp; party scenes. You can add the others now or later.</p>';
     return {
-      shape: 'packs:' + L.packs.map(function (p) { return installed(p.id) ? 1 : 0; }).join('') + ':' + (ui.dirEdit ? 1 : 0) + ':' + (ui.busy || '') + ':' + (ui.err || ''), say: '',
-      html: '<section class="eg-card" aria-labelledby="egH"><p class="eg-kicker">Step 2 of 5</p><h2 id="egH">Choose what to install</h2>' +
-        '<p>Start with dance &amp; party scenes. You can add the others now or later.</p>' +
+      shape: 'packs:' + L.packs.map(function (p) { return installed(p.id) ? 1 : 0; }).join('') + ':' + (ui.dirEdit ? 1 : 0) + ':' + (ui.busy || '') + ':' + (ui.err || '') + ':' + (sing ? 1 : 0), say: sing ? head : '',
+      html: '<section class="eg-card" aria-labelledby="egH"><p class="eg-kicker">' + (sing ? 'Add-on' : 'Step 2 of 5') + '</p><h2 id="egH">' + head + '</h2>' + intro +
         '<fieldset class="eg-packs"><legend>AI packs</legend>' + cards + '</fieldset>' +
         '<div class="eg-sum" data-f="sum"></div>' +
         '<div class="eg-folder"><span>Install folder</span>' + folder + '</div>' +
@@ -322,7 +354,7 @@
       ? '<div class="eg-file" data-f="fileBox"><div class="eg-prog-h"><span data-f="fileName"></span><span data-f="fileTxt"></span></div>' +
         '<div class="eg-bar thin" role="progressbar" aria-label="Current file" aria-valuemin="0" aria-valuemax="100" data-f="fileBar"><i></i></div></div>' +
         '<div class="eg-stats"><span>Speed: <b data-f="speed">—</b></span><span>Time left: <b data-f="eta">working it out…</b></span></div>' +
-        '<p class="eg-note">You can keep using your PC. <b>Closing this window does not stop the download</b>: it keeps going in the background, and Glow Studio closes by itself when it is finished. To stop it, press Cancel. If the internet drops or the PC restarts, it continues where it stopped.</p>'
+        '<p class="eg-note">You can keep using your PC. <b>Closing this window does not stop the download</b>: it keeps going in the background, and Glow Studio closes by itself when it is finished. To stop it, press Cancel. If the internet drops, it carries on by itself. If the PC restarts, open Glow Studio and press “Resume download” — nothing already downloaded is lost.</p>'
       : '';
     var actions = st === 'running'
       ? '<button type="button" class="eg-btn glass" data-act="cancel" data-primary' + (ui.busy ? ' disabled' : '') + '>Cancel</button><span class="eg-small">Cancelling keeps what is already downloaded.</span>'
@@ -401,12 +433,14 @@
     } else if (st === 'error') {
       say = 'The AI engine couldn’t start';
       var x = L.explainEngineError(S);
-      var fix = /Visual C\+\+/.test(x.message) ? '<a class="eg-btn glass" href="' + esc(L.vcRedistUrl) + '" target="_blank" rel="noopener">Get the Microsoft component' + ICON.ext + '</a>' : (/driver/i.test(x.message) ? driverLink() : '');
+      // the real fix comes first (it is what makes "Start again" work), then "Start again"
+      var vc = x.code === 'vcredist' || /Visual C\+\+/.test(x.message), drv = !vc && (x.code === 'driver' || /driver is too old/i.test(x.message));
+      var fix = vc ? '<a class="eg-btn primary" href="' + esc(L.vcRedistUrl) + '" target="_blank" rel="noopener" data-primary>Get the Microsoft component' + ICON.ext + '</a>' : (drv ? driverLink('primary', true) : '');
       body = '<h2 id="egH">The AI engine couldn’t start</h2><p class="eg-err" role="alert">' + esc(x.message) + '</p><p class="eg-note">Open “Details” below to see the engine’s messages.</p>';
-      var repairFirst = /Check & repair/.test(x.message);
+      var repairFirst = !fix && (x.code === 'missing-model' || /Check & repair/.test(x.message));
       var repairBtn = '<button type="button" class="eg-btn ' + (repairFirst ? 'primary' : 'text') + '" data-act="repair"' + (repairFirst ? ' data-primary' : '') + (ui.busy ? ' disabled' : '') + '>Check &amp; repair files</button>';
-      var startBtn = '<button type="button" class="eg-btn ' + (repairFirst ? 'glass' : 'primary') + '" data-act="start"' + (repairFirst ? '' : ' data-primary') + (ui.busy ? ' disabled' : '') + '>' + ICON.play + 'Start again</button>';
-      actions = repairFirst ? repairBtn + startBtn : startBtn + fix + repairBtn;
+      var startBtn = '<button type="button" class="eg-btn ' + (repairFirst || fix ? 'glass' : 'primary') + '" data-act="start"' + (repairFirst || fix ? '' : ' data-primary') + (ui.busy ? ' disabled' : '') + '>' + ICON.play + 'Start again</button>';
+      actions = repairFirst ? repairBtn + startBtn : fix + startBtn + repairBtn;
     } else if (st === 'ready') {
       say = 'The AI engine is running';
       body = '<div class="eg-hl"><span class="eg-dot ok" aria-hidden="true">' + ICON.ok + '</span><h2 id="egH">The AI engine is running</h2></div>' +
@@ -436,6 +470,20 @@
     var m = $('[data-f="warmMsg"]', root); if (m) m.textContent = ui.warm.msg || '';
   }
 
+  // AI Scenes found missing or damaged files ("Check & repair files"): say what happens, the repair button first.
+  function vRepair() {
+    var core = installed('core');
+    return {
+      shape: 'repair:' + (ui.busy || '') + ':' + (ui.err || '') + ':' + (core ? 1 : 0), say: 'Repair free AI',
+      html: '<section class="eg-card" aria-labelledby="egH"><p class="eg-kicker">Repair</p><h2 id="egH">Repair free AI</h2>' +
+        '<p>Glow Studio checks every AI file on this PC and downloads again only what is missing or damaged. Your AI models are kept' +
+        (core ? '' : ', and only the missing files are downloaded') + '. This takes a few minutes (longer if a file has to be downloaded again); the AI engine is stopped while it checks.</p>' +
+        '<p class="eg-err" role="alert">' + esc(ui.err || '') + '</p>' +
+        '<div class="eg-actions"><button type="button" class="eg-btn primary big" data-act="repair" data-primary' + (ui.busy ? ' disabled' : '') + '>' + (ui.busy === 'repair' ? '<span class="eg-spin" aria-hidden="true"></span>' : '') + 'Check &amp; repair files</button>' +
+        '<button type="button" class="eg-btn text" data-act="repairSkip">Not now</button></div></section>'
+    };
+  }
+
   function vReady() {
     var chips = L.packs.map(function (p) { var on = installed(p.id); return '<li class="' + (on ? '' : 'off') + '">' + (on ? ICON.ok : '') + esc(packInfo(p.id).label) + (on ? '' : ' — not installed') + '</li>'; }).join('');
     var missing = L.packs.some(function (p) { return !installed(p.id); });
@@ -458,7 +506,7 @@
     };
   }
 
-  var VIEWS = { connecting: vConnecting, website: vWebsite, check: vCheck, packs: vPacks, install: vInstall, engine: vEngine, ready: vReady };
+  var VIEWS = { connecting: vConnecting, website: vWebsite, check: vCheck, packs: vPacks, install: vInstall, engine: vEngine, ready: vReady, repair: vRepair };
   var UPDATES = { packs: updPacks, install: updInstall, engine: updEngine, ready: updWarm };
 
   /* ---------------- render ---------------- */
@@ -546,6 +594,10 @@
       S = s; ui.offline = 0;
       if (s.engine.state === 'ready' && !wasReady) loadSysRam();
       if (prevJob && prevJob.state === 'running' && s.job && s.job.state === 'done' && s.job.repair) ui.note = 'All AI files were checked and are in order.';
+      else if (prevJob && prevJob.state === 'running' && s.job && s.job.state === 'done' && installed('singing') && (s.job.packs || []).indexOf('singing') >= 0) {
+        ui.note = 'The Singing add-on is installed. Go back to AI Scenes and pick a singing scene.';
+        if (ui.intent === 'singing') ui.intent = null;
+      }
     }, function () { ui.offline++; }).then(function () { inflight = false; render(); });
   }
   function schedule() {
@@ -616,7 +668,13 @@
     repair: function () {
       var packs = L.packs.filter(function (p) { return installed(p.id); }).map(function (p) { return p.id; });
       prefs = { packs: packs, dir: '' }; lsSet(PREF_KEY, prefs);
-      return act('repair', function () { return L.install(packs, undefined, { repair: true }); });
+      return act('repair', function () { return L.install(packs, undefined, { repair: true }).then(function () { ui.intent = null; }); });
+    },
+    repairSkip: function () { ui.intent = null; ui.err = null; render(); },
+    copyLink: function () {
+      var u = location.href.split('#')[0];
+      var done = function () { ui.copied = true; render(); announce('Link copied'); };
+      try { navigator.clipboard.writeText(u).then(done, function () { window.prompt('Copy this link:', u); }); } catch (e) { window.prompt('Copy this link:', u); }
     },
     finish: function () { ui.finished = true; render(); },
     warm: function () {
@@ -664,6 +722,10 @@
     // a reload in the middle of a running install comes straight back to step 3 (derived from status.job)
     // already installed, or set up before and now missing a file (the engine is unpacked): no need to check the PC again
     if (installed('core') || (s.engine && s.engine.comfyVersion)) ui.passedCheck = true;
+    if (ui.intent === 'singing') {
+      if (installed('singing')) { ui.intent = null; ui.note = 'The Singing add-on is already installed. Go back to AI Scenes and pick a singing scene.'; }
+      else if (installed('core') && !(s.job && s.job.state === 'running')) { ui.force = 'packs'; ui.dismissJob = true; }
+    }
     render();
     schedule();
   }

@@ -22,6 +22,7 @@
 <script src="music.js" defer></script>
 <script src="templates.js" defer></script>
 <script src="app.js" defer></script>
+<script src="local-engine.js" defer></script>
 <script src="ai.js" defer></script>
 </head>
 <body data-mode="ai">
@@ -233,7 +234,39 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="3"/><path d="M10.5 9.3v5.4c0 .4.4.6.7.4l4.2-2.7c.3-.2.3-.6 0-.8l-4.2-2.7c-.3-.2-.7 0-.7.4z"/></svg>
         My AI videos <b id="aiMyVidsN">0</b>
       </button>
+      <p class="ai-eng-web" id="aiEngWeb" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16.5V20"/></svg>
+        <span>Free on your own PC? <a href="./engine.html">Get the Windows app</a></span>
+      </p>
     </div>
+
+    <article class="card ai-engine" id="aiEngineCard" hidden>
+      <div class="ai-eng-h">
+        <span class="ai-eng-k" id="aiEngL">AI engine</span>
+        <span class="ai-eng-st" id="aiEngSt"></span>
+      </div>
+      <div class="ai-eng-seg" id="aiEngSeg" role="radiogroup" aria-labelledby="aiEngL">
+        <button type="button" class="ai-eng-opt" role="radio" data-engine="local" aria-checked="true">
+          <span class="ai-eng-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16.5V20"/></svg></span>
+          <span class="ai-eng-t"><b>Free on this PC</b><small id="aiEngLocalS">No account, no fees</small></span>
+          <span class="ai-eng-tag">Free</span>
+        </button>
+        <button type="button" class="ai-eng-opt" role="radio" data-engine="fal" aria-checked="false">
+          <span class="ai-eng-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 18.5h10.5a4 4 0 0 0 .6-7.95A6 6 0 0 0 6.6 9.1 4.7 4.7 0 0 0 7 18.5z"/></svg></span>
+          <span class="ai-eng-t"><b>fal.ai cloud</b><small>Pay per video</small></span>
+        </button>
+      </div>
+      <p class="ai-eng-cmp" id="aiEngCmp"></p>
+      <div class="ai-eng-note" id="aiEngNote" hidden></div>
+      <div class="ai-eng-resume" id="aiEngResume" role="group" aria-labelledby="aiEngResT" hidden>
+        <span class="ai-eng-resico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5.6v12.8c0 .8.9 1.3 1.5.8l10-6.4c.6-.4.6-1.2 0-1.6l-10-6.4C8.9 4.3 8 4.8 8 5.6z"/></svg></span>
+        <span class="ai-eng-rest"><b id="aiEngResT">You were making a video</b><small id="aiEngResS"></small></span>
+        <span class="ai-eng-resb">
+          <button type="button" class="btn primary" id="aiEngContinue">Continue your video</button>
+          <button type="button" class="btn text" id="aiEngDiscard">Discard</button>
+        </span>
+      </div>
+    </article>
 
     <article class="card ai-photo" id="aiPhotoCard">
       <header class="card-h">
@@ -318,9 +351,17 @@
         <div class="tracks ai-tracks" id="aiTracks" role="group" aria-label="Music tracks"></div>
       </div>
       <p class="ai-aisound" id="aiAiNote" hidden></p>
-      <div class="group ai-len">
+      <div class="group ai-len" id="aiLenGroup">
         <span class="glabel" id="aiLenL">Length</span>
         <div class="seg seg-2" id="aiLen" role="group" aria-labelledby="aiLenL"></div>
+      </div>
+      <div class="group ai-len ai-qual" id="aiQualGroup" hidden>
+        <span class="glabel" id="aiQualL">Quality</span>
+        <div class="seg seg-2" id="aiQual" role="group" aria-labelledby="aiQualL">
+          <button type="button" class="opt" data-quality="best" aria-pressed="true"><b>Best</b><small class="ai-len-cost" id="aiQualBest"></small></button>
+          <button type="button" class="opt" data-quality="fast" aria-pressed="false"><b>Fast</b><small class="ai-len-cost" id="aiQualFast"></small></button>
+        </div>
+        <p class="ai-qual-note" id="aiQualNote"></p>
       </div>
       <p class="ai-tier" id="aiTier"></p>
     </article>
@@ -338,7 +379,7 @@
     <footer class="foot ai-foot">
       <p class="foot-note">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 3v5c0 4.6-3 8.6-7 10-4-1.4-7-5.4-7-10V6z"/></svg>
-        <span>Your selfie goes straight from this browser to <a href="https://fal.ai" target="_blank" rel="noopener">fal.ai</a>, using your own key, and nowhere else. Use only your own photo, or one you have permission to use, of an adult. Every video gets a small &ldquo;AI-generated&rdquo; label.</span>
+        <span id="aiFootNote">Your selfie goes straight from this browser to <a href="https://fal.ai" target="_blank" rel="noopener">fal.ai</a>, using your own key, and nowhere else. Use only your own photo, or one you have permission to use, of an adult. Every video gets a small &ldquo;AI-generated&rdquo; label.</span>
       </p>
       <p class="foot-links"><button type="button" class="foot-btn" id="aiFootKey">fal.ai key settings</button><span>&middot;</span><a class="more-apps" href="../">More apps</a><span>&middot;</span><span>No watermark</span></p>
     </footer>
@@ -477,7 +518,7 @@
     </div>
     <ol class="ai-steps" id="aiSteps">
       <li data-step="still" data-state="active"><span class="ai-sn" aria-hidden="true"><i>1</i><svg viewBox="0 0 24 24"><path d="M5.5 12.5l4 4 9-9"/></svg></span><span class="ai-st"><b>Placing you in the scene</b><small id="aiSubStill"></small></span></li>
-      <li data-step="video" data-state="todo"><span class="ai-sn" aria-hidden="true"><i>2</i><svg viewBox="0 0 24 24"><path d="M5.5 12.5l4 4 9-9"/></svg></span><span class="ai-st"><b>Bringing it to life</b><small id="aiSubVideo"></small></span></li>
+      <li data-step="video" data-state="todo"><span class="ai-sn" aria-hidden="true"><i>2</i><svg viewBox="0 0 24 24"><path d="M5.5 12.5l4 4 9-9"/></svg></span><span class="ai-st"><b id="aiVideoName">Bringing it to life</b><small id="aiSubVideo"></small></span></li>
       <li data-step="finish" data-state="todo"><span class="ai-sn" aria-hidden="true"><i>3</i><svg viewBox="0 0 24 24"><path d="M5.5 12.5l4 4 9-9"/></svg></span><span class="ai-st"><b id="aiFinishName">Adding music &amp; finishing</b><small id="aiSubFinish"></small></span></li>
     </ol>
     <p class="ai-msg" id="aiProgMsg"></p>
@@ -487,6 +528,7 @@
       <span class="ai-err-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.4v.1"/></svg></span>
       <b id="aiErrT"></b>
       <p id="aiErrP"></p>
+      <details class="ai-err-det" id="aiErrDet" hidden><summary>Details</summary><pre id="aiErrDetP"></pre></details>
       <div class="ai-err-actions" id="aiErrActions"></div>
     </div>
     <div class="sheet-actions" id="aiProgActions">

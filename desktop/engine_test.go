@@ -1559,6 +1559,83 @@ func TestComfyLifecycleAndProxy(t *testing.T) {
 	}
 }
 
+// Privacy: after a video, the selfie and the unlabelled outputs ComfyUI kept
+// are deleted (and its history entries); old leftovers are swept at start.
+func TestCleanupRemovesJobFiles(t *testing.T) {
+	h := newHarness(t)
+	h.installCore()
+	dir := h.status().InstallDir
+	dirs := glowWorkDirs(dir)
+	for _, d := range dirs {
+		os.MkdirAll(d, 0o755)
+	}
+	put := func(d, name string, age time.Duration) string {
+		p := filepath.Join(d, name)
+		os.WriteFile(p, []byte("x"), 0o644)
+		if age > 0 {
+			old := time.Now().Add(-age)
+			os.Chtimes(p, old, old)
+		}
+		return p
+	}
+	in, out := dirs[0], dirs[1]
+	mine := []string{put(in, "selfie_gjob1.jpg", 0), put(out, "gjob1_still_00001_.png", 0), put(out, "gjob1_clip_00001_.mp4", 0), put(out, "gjob1_song_00001_.mp3", 0)}
+	keep := []string{put(in, "selfie_gjob12.jpg", 0), put(out, "gjob12_still_00001_.png", 0), put(in, "warmup.png", 0)}
+	other := filepath.Join(dir, portableDir, "ComfyUI", "output", "gjob1_still_00001_.png")
+	os.WriteFile(other, []byte("x"), 0o644) // not in the glow subfolder: never touched
+	oldFile := put(out, "gold_clip_00001_.mp4", 48*time.Hour)
+
+	if code, _ := h.do("POST", "/__glow/engine/cleanup", map[string]any{"job": "../x"}, "Origin", h.origin); code != 400 {
+		t.Fatalf("bad job id must be refused, got %d", code)
+	}
+	if code, _ := h.do("POST", "/__glow/engine/cleanup", map[string]any{"job": "gjob1"}, "Origin", "https://evil.example"); code != 403 {
+		t.Fatalf("cross-origin cleanup must be refused, got %d", code)
+	}
+	for _, p := range mine {
+		if !fileExists(p) {
+			t.Fatalf("refused requests must not delete anything (%s)", p)
+		}
+	}
+
+	// The engine starts: files older than a day are swept, new ones kept.
+	h.do("POST", "/__glow/engine/start", nil, "Origin", h.origin)
+	h.waitEngine("ready")
+	waitFor(t, 3*time.Second, func() bool { return !fileExists(oldFile) })
+	for _, p := range append(append([]string{}, mine...), keep...) {
+		if !fileExists(p) {
+			t.Fatalf("the start sweep removed a recent file %s", p)
+		}
+	}
+
+	code, res := h.do("POST", "/__glow/engine/cleanup", map[string]any{"job": "gjob1", "prompts": []string{"aaaa-1", "bad id!", "bbbb-2"}},
+		"Origin", h.origin, "Sec-Fetch-Site", "same-origin", "Content-Type", "application/json")
+	if code != 200 || res["removed"] != float64(4) || res["history"] != true {
+		t.Fatalf("cleanup: %d %v", code, res)
+	}
+	for _, p := range mine {
+		if fileExists(p) {
+			t.Fatalf("%s should be deleted", p)
+		}
+	}
+	for _, p := range append(keep, other) {
+		if !fileExists(p) {
+			t.Fatalf("%s must be kept", p)
+		}
+	}
+	_, hd := h.do("GET", "/__glow/comfy/mock/histdel", nil, "Origin", h.origin)
+	if fmt.Sprint(hd["deleted"]) != "[aaaa-1 bbbb-2]" {
+		t.Fatalf("ComfyUI history delete: %v", hd)
+	}
+	if !strings.Contains(strings.Join(h.status().Engine.Log, "\n"), "removed the AI copies of video gjob1 (4 files)") {
+		t.Fatal("cleanup should be logged")
+	}
+	// Again (nothing left), and with the engine stopped: still fine.
+	h.do("POST", "/__glow/engine/stop", nil)
+	if code, res := h.do("POST", "/__glow/engine/cleanup", map[string]any{"job": "gjob12"}, "Origin", h.origin); code != 200 || res["removed"] != float64(2) {
+		t.Fatalf("cleanup with the engine stopped: %d %v", code, res)
+	}
+}
+
 func TestComfyStartFailure(t *testing.T) {
 	h := newHarness(t)
 	h.installCore()
@@ -1745,6 +1822,24 @@ func runMockComfy() {
 		fmt.Println("torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 2.00 GiB")
 		fmt.Fprint(w, `{}`)
 		go func() { time.Sleep(50 * time.Millisecond); os.Exit(1) }()
+	})
+	var histDeleted []string
+	mux.HandleFunc("/history", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Delete []string `json:"delete"`
+		}
+		if r.Method == http.MethodPost {
+			json.NewDecoder(r.Body).Decode(&body)
+			mu.Lock()
+			histDeleted = append(histDeleted, body.Delete...)
+			mu.Unlock()
+		}
+		fmt.Fprint(w, `{}`)
+	})
+	mux.HandleFunc("/mock/histdel", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		json.NewEncoder(w).Encode(map[string]any{"deleted": histDeleted})
 	})
 	mux.HandleFunc("/mock/headers", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"origin": r.Header.Get("Origin"), "host": r.Host, "path": r.URL.Path, "query": r.URL.RawQuery})

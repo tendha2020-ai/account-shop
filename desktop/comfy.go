@@ -217,6 +217,12 @@ func (e *Engine) startEngine() error {
 	}
 	pw.Close() // the child has its own copy
 	afterStart(cmd)
+	// Privacy: selfies and unlabelled outputs a closed page could not clean up.
+	go func(dir string) {
+		if n := sweepOldFiles(dir, sweepAge); n > 0 {
+			e.logs.addf("[launcher] removed %d old AI copies of selfies and videos", n)
+		}
+	}(e.installDir)
 	p := &comfyProc{cmd: cmd, port: port, done: make(chan struct{})}
 	e.proc, e.state, e.engErr, e.comfyPort, e.runningVersion, e.dynVRAM = p, "starting", "", port, "", nil
 	e.startedAt, e.qBusy, e.qFailSince = time.Now(), false, time.Time{}
