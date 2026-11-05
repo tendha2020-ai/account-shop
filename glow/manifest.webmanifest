@@ -1,7 +1,7 @@
 {
   "name": "Glow Studio",
   "short_name": "Glow",
-  "description": "Turn photos into beat-synced videos with built-in templates and original music. On-device, no watermark.",
+  "description": "Put yourself in any scene from one selfie with AI Scenes, or turn photos into beat-synced videos with original music. No watermark.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Free AI on this PC · Glow Studio</title>
+<meta name="description" content="Set up free AI videos on your own Windows PC with an NVIDIA RTX graphics card: no account, no fees, your photos stay on your computer.">
+<meta name="theme-color" content="#08060f">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="engine.css">
+<script src="local-engine.js" defer></script>
+<script src="engine-ui.js" defer></script>
+</head>
+<body>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+<a class="eg-skip" href="#egMain">Skip to setup</a>
+
+<header class="eg-top">
+  <a class="eg-brand" href="./" aria-label="Glow Studio home">
+    <svg class="eg-logo" viewBox="0 0 40 40" aria-hidden="true">
+      <defs>
+        <linearGradient id="egLg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#ff4fa3"/><stop offset=".52" stop-color="#9b5cff"/><stop offset="1" stop-color="#22d3ee"/>
+        </linearGradient>
+      </defs>
+      <rect width="40" height="40" rx="12" fill="url(#egLg)"/>
+      <path d="M15.5 13.2v13.6c0 .8.9 1.3 1.6.9l10.6-6.8c.6-.4.6-1.3 0-1.7L17.1 12.3c-.7-.4-1.6.1-1.6.9z" fill="#fff"/>
+      <path d="M30 6.5l1 2.8 2.8 1-2.8 1-1 2.8-1-2.8-2.8-1 2.8-1z" fill="#fff" opacity=".95"/>
+    </svg>
+    <span class="eg-brand-t"><b>Glow <em>Studio</em></b><small>Free AI on this PC</small></span>
+  </a>
+  <a class="eg-back" href="./#ai">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg><span>AI Scenes</span>
+  </a>
+</header>
+
+<main class="eg-main" id="egMain" tabindex="-1">
+  <section class="eg-hero">
+    <p class="eg-eyebrow"><span>Free</span><span>Private</span><span>On your PC</span></p>
+    <h1>Free AI on this PC</h1>
+    <p class="eg-lead">Make AI party videos with your own graphics card. No account, no fees — your photos never leave this computer.</p>
+  </section>
+
+  <ol class="eg-steps" id="egSteps" aria-label="Setup steps" hidden>
+    <li data-step="1"><i>1</i><span>Check</span></li>
+    <li data-step="2"><i>2</i><span>Choose</span></li>
+    <li data-step="3"><i>3</i><span>Install</span></li>
+    <li data-step="4"><i>4</i><span>Start</span></li>
+    <li data-step="5"><i>5</i><span>Ready</span></li>
+  </ol>
+
+  <div class="eg-banner" id="egBanner" role="alert" hidden></div>
+
+  <div class="eg-view" id="egView">
+    <section class="eg-card eg-loading" aria-busy="true">
+      <div class="eg-spin" aria-hidden="true"></div>
+      <h2>Checking this PC…</h2>
+    </section>
+  </div>
+
+  <details class="eg-details" id="egDetails" hidden>
+    <summary>Details</summary>
+    <div class="eg-details-b">
+      <dl class="eg-facts" id="egFacts"></dl>
+      <p class="eg-logh">Engine messages</p>
+      <pre class="eg-log" id="egLog" tabindex="0" aria-label="Engine messages">No messages yet.</pre>
+    </div>
+  </details>
+
+  <p class="eg-live" id="egLive" aria-live="polite" role="status"></p>
+</main>
+
+<footer class="eg-foot">
+  <p>Uses free, open AI models running on your own graphics card. Videos made with AI are labelled as AI-generated.</p>
+</footer>
+<noscript><p class="eg-noscript">This page needs JavaScript turned on.</p></noscript>
+</body>
+</html>

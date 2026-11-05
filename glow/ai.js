@@ -1834,9 +1834,11 @@
     var v = document.createElement('video');
     v.crossOrigin = 'anonymous'; v.playsInline = true; v.setAttribute('playsinline', ''); v.preload = 'auto';
     v.muted = !useAI;
+    v.className = 'ai-pv-src'; v.setAttribute('aria-hidden', 'true');
+    el.pv.appendChild(v); // in the page (invisible) so every browser keeps decoding frames
     v.src = url;
     var cleanup = [];
-    cleanup.push(function () { try { v.pause(); } catch (e) { /* ignore */ } v.removeAttribute('src'); try { v.load(); } catch (e) { /* ignore */ } URL.revokeObjectURL(url); });
+    cleanup.push(function () { try { v.pause(); } catch (e) { /* ignore */ } v.removeAttribute('src'); try { v.load(); } catch (e) { /* ignore */ } if (v.parentNode) v.parentNode.removeChild(v); URL.revokeObjectURL(url); });
     function clean() { cleanup.splice(0).forEach(function (f) { try { f(); } catch (e) { /* ignore */ } }); }
     try {
       await mediaReady(v, 20000);
@@ -1890,7 +1892,7 @@
 
       var thumbBlob = null, t0 = 0;
       var result = await new Promise(function (resolve, reject) {
-        var settled = false, raf = 0, vfc = 0, watchdog = 0, lastT = -1, lastMove = performance.now(), started = false, stopping = false;
+        var settled = false, raf = 0, watchdog = 0, lastT = -1, lastMove = performance.now(), started = false, stopping = false;
         function fail(e) {
           if (settled) return; settled = true; stopLoop();
           try { rec.onstop = null; if (rec.state !== 'inactive') rec.stop(); } catch (x) { /* ignore */ }
@@ -1898,7 +1900,6 @@
         }
         function stopLoop() {
           cancelAnimationFrame(raf); clearInterval(watchdog);
-          if (vfc && v.cancelVideoFrameCallback) { try { v.cancelVideoFrameCallback(vfc); } catch (e) { /* ignore */ } }
           document.removeEventListener('visibilitychange', onVis);
         }
         function onVis() { if (document.hidden && !stopping) fail(finErr('hidden')); }
@@ -1916,10 +1917,8 @@
           }
           schedule();
         }
-        function schedule() {
-          if (v.requestVideoFrameCallback) vfc = v.requestVideoFrameCallback(frame);
-          else raf = requestAnimationFrame(frame);
-        }
+        // Draw on every display frame (the canvas stream samples at 30 fps); this works in every browser.
+        function schedule() { raf = requestAnimationFrame(frame); }
         function finish() {
           if (settled || stopping) return;
           stopping = true;
@@ -1983,7 +1982,7 @@
     setStep('finish', 'done', 'Done');
     UI.finishFrac = 1; tick();
     var item = {
-      id: job.id, createdAt: Date.now(), sceneId: sc.id, sceneName: sc.name, sound: job.sound, trackId: job.sound === 'music' ? job.trackId : null,
+      id: job.id, createdAt: Date.now(), sceneId: sc.id, sceneName: sc.name, sound: job.sound, trackId: job.sound === 'music' && fin.labelled ? job.trackId : null,
       duration: fin.duration || job.duration, width: fin.width || (job.videoMeta && job.videoMeta.w) || null, height: fin.height || (job.videoMeta && job.videoMeta.h) || null,
       type: fin.type || (fin.blob && fin.blob.type) || (job.videoMeta && job.videoMeta.type) || 'video/mp4',
       size: fin.blob ? fin.blob.size : 0, blob: fin.blob || null, thumb: fin.thumb || null,
@@ -2178,7 +2177,7 @@
     if (item.width && item.height) bits.push(item.width + '×' + item.height);
     if (item.size) bits.push(fmtBytes(item.size));
     bits.push(extOf(item.type).toUpperCase());
-    bits.push(item.sound === 'ai' ? 'AI sound' : ((trackById(item.trackId) || {}).name || 'Music'));
+    bits.push(item.sound === 'ai' ? 'AI sound' : ((trackById(item.trackId) || {}).name || (item.labelled ? 'Music' : 'No music added')));
     el.resMeta.textContent = bits.join(' · ');
     el.resNote.hidden = !item.note; el.resNote.textContent = item.note || '';
     var fresh = !!(opts && opts.fresh);

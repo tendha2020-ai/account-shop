@@ -285,6 +285,7 @@ body[data-mode="photo"] .modes-thumb { transform: translateX(100%); }
 .ai-pv-still:not([src]) { display: none; }
 .ai-pv[data-stage="video"] .ai-pv-still.in { animation: aiKen 16s ease-in-out infinite alternate; }
 @keyframes aiKen { from { transform: scale(1); } to { transform: scale(1.09) translateY(-1.5%); } }
+.ai-pv-src { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; pointer-events: none; z-index: 0; }
 .ai-pv-canvas { z-index: 2; opacity: 0; transition: opacity .4s; background: #000; object-fit: contain; }
 .ai-pv.has-video .ai-pv-canvas { opacity: 1; }
 .ai-pv-scan { position: absolute; left: 0; right: 0; top: 0; height: 30%; z-index: 3; pointer-events: none; background: linear-gradient(180deg, transparent, rgba(201, 166, 255, .18) 70%, rgba(255, 255, 255, .55) 99%, transparent); mix-blend-mode: screen; animation: aiScan 2.6s cubic-bezier(.5, 0, .5, 1) infinite; }

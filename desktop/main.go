@@ -1,6 +1,7 @@
 // Glow Studio desktop launcher: serves the bundled web app on 127.0.0.1
 // and opens it in an app window (Edge/Chrome) or the default browser.
-// It quits by itself a few minutes after the app window is closed.
+// It quits by itself a few minutes after the app window is closed, unless the
+// free local AI engine is still busy (install running or ComfyUI rendering).
 package main
 
 import (
@@ -11,8 +12,11 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
+	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -27,17 +31,24 @@ const heartbeat = `<script>(function(){function p(){fetch('/__glow/ping',{cache:
 
 var lastPing atomic.Int64
 
+// onExit is run before the launcher quits (stops the local AI engine).
+var onExit = func() {}
+
 func main() {
 	app, err := fs.Sub(bundle, "glow")
 	if err != nil {
 		fatal("The app files are missing from this program.", err)
 	}
 
-	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", preferredPort))
+	port := preferredPort
+	if v, err := strconv.Atoi(os.Getenv("GLOW_PORT")); err == nil && v > 0 {
+		port = v
+	}
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
 		// Already running? Then just open another window on it.
-		if alreadyRunning(preferredPort) {
-			openApp(fmt.Sprintf("http://127.0.0.1:%d/", preferredPort))
+		if alreadyRunning(port) {
+			openApp(fmt.Sprintf("http://127.0.0.1:%d/", port))
 			return
 		}
 		ln, err = net.Listen("tcp", "127.0.0.1:0")
@@ -51,7 +62,10 @@ func main() {
 	if err != nil {
 		fatal("The app files are missing from this program.", err)
 	}
-	index = bytes.Replace(index, []byte("</body>"), []byte(heartbeat+"</body>"), 1)
+	index = withHeartbeat(index)
+
+	engine := newEngine(ln.Addr().(*net.TCPAddr).Port)
+	onExit = engine.Shutdown
 
 	files := http.FileServer(http.FS(app))
 	mux := http.NewServeMux()
@@ -60,6 +74,16 @@ func main() {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Write([]byte("glow-studio"))
 	})
+	// Free local AI engine (see engine.go and proxy.go). A page using it counts as alive.
+	api, comfy := engine.apiHandler(), engine.proxyHandler()
+	mux.HandleFunc("/__glow/engine/", func(w http.ResponseWriter, r *http.Request) {
+		lastPing.Store(time.Now().UnixNano())
+		api.ServeHTTP(w, r)
+	})
+	mux.HandleFunc("/__glow/comfy/", func(w http.ResponseWriter, r *http.Request) {
+		lastPing.Store(time.Now().UnixNano())
+		comfy.ServeHTTP(w, r)
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-cache")
 		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
@@ -67,25 +91,55 @@ func main() {
 			w.Write(index)
 			return
 		}
+		// Other pages (e.g. engine.html, the AI setup page) get the heartbeat too.
+		if name := strings.TrimPrefix(r.URL.Path, "/"); strings.HasSuffix(name, ".html") && !strings.Contains(name, "/") {
+			if page, err := fs.ReadFile(app, name); err == nil {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.Write(withHeartbeat(page))
+				return
+			}
+		}
 		if strings.HasSuffix(r.URL.Path, ".webmanifest") {
 			w.Header().Set("Content-Type", "application/manifest+json")
 		}
 		files.ServeHTTP(w, r)
 	})
 
+	idle := idleExit
+	if d, err := time.ParseDuration(os.Getenv("GLOW_IDLE_EXIT")); err == nil && d > 0 {
+		idle = d // tests
+	}
+	tick := 10 * time.Second
+	if idle < 30*time.Second {
+		tick = time.Second
+	}
 	lastPing.Store(time.Now().UnixNano())
 	go func() {
-		for range time.Tick(10 * time.Second) {
-			if time.Since(time.Unix(0, lastPing.Load())) > idleExit {
+		for range time.Tick(tick) {
+			// Keep running while an install or a render is in progress, even if
+			// the window was closed; quit once it is done.
+			if time.Since(time.Unix(0, lastPing.Load())) > idle && !engine.Busy() {
+				onExit()
 				os.Exit(0)
 			}
 		}
+	}()
+	go func() {
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+		<-sig
+		onExit()
+		os.Exit(0)
 	}()
 
 	go openApp(url)
 	if err := http.Serve(ln, mux); err != nil {
 		fatal("Glow Studio's local server stopped.", err)
 	}
+}
+
+func withHeartbeat(page []byte) []byte {
+	return bytes.Replace(page, []byte("</body>"), []byte(heartbeat+"</body>"), 1)
 }
 
 func alreadyRunning(port int) bool {
@@ -101,6 +155,7 @@ func alreadyRunning(port int) bool {
 }
 
 func fatal(msg string, err error) {
+	onExit()
 	showError(msg + "\n\n" + err.Error())
 	os.Exit(1)
 }
