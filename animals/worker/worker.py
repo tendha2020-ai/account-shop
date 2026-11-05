@@ -105,6 +105,7 @@ except Exception as e:
     sing = None
 
 VERSION = '14'  # (Sing)
+BOOT = secrets.token_hex(4)  # this run of the worker (/health): the page tells a rebuilt worker from the one before
 HF_TOKEN = os.environ.get('HF_TOKEN') or None
 ANTICS_KEY = os.environ.get('ANTICS_KEY', '')
 DATASET = os.environ.get('ANTICS_DATASET', '')
@@ -600,7 +601,46 @@ def gpu_stopped():
                        'tag': 'antics-gpu', 'url': 'index.html'})
 
 
-gpu.setup(HF_TOKEN, save=save_gpu, pending=lambda: is_unread('gpu.json'), on_stop=lambda: gpu_stopped())
+# Two workers never share the free time: during Update my worker the old container may still run while this one
+# starts. This worker's id goes to the dataset first (gpu.claim, in load_jobs), and every call reads it back after
+# its in-flight note is saved: a worker that sees a newer id makes no more AI calls (gpu.py, at the top).
+GEN_FILE = 'worker_gen.json'
+
+
+def write_gen(gen_id):
+    """(GPU guard) This worker's id in the dataset. False when it couldn't be saved (then no AI call)."""
+    store = hub
+    if store is None:
+        from huggingface_hub import HfApi
+        store = HfApi(token=HF_TOKEN)
+    try:
+        store.upload_file(path_or_fileobj=json.dumps({'id': gen_id, 'version': VERSION, 'at': time.time()}).encode(),
+                          path_in_repo=GEN_FILE, repo_id=DATASET, repo_type='dataset', commit_message='worker started')
+        return True
+    except Exception as e:
+        log.warning('saving the worker id to the Hub failed: %s', e)
+        return False
+
+
+def read_hub_or_none(name):
+    """A dataset file's text now, None when the Hub says it isn't there; raises when it can't be read."""
+    try:
+        return hub_text(name, tries=1)
+    except Exception as e:
+        if not_in_dataset(e):
+            return None
+        raise
+
+
+def read_gen():
+    """(GPU guard) The worker id in the dataset now (None: none)."""
+    text = read_hub_or_none(GEN_FILE)
+    return None if text is None else str(json.loads(text).get('id') or '') or None
+
+
+gpu.setup(HF_TOKEN, save=save_gpu, pending=lambda: is_unread('gpu.json'), on_stop=lambda: gpu_stopped(),
+          **({'gen_read': read_gen, 'gen_write': write_gen, 'reload': lambda: read_hub_or_none('gpu.json')}
+             if DATASET and HF_TOKEN else {}))
 
 
 def load_plan(text):
@@ -641,6 +681,9 @@ def load_jobs():
             api.create_repo(DATASET, repo_type='dataset', private=True, exist_ok=True)
             names = api.list_repo_files(DATASET, repo_type='dataset')
             hub = api
+            # (GPU guard) this worker's id goes to the dataset BEFORE gpu.json is read; after an earlier worker (its
+            # files are there) no AI call for a few minutes, then gpu.json is read again (gpu.claim)
+            gpu.claim(earlier=any(n not in ('.gitattributes', 'README.md') for n in names))
         except Exception as e:
             # Keep running so the app can tell the user to paste a new key, instead of crashing.
             log.error('the Hugging Face key does not work (%s); saved videos are unavailable', e)
@@ -649,6 +692,7 @@ def load_jobs():
             # isn't there (tried again every minute)
             with unread_lock:
                 unread_maybe.add('gpu.json')
+            gpu.claim(earlier=True)  # (not known: as after an earlier worker; tried again every minute)
             read_hub('gpu.json', gpu.load, tries=1)
         loaders = {'guests.json': load_guests, 'push.json': load_push, 'songs.json': load_songs, 'gpu.json': gpu.load}
         if posting:
@@ -2320,7 +2364,7 @@ def worker_loop(lane):
             continue
         except (QuotaError, BusyError) as e:
             reason = e.reason if isinstance(e, QuotaError) else 'busy'
-            stage = {'quota': 'Out of free AI time today. It will finish by itself.',
+            stage = getattr(e, 'stage', None) or {'quota': 'Out of free AI time today. It will finish by itself.',
                      'stopped': 'AI work is stopped: Hugging Face started charging credits. The owner can tap Resume '
                                 'in Settings.',
                      'unreadable': "Your free AI time can't be checked right now, so no AI work is done. It will "
@@ -2567,7 +2611,7 @@ def health():
     # the quota can't be read: 'key' or 'down', else None), estimated (a free account's ledger), key_refused}; it
     # never waits for Hugging Face (the quota is read in the background, at most every gpu.CACHE seconds).
     g = gpu.view()  # (token_ok: also false once Hugging Face refuses the key for the quota and whoami: revoked)
-    out = {'ok': True, 'version': VERSION, 'storage': bool(hub), 'token': bool(HF_TOKEN),
+    out = {'ok': True, 'version': VERSION, 'boot': BOOT, 'storage': bool(hub), 'token': bool(HF_TOKEN),
            'token_ok': token_ok and not g['key_refused'], 'pc': pc_online(), 'pc_name': pc['name'],
            'features': features(), 'gpu': g}
     if sing:  # (Sing) the guard, the splits, the engines' test results, whether the PC can sing
@@ -3411,13 +3455,14 @@ def add_song(file: UploadFile = File(...), name: str = Form(''), x_antics_key: s
     finally:
         original.unlink(missing_ok=True)
     found = meme_part(path)
-    known = sing.known_song(audio_seconds(path)) if sing else None  # (Sing) a song antics knows: its meme part
+    given = clean_song_name(name) or clean_song_name(Path(file.filename or '').stem.replace('_', ' '))
+    # (Sing) a song antics knows (its name and its length both match): its meme part
+    known = sing.known_song(audio_seconds(path), given) if sing and given else None
     if known:  # (first, before the finder's other picks)
         others = [c for c in found.get('candidates') or [] if abs(float(c.get('start') or 0) - known['meme']) > 1.0]
         found = dict(found, start=known['meme'], how='known song',
                      candidates=[{'start': known['meme'], 'why': 'chorus'}] + others)
-    title = (clean_song_name(name) or clean_song_name(Path(file.filename or '').stem.replace('_', ' '))
-             or (known or {}).get('name') or 'My song')
+    title = given or 'My song'
     song = {'id': song_id, 'name': title, 'start': float(found['start']), 'seconds_hint': found.get('seconds') or 15.0,
             'default': False, 'added': time.time(), 'candidates': found.get('candidates') or [],
             'duration': audio_seconds(path)}

@@ -86,7 +86,8 @@ const state = {
   part: 'auto',
   seconds: 5,
   speed: 'normal',
-  setupMode: 'setup', // or 'update': send the newest worker files to the Space (made again only if its own key broke)
+  setupMode: 'setup', // or 'update': send the newest worker files to the Space (made again only if its own key broke);
+  // 'rebuild': the worker is up to date but an optional part of its build failed: Hugging Face builds it again
   brand: true,
   songStart: 0, // seconds into the song, when Song part is "Pick myself"
   songDuration: 0,
@@ -438,7 +439,9 @@ function randomKey() {
 }
 
 async function setupWorker() {
-  const updating = state.setupMode === 'update' && Boolean(state.worker);
+  const rebuilding = state.setupMode === 'rebuild' && Boolean(state.worker);
+  const updating = (state.setupMode === 'update' || rebuilding) && Boolean(state.worker);
+  const before = state.health; // (the worker that answers now: an update is done only once ANOTHER run answers)
   const token = $('#token').value.trim();
   const msg = $('#setupNote');
   if (!/^hf_[A-Za-z0-9]{20,}$/.test(token)) {
@@ -487,6 +490,8 @@ async function setupWorker() {
     // Every worker file is read first, so a file the site can't serve stops the setup before anything
     // on Hugging Face is touched.
     const summary = updating ? 'Update the Animal Antics worker' : 'Set up the Animal Antics worker';
+    // (a factory rebuild, or an older worker: this version's big image is built from scratch there)
+    const fresh = rebuilding || !before || before.version !== WORKER_VERSION;
     const lines = [{ key: 'header', value: { summary, description: '' } }];
     for (const name of WORKER_FILES) {
       const res = await fetch(`worker/${name}`, { cache: 'no-store' });
@@ -530,33 +535,50 @@ async function setupWorker() {
       if (!created.ok) throw new Error(await hfError(created));
     }
 
-    const commit = await hf(`/api/spaces/${space}/commit/main`, token, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-ndjson' },
-      body: lines.map((l) => JSON.stringify(l)).join('\n'),
-    });
-    if (!commit.ok) throw new Error(await hfError(commit));
+    if (rebuilding && inPlace) {
+      // Up to date, but a part of the build (an optional step: the singing part) didn't install: the same files,
+      // built again from scratch. Sending them again would change nothing, so nothing would be built.
+      const restart = await hf(`/api/spaces/${space}/restart?factory=true`, token, { method: 'POST' });
+      if (!restart.ok) throw new Error(await hfError(restart));
+    } else {
+      const commit = await hf(`/api/spaces/${space}/commit/main`, token, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-ndjson' },
+        body: lines.map((l) => JSON.stringify(l)).join('\n'),
+      });
+      if (!commit.ok) throw new Error(await hfError(commit));
+    }
     step('create', 'done');
 
     step('build', 'active');
     $('#token').value = '';
-    // After an update in place the old worker keeps answering until the new one is built.
-    const url = await waitForBuild(space, inPlace ? { version: WORKER_VERSION, token } : {});
+    // After an update in place the old worker keeps answering until the new one is built: only a worker on the new
+    // version that is ANOTHER run than the one before (its boot) is the new one.
+    const url = await waitForBuild(space, inPlace ? {
+      version: WORKER_VERSION, token, boot: (before && before.boot) || null, kicked: rebuilding, fresh,
+    } : { fresh: true });
     const changed = !state.worker || state.worker.url !== url || state.worker.key !== key;
     state.worker = { space, url, key };
     save(KEYS.worker, state.worker);
     if (changed) resetPings(); // a new worker: its own notifications
     renderConnect();
     await waitForHealth();
-    refreshHealth();
+    await refreshHealth();
     step('build', 'done');
     step('ready', 'done');
     state.setupMode = 'setup';
     renderWorkerDot(true);
-    note(msg, updating ? 'Updated. All the new options work now.' : 'All set. You can make videos now.', 'good');
-    toast(updating ? 'Worker updated' : 'Worker ready');
+    // (Sing) the singing part is an optional step of the build: say so when it didn't install this time either
+    const singMissing = Boolean(state.health && state.health.version === WORKER_VERSION && state.health.sing
+      && !state.health.sing.ready);
+    if (updating && singMissing) {
+      note(msg, `${rebuilding ? 'Rebuilt' : 'Updated'}, but the singing part of your worker didn't install. Everything else works. Tap Rebuild my worker on Sing to try once more, or open huggingface.co/spaces/${space} to see its build log.`, 'bad');
+    } else {
+      note(msg, rebuilding ? 'Rebuilt. Singing works now.' : updating ? 'Updated. All the new options work now.' : 'All set. You can make videos now.', 'good');
+    }
+    toast(rebuilding ? 'Worker rebuilt' : updating ? 'Worker updated' : 'Worker ready');
     refreshJobs();
-    if (updating) setTimeout(() => closeDialog($('#settings')), 1500);
+    if (updating && !singMissing) setTimeout(() => closeDialog($('#settings')), 1500);
     if (state.pending) {
       const pending = state.pending;
       state.pending = null;
@@ -590,13 +612,16 @@ async function healthOf(url) {
 }
 
 // Polls the Space until Docker has built it. Returns its web address. With a version (an update in
-// place), it also waits until the worker itself answers with that version.
-async function waitForBuild(space, { version = null, token = null } = {}) {
+// place), it also waits until the worker itself answers with that version, and (boot: the run that answered
+// before) is another run than the one before: a worker already on that version must really be built again.
+// The worker with Sing is a big image (about 5 GB): its first build takes 10–20 min on Hugging Face.
+const BUILD_LIMIT = 45 * 60 * 1000; // (then it gives up: "taking too long")
+async function waitForBuild(space, { version = null, token = null, boot = null, kicked = false, fresh = true } = {}) {
   const started = Date.now();
   let errors = 0;
   let building = false;
-  let kicked = false;
-  while (Date.now() - started < 15 * 60 * 1000) {
+  const usual = fresh ? 'usually 10–20 min the first time' : 'usually 2–10 min';
+  while (Date.now() - started < BUILD_LIMIT) {
     await sleep(6000);
     let rt;
     try {
@@ -609,9 +634,10 @@ async function waitForBuild(space, { version = null, token = null } = {}) {
     const stage = rt.stage || '';
     if (stage !== 'RUNNING') building = true;
     const mins = Math.floor((Date.now() - started) / 60000);
+    const still = mins >= 20 ? ', still building: it goes on' : '';
     $('#steps [data-step="build"]').textContent = version
-      ? `Building the new version (${mins} min so far, 2–5 min)`
-      : `Building it (${mins} min so far, 2–5 min, only once)`;
+      ? `Building the new version (${mins} min so far, ${usual}${still})`
+      : `Building it (${mins} min so far, ${usual}, only once${still})`;
     // Right after a rebuild the old stage can linger, so only a repeated error after a short wait counts.
     errors = /ERROR/.test(stage) && Date.now() - started > 45000 ? errors + 1 : 0;
     if (errors >= 2) {
@@ -622,10 +648,10 @@ async function waitForBuild(space, { version = null, token = null } = {}) {
       const url = domain ? `https://${domain.domain}` : `https://${space.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase()}.hf.space`;
       if (!version) return url;
       const health = await healthOf(url);
-      if (health && health.version === version) return url;
+      if (health && health.version === version && !(boot && health.boot === boot)) return url;
       // Still the old worker. Hugging Face starts the new build by itself a few seconds after the files
       // arrive; if it hasn't after 3 minutes, ask it to (once).
-      if (!building && !kicked && token && Date.now() - started > 3 * 60 * 1000) {
+      if (!building && !kicked && token && Date.now() - started > 3 * 60 * 1000) { // (the same files: no build)
         kicked = true;
         await hf(`/api/spaces/${space}/restart?factory=true`, token, { method: 'POST' }).catch(() => {});
       }
@@ -3258,8 +3284,10 @@ function showLinked(jobs) {
 
 // ---------- Settings ----------
 
-function openUpdate() {
-  state.setupMode = 'update';
+// mode 'rebuild' (Sing): the worker is on the newest version, but its singing part didn't install (an optional
+// build step): a factory rebuild, not the same update again. (As a click handler it gets the event: an update.)
+function openUpdate(mode) {
+  state.setupMode = mode === 'rebuild' ? 'rebuild' : 'update';
   state.updateAnyway = false;
   openSettings();
 }
@@ -4497,21 +4525,25 @@ function renderSettings() {
     renderPings();
     return;
   }
-  const updating = state.setupMode === 'update' && Boolean(state.worker);
+  const rebuilding = state.setupMode === 'rebuild' && Boolean(state.worker);
+  const updating = (state.setupMode === 'update' || rebuilding) && Boolean(state.worker);
   const ready = Boolean(state.worker) && !updating;
   $('#setupPane').hidden = ready;
   $('#optionsPane').hidden = !ready;
-  $('#setupTitle').textContent = updating ? 'Update your worker' : 'One-time setup';
+  $('#setupTitle').textContent = rebuilding ? 'Rebuild your worker' : updating ? 'Update your worker' : 'One-time setup';
   const rebuild = updating && keyBroken();
+  const time = state.health && state.health.version === WORKER_VERSION && !rebuilding ? '2–10 min' : 'about 10–20 min the first time';
   $('#setupIntro').textContent = rebuild
-    ? 'Paste a new Hugging Face Write key. Your worker is made again with this key and the newest version (2–5 min). Your videos and connections are kept.'
-    : updating
-      ? 'Paste a Hugging Face Write key. Your worker gets the newest version (2–5 min). Nothing is deleted: your videos and connections stay.'
-      : 'Your videos are made on your own free Hugging Face worker, so it keeps going when your phone is locked.';
-  $('#setupBtn').textContent = updating ? 'Update my worker' : 'Set up my worker';
+    ? `Paste a new Hugging Face Write key. Your worker is made again with this key and the newest version (${time}). Your videos and connections are kept.`
+    : rebuilding
+      ? "Your worker is up to date, but its singing part didn't install. Paste a Hugging Face Write key: Hugging Face builds it again from scratch (about 10–20 min). Nothing is deleted: your videos and connections stay."
+      : updating
+        ? `Paste a Hugging Face Write key. Your worker gets the newest version (${time}). Nothing is deleted: your videos and connections stay.`
+        : 'Your videos are made on your own free Hugging Face worker, so it keeps going when your phone is locked.';
+  $('#setupBtn').textContent = rebuilding ? 'Rebuild my worker' : updating ? 'Update my worker' : 'Set up my worker';
   $('#steps [data-step="create"]').textContent = rebuild ? 'Making your worker again'
-    : updating ? 'Sending the new version' : 'Creating your worker';
-  $('#steps [data-step="build"]').textContent = 'Building it (2–5 min)';
+    : rebuilding ? 'Asking Hugging Face to build it again' : updating ? 'Sending the new version' : 'Creating your worker';
+  $('#steps [data-step="build"]').textContent = `Building it (${updating ? time : 'about 10–20 min'})`;
   if (ready) {
     const link = $('#workerLink');
     link.href = `${HF}/spaces/${state.worker.space}`;

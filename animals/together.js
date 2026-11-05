@@ -645,7 +645,7 @@
   function make() {
     const msg = $('#note');
     if (outdated()) {
-      note(msg, 'Your worker needs an update for Together videos: tap Update my worker (2–5 min, once).', 'bad');
+      note(msg, 'Your worker needs an update for Together videos: tap Update my worker (about 10–20 min, once).', 'bad');
       nudge('#step1');
       return;
     }
@@ -722,7 +722,7 @@
     if (!canDo('together')) await refreshHealth(); // (right after setting up or updating the worker)
     if (!state.health) throw Object.assign(new Error('Your worker is waking up'), { waking: true });
     if (!canDo('together')) {
-      throw new Error('Your worker needs an update for Together videos: tap ⚙, then Update my worker (2–5 min, once).');
+      throw new Error('Your worker needs an update for Together videos: tap ⚙, then Update my worker (about 10–20 min, once).');
     }
     const waiting = [...T.cast]; // a free clip still on its way, or a video still being read
     for (let i = 0; i < waiting.length; i++) {

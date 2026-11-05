@@ -171,6 +171,12 @@
   const allowed = () => Boolean(isGuest() ? ready() : true);
   const on = () => S.on && allowed();
   const outdated = () => known() && !ready();
+  // The worker is on the newest version, but its singing part didn't install (an optional build step failed):
+  // the same update can't fix that, a rebuild from scratch can.
+  const rebuildNeeded = () => outdated() && state.health.version === WORKER_VERSION;
+  const UPDATE_SING = 'Your worker needs an update for Sing videos: tap Update my worker (about 10–20 min, once).';
+  const REBUILD_SING = "Your worker is up to date, but its singing part didn't install. Tap Rebuild my worker: Hugging Face builds it again (about 10–20 min). Your videos stay.";
+  const needText = () => (rebuildNeeded() ? REBUILD_SING : UPDATE_SING);
   const workerTag = () => (state.worker ? `${state.worker.url}|${state.worker.key}` : '');
   const owner = () => Boolean(state.worker) && !isGuest();
 
@@ -416,6 +422,16 @@
   }
 
   const daysText = (d) => (d <= 0 ? '' : `${plural(Math.round(d), 'day')}`);
+  // "today", "tomorrow", "in about 3 days": the same words in step 2's time line and step 4's cost line
+  const readyWhen = (d) => (d <= 1 ? 'today' : d === 2 ? 'tomorrow' : `in about ${daysText(d)}`);
+  // Both (online by day, the PC when it is on): the worker counts it from the two (never slower than either)
+  function bothText(b) {
+    if (b.today) return 'ready today';
+    if (Array.isArray(b.minutes)) return pcText({ minutes: b.minutes });
+    const d = Number(b.days) || 0;
+    const n = Number(b.nights) || 0;
+    return `about ${[d ? plural(d, 'day') : '', n ? plural(n, 'night') : ''].filter(Boolean).join(' + ') || 'a day'}`;
+  }
 
   // The time line in step 2: the worker's own count for this song, part, singers and PC.
   function timeLines() {
@@ -434,11 +450,7 @@
     }
     if (!isGuest()) {
       if (est.pc) out.push(`Your PC: ${pcText(est.pc)}${est.pc.measured ? '' : ' (estimate until it has sung once)'}`);
-      if (est.both) {
-        const d = Number(est.both.days) || 0;
-        const n = Number(est.both.nights) || 0;
-        out.push(`Both: about ${[d ? plural(d, 'day') : '', n ? plural(n, 'night') : ''].filter(Boolean).join(' + ') || 'a day'}`);
-      }
+      if (est.both) out.push(`Both: ${bothText(est.both)}`);
       if (S.part === 'whole' && (est.pc || est.both)) out.push('Best on your PC or with Both');
     }
     return out;
@@ -455,7 +467,7 @@
     if (engine === 'pc') return 'Your PC sings it when you switch the helper on (no online time except the stage pictures, a few seconds each).';
     if (noGuard()) return NO_GUARD;
     if (engine === 'both' && est && est.both) {
-      return `Online by day, your PC at night: about ${[est.both.days ? plural(est.both.days, 'day') : '', est.both.nights ? plural(est.both.nights, 'night') : ''].filter(Boolean).join(' + ')}. It goes on by itself.`;
+      return `Online by day, your PC at night: ${bothText(est.both)}. It goes on by itself.`;
     }
     if (!est || !est.online) return 'Singing uses your daily GPU time. When it runs out, the video waits and goes on by itself the next day.';
     const o = est.online;
@@ -463,7 +475,7 @@
     if (draftNow()) return `The preview sings the first shot (a few of your ${baseMin()} min). Finish sings the rest.`;
     if (o.today || (Number(o.days) || 0) <= 1) return `Uses about ${used} of your ${baseMin()} min of GPU today (${plural(o.calls || 1, 'singing clip')} + the stage pictures).`;
     const per = o.per_day ? ` It sings about ${plural(o.per_day, 'clip')} a day,` : '';
-    return `More than one day of your singing time.${per} so it's ready in about ${daysText(o.days)}. It goes on by itself; you can close antics.`;
+    return `More than one day of your singing time.${per} so it's ready ${readyWhen(Number(o.days) || 0)}. It goes on by itself; you can close antics.`;
   }
 
   // ---------- The singers ----------
@@ -760,6 +772,7 @@
     const btn = $('#singModeBtn');
     btn.hidden = !allowed();
     $('#singNeed').hidden = !outdated();
+    $('#singNeed').textContent = rebuildNeeded() ? 'Rebuild needed' : 'Update needed';
     if (btn.hidden === false && $('#modeSeg').hidden && allowed()) $('#modeSeg').hidden = false;
     if (s) $('#modeSeg').querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === 'sing')));
     else btn.setAttribute('aria-pressed', 'false');
@@ -777,6 +790,12 @@
     $('#lookLine').hidden = true;
     $('#step1Title').textContent = 'Who sings';
     $('#singUpdate').hidden = !outdated();
+    if (outdated()) {
+      $('#singUpdate span').textContent = rebuildNeeded()
+        ? "Your worker is up to date, but its singing part didn't install. Rebuild it (about 10–20 min): your videos stay."
+        : 'Your worker needs an update for Sing videos (about 10–20 min, once).';
+      $('#singUpdateBtn').textContent = rebuildNeeded() ? 'Rebuild my worker' : 'Update my worker';
+    }
     $('#singWho').hidden = outdated();
     if (outdated()) return;
     if (ready()) {
@@ -1003,7 +1022,7 @@
     } else if (p && p.state === 'failed') {
       text = `Couldn't get ${titleNow()} ready for singing${p.error ? `: ${p.error}` : ''}. Try another song.`;
       bad = true;
-    } else if (p && p.state === 'ready' && p.split === 'quick') {
+    } else if (p && p.state === 'ready' && p.split === 'quick' && canDo('sing_best') && ['queued', 'working'].includes(p.best)) {
       text = 'Ready to sing. A sharper split of the voice is still being made in the background (about 30 min, once).';
     }
     note(songNote, nb(text), bad ? 'bad' : '');
@@ -1354,7 +1373,7 @@
     const out = isGuest() && state.me && state.me.uses_left <= 0;
     if (out) return; // (app.js: "No videos left")
     btn.disabled = false;
-    if (outdated()) btn.textContent = 'Update my worker first';
+    if (outdated()) btn.textContent = rebuildNeeded() ? 'Rebuild my worker first' : 'Update my worker first';
     else if (preparing()) {
       btn.textContent = `Getting ${titleNow()} ready…`;
       btn.disabled = true;
@@ -1386,7 +1405,7 @@
   async function make() {
     const msg = $('#note');
     if (outdated()) {
-      note(msg, 'Your worker needs an update for Sing videos: tap Update my worker (2–5 min, once).', 'bad');
+      note(msg, needText(), 'bad');
       nudge('#step1');
       return;
     }
@@ -1487,7 +1506,7 @@
   async function addSing(form, btn) {
     if (!ready()) await refreshHealth();
     if (!state.health) throw Object.assign(new Error('Your worker is waking up'), { waking: true });
-    if (!ready()) throw new Error('Your worker needs an update for Sing videos: tap ⚙, then Update my worker (2–5 min, once).');
+    if (!ready()) throw new Error(rebuildNeeded() ? REBUILD_SING : 'Your worker needs an update for Sing videos: tap ⚙, then Update my worker (about 10–20 min, once).');
     const waiting = [...S.singers];
     for (let i = 0; i < waiting.length; i++) {
       btn.textContent = `Getting singer ${i + 1} of ${waiting.length}…`;
@@ -2463,11 +2482,6 @@
       if (b) push(b);
     });
     take(String.raw`(?:make|let|have|get)\s+(?:him|her|it|them|both(?:\s+of\s+them)?|the\s+two\s+of\s+them)\s+sing(?:ing)?`, () => { orders.sing = true; });
-    take(String.raw`sing(?:s|ing)?\s+(?:a\s+|the\s+|my\s+)?(?:song|duet)|sing(?:s|ing)?\s+along|(?:a\s+)?(?:karaoke|duet)(?:\s+(?:video|version|song))?|(?:a\s+)?music\s+video|lip[\s-]?sync(?:ing|ed)?|(?:a\s+)?singing\s+video`,
-      (whole) => {
-        orders.sing = true;
-        if (/duet/i.test(whole)) orders.singDuet = true;
-      });
     // "sing Детство", "sings Detstvo": one of My songs right after sing (Cyrillic needs Unicode word edges)
     for (const s of songList()) {
       if (orders.songId && orders.sing) break;
@@ -2481,7 +2495,14 @@
         }
       }
     }
+    // Words that only describe singing ("my cat singing karaoke", "a dog starring in a music video", "a duet") are
+    // Sing orders only once Sing is on (or was asked for above): in One animal mode they stay the video's idea.
     if (!orders.sing && !on()) return;
+    take(String.raw`sing(?:s|ing)?\s+(?:a\s+|the\s+|my\s+)?(?:song|duet)|sing(?:s|ing)?\s+along|(?:a\s+)?(?:karaoke|duet)(?:\s+(?:video|version|song))?|(?:a\s+)?music\s+video|lip[\s-]?sync(?:ing|ed)?|(?:a\s+)?singing\s+video`,
+      (whole) => {
+        orders.sing = true;
+        if (/duet/i.test(whole)) orders.singDuet = true;
+      });
     if (orders.sing) {
       orders.sing = true;
       if (!orders.singAnimals) { // "my cat and my dog ... sing": the animals said, in order
@@ -2592,7 +2613,7 @@
         stopHearing();
       }
     }, true);
-    $('#singUpdateBtn').addEventListener('click', openUpdate);
+    $('#singUpdateBtn').addEventListener('click', () => openUpdate(rebuildNeeded() ? 'rebuild' : 'update'));
     $('#singFile').addEventListener('change', (e) => {
       addFiles(e.target.files);
       e.target.value = '';

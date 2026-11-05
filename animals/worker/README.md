@@ -34,7 +34,10 @@ ZeroGPU use past the daily free time is billed to pre-paid credits by itself, so
 (one at a time) the worker reads your quota (`/api/spaces/zero-gpu/quota`, with your own key). A call goes only if
 what is left covers what the Space books for that picture plus 30 s. If paid seconds ever show up, all AI work stops
 until you tap Resume in Settings; the stop is kept in `gpu.json` in the same private dataset, with a note of the call
-running right now (a worker restarted mid-call waits for it). A call that takes too long, or fails in a way that
+running right now (a worker restarted mid-call waits for it). Two workers never spend the same free time: when Update
+my worker starts the new one while the old container still runs, the new one writes its id to the dataset
+(`worker_gen.json`) before it reads `gpu.json`, makes no AI call for 5 minutes, then reads `gpu.json` again; the old
+one reads that id before each call (after its note is saved) and stops making calls. A call that takes too long, or fails in a way that
 may leave it running in the Space (a slow answer, a proxy error page), is cancelled and stays counted for 30 min, so
 the next engine never runs next to it uncounted. If your key can't read the quota and your account could be charged
 (PRO, Team, Enterprise), the worker makes no AI calls until it can, and Settings says so; a free account goes on with

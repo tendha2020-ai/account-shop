@@ -14,6 +14,14 @@
 #    worker that restarts and finds it (the old one was cut off mid-call: Update my worker, a Space restart) counts
 #    that call as still running: its request stays booked for HOLD, and no call at all goes for START_HOLD (the old
 #    container may still be running for a moment).
+#  - Two workers never spend the same free time (Update my worker in place: the old container can still run while
+#    the new one starts). Each worker writes its own id to the dataset when it starts (claim(), worker_gen.json),
+#    BEFORE it reads gpu.json; before every call a worker saves its in-flight note and only THEN reads that id back:
+#    a worker that sees a newer one makes no more calls and never writes gpu.json to the dataset again. So either
+#    the new worker reads the old one's note, or the old one sees the new id. A start after an earlier worker (also
+#    one of an older version, which doesn't look at the id) makes no call for START_HOLD, then reads gpu.json again
+#    (recheck): what another worker wrote since (a stop, a call in flight, held calls) is counted too, and while
+#    another worker keeps writing, the hold goes on.
 #  - A call never leaves a job behind: wait_job() waits for it, and on a timeout cancels it (a job still queued in the
 #    Space is removed) and keeps the lock until it is closed. Upstream can't be confirmed, so its request stays
 #    booked for HOLD. The same for any error that doesn't say the Space is done with it (only gradio_client's AppError
@@ -32,9 +40,11 @@
 # GPU) isn't ZeroGPU and doesn't come here. Any NEW ZeroGPU call (a new Space, a new feature) must go through
 # gpu_call() with wait_job() too (the worker tests scan every *.py for Space calls outside it).
 
+import collections
 import json
 import logging
 import re
+import secrets
 import threading
 import time
 from datetime import datetime
@@ -56,7 +66,7 @@ BLIND_WAIT = 600  # the quota can't be read on an account that could be charged:
 READ_TRIES, READ_PAUSE = 3, 2.0  # a quota read that failed (not 401/403) is tried again twice, 2 s and 4 s later
 CANCEL_WAIT = 30  # seconds a cancelled job gets to close (the lock is kept meanwhile)
 HOLD = 1800  # a call that may still run upstream (timed out, or cut off by a restart) stays booked this long
-START_HOLD = 300  # a start that finds a call in flight: no call for this long (the old container may still run)
+START_HOLD = 300  # a start after an earlier worker: no call for this long (the old container may still run)
 LEARN_CAP = 2.0  # a Space's refusal or a measured spend raises an engine's request at most this much (until reset)
 KEEP_SPENDS = 5  # measured spends kept per engine (for the logs and tests)
 VERSION = 2  # gpu.json's format
@@ -148,16 +158,141 @@ state = fresh_state()
 _cache = {'at': float('-inf'), 'q': None}  # (at: mono())
 _fail = {'code': None}  # the last quota read that failed: its HTTP status, or 'down'
 _who = {'kind': None, 'at': float('-inf'), 'status': None}  # whoami: 'paid' / 'free' (kept 6 h), its last status
-_start_hold = [0.0]  # no call before this (guard clock): set when a start finds a call in flight
-_hooks = {'token': None, 'save': None, 'pending': None, 'on_stop': None}
+_start_hold = [0.0]  # no call before this (guard clock): set when a start finds a call in flight, or follows a worker
+_hooks = {'token': None, 'save': None, 'pending': None, 'on_stop': None, 'gen_read': None, 'gen_write': None,
+          'reload': None}
 _dirty = [False]  # the last save to the dataset failed: flush() tries again
+# This worker's generation (claim()): its id in the dataset; claimed None: no dataset shared with other workers (no
+# generations), False: not written yet (no call until it is), True: written. replaced: a newer worker started.
+# recheck_at: when gpu.json is read again from the dataset; loaded: the gpu.json text this worker started from.
+_gen = {'id': None, 'claimed': None, 'replaced': False, 'recheck_at': None, 'earlier': False, 'loaded': None}
+_own = collections.deque(maxlen=20)  # the gpu.json texts this worker saved (a recheck tells another worker's apart)
 
 
-def setup(token, save=None, pending=None, on_stop=None):
+def setup(token, save=None, pending=None, on_stop=None, gen_read=None, gen_write=None, reload=None):
     """token: the owner's HF key (never another). save(text, to_hub) -> bool keeps gpu.json (to_hub: also in the
     dataset; False when that failed); pending() is True while gpu.json may hold something that isn't read yet (no
-    GPU call then); on_stop() tells the owner."""
-    _hooks.update(token=token or None, save=save, pending=pending, on_stop=on_stop)
+    GPU call then); on_stop() tells the owner. With a dataset that other workers may share (the worker's own, after
+    an update): gen_write(id) -> bool writes this worker's id there, gen_read() -> the id there now (None: none;
+    raises when it can't be read), reload() -> gpu.json's text there now (None: none; raises when it can't be read)."""
+    _hooks.update(token=token or None, save=save, pending=pending, on_stop=on_stop, gen_read=gen_read,
+                  gen_write=gen_write, reload=reload)
+    _gen.update(id=None, claimed=False if gen_write else None, replaced=False, recheck_at=None, earlier=False,
+                loaded=None)
+
+
+def claim(earlier=True):
+    """At the worker's start, BEFORE it reads gpu.json from the dataset: its own id goes there (worker_gen.json).
+    An older worker that is still running sees it before its next call and makes no more calls (gpu_call reads the
+    id only after its in-flight note is saved, so either this worker reads that note, or that worker sees this id).
+    earlier: the dataset has an earlier worker's files: no call for START_HOLD (an older version that doesn't look
+    at the id may still be finishing one), then gpu.json is read again (recheck). True when the id was written
+    (when it wasn't, no call is made: flush() and the next call try again)."""
+    if not _hooks['gen_write'] or _gen['replaced']:
+        return not _gen['replaced']
+    if _gen['id'] is None:
+        _gen['id'] = f'{int(time.time())}-{secrets.token_hex(6)}'
+    _gen['earlier'] = _gen['earlier'] or bool(earlier)
+    try:
+        ok = _hooks['gen_write'](_gen['id']) is not False
+    except Exception as e:
+        log.warning("GPU guard: this worker's id couldn't be saved to the dataset (%s): no AI call until it is", e)
+        ok = False
+    _gen['claimed'] = ok
+    if ok:
+        t = now()
+        if _gen['earlier']:
+            _start_hold[0] = max(_start_hold[0], t + START_HOLD)
+        _gen['recheck_at'] = t + (START_HOLD if _gen['earlier'] else 0)  # (always read again after the claim)
+        log.info('GPU guard: this worker is %s%s', _gen['id'], f' (no AI call for {START_HOLD} s: the worker before '
+                 'it may still be finishing one)' if _gen['earlier'] else '')
+    return ok
+
+
+def _newest():
+    """True when this worker may use the dataset's gpu.json: no generations here, or the id there is still its own.
+    False when it isn't written yet, can't be read, or a newer worker's id is there (then replaced, for good)."""
+    if _gen['claimed'] is None:
+        return True
+    if _gen['replaced'] or not _gen['claimed']:
+        return False
+    try:
+        got = _hooks['gen_read']()
+    except Exception as e:
+        log.warning("GPU guard: the worker id couldn't be read from the dataset (%s)", e)
+        return False
+    if got == _gen['id']:
+        return True
+    if got is None:  # (gone from the dataset: written again, so a newer worker still sees this one is there)
+        log.warning('GPU guard: the worker id is gone from the dataset: written again')
+        _gen['claimed'] = False
+        return False
+    _gen['replaced'] = True
+    log.error('GPU guard: a newer worker started (%s): this one makes no more AI calls and leaves gpu.json alone', got)
+    return False
+
+
+def merge(text):
+    """gpu.json as another worker left it in the dataset after this one read it: its stop stays, its call in flight
+    and its held calls are counted as still running (held), and a free account's ledger keeps the bigger count."""
+    try:
+        got = json.loads(text)
+        if not isinstance(got, dict):
+            raise ValueError('not an object')
+    except Exception as e:
+        stop(f"another worker's gpu.json could not be read ({e})")
+        return
+    t = now()
+    with _state_lock:
+        if got.get('stopped') and not state['stopped']:
+            state.update(stopped=True, alert='billed', stopped_at=t, why=str(got.get('why') or 'stopped by another worker'))
+            log.error('GPU guard: another worker stopped all AI work (%s)', state['why'])
+        for h in got.get('held') if isinstance(got.get('held'), list) else []:
+            try:
+                h = {'engine': str(h.get('engine') or ''), 'request': float(h['request']), 'until': float(h['until'])}
+            except (AttributeError, KeyError, TypeError, ValueError):
+                continue
+            if h['until'] > t and h not in state['held']:
+                state['held'].append(h)
+        inflight = got.get('inflight')
+        if isinstance(inflight, dict):
+            log.warning('GPU guard: another worker has %s in flight: counted as still running', inflight.get('engine'))
+            state['held'].append({'engine': str(inflight.get('engine') or ''),
+                                  'request': float(inflight.get('request') or 0), 'until': t + HOLD})
+        theirs = got.get('ledger') if isinstance(got.get('ledger'), dict) else {}
+        try:
+            led = state['ledger']
+            if float(theirs.get('used') or 0) > led['used']:
+                led['used'] = float(theirs['used'])
+                if led['start'] is None and theirs.get('start') is not None:
+                    led['start'], led['ends'] = float(theirs['start']), _num(theirs.get('ends'))
+        except (TypeError, ValueError):
+            pass
+    _persist()
+
+
+def _recheck():
+    """gpu.json read again from the dataset after the claim (and the start hold). Nothing new: calls may go. Another
+    worker wrote it since: merged, and no call for another START_HOLD (it may still be running), then again."""
+    if not _hooks['reload']:
+        _gen['recheck_at'] = None
+        return
+    try:
+        text = _hooks['reload']()
+    except Exception as e:
+        raise QuotaError(f"The GPU guard couldn't read its notes from your dataset again ({e})", wait=LOADING_WAIT,
+                         reason='loading', guard=True)
+    if text is None or text == _gen['loaded'] or text in _own:
+        _gen['recheck_at'] = None
+        return
+    log.warning('GPU guard: another worker wrote gpu.json after this one started: merged, waiting %d s more', START_HOLD)
+    merge(text)
+    _gen['loaded'] = text
+    t = now()
+    _start_hold[0] = max(_start_hold[0], t + START_HOLD)
+    _gen['recheck_at'] = t + START_HOLD
+    raise QuotaError('Another worker is still running: this one waits a few minutes before any AI call',
+                     wait=START_HOLD + 5, reason='loading', guard=True)
 
 
 def _num(value, default=None):
@@ -208,6 +343,7 @@ def load(text):
     with _state_lock:
         state.clear()
         state.update(new)
+    _gen['loaded'] = text  # (a recheck tells what another worker wrote since from it)
 
 
 def dump():
@@ -217,22 +353,30 @@ def dump():
 
 def _persist(to_hub=True):
     """gpu.json here, and in the dataset when to_hub: one save at a time, each with the newest state.
-    True when it was saved where it should be."""
+    True when it was saved where it should be. Never to the dataset while this worker isn't the newest one there
+    (_newest: a newer worker's gpu.json is never written over; one that can't be checked is tried again)."""
     if not _hooks['save']:
         return True
     with _save_lock:
         to_hub = to_hub or _dirty[0]
+        blocked = to_hub and not _newest()
+        text = dump()
+        if to_hub and not blocked:
+            _own.append(text)
         try:
-            ok = _hooks['save'](dump(), to_hub) is not False
+            ok = _hooks['save'](text, to_hub and not blocked) is not False and not blocked
         except Exception as e:
             log.warning('saving the GPU guard failed: %s', e)
             ok = False
-        _dirty[0] = to_hub and not ok
+        _dirty[0] = to_hub and not ok and not _gen['replaced']
         return ok
 
 
 def flush():
-    """Tries a failed save to the dataset again (the scheduler calls this every minute)."""
+    """Tries a failed save to the dataset again, and this worker's id when it couldn't be saved at the start (the
+    scheduler calls this every minute)."""
+    if _gen['claimed'] is False and not _gen['replaced']:
+        claim()
     if _dirty[0]:
         _persist()
 
@@ -464,10 +608,18 @@ def _admit(engine, request):
         if state['stopped']:
             raise QuotaError('AI work is stopped: Hugging Face started charging credits. The owner can Resume.',
                              wait=STOPPED_WAIT, reason='stopped', guard=True)
+    if _gen['replaced']:
+        raise QuotaError('A newer worker took over: this one makes no more AI calls', wait=STOPPED_WAIT,
+                         reason='loading', guard=True)
+    if _gen['claimed'] is False and not claim():
+        raise QuotaError("The worker couldn't save its id to your dataset yet, so it makes no AI call",
+                         wait=LOADING_WAIT, reason='loading', guard=True)
     t = now()
     if _start_hold[0] > t:
-        raise QuotaError('The worker restarted during an AI call: it waits a few minutes so that call can end first',
-                         wait=_start_hold[0] - t + 5, reason='loading', guard=True)
+        raise QuotaError('The worker just started: it waits a few minutes so an AI call of the worker before it can '
+                         'end first', wait=_start_hold[0] - t + 5, reason='loading', guard=True)
+    if _gen['recheck_at'] is not None and t >= _gen['recheck_at']:
+        _recheck()  # (raises while another worker is still writing gpu.json)
     want = need(engine, request)
     held, held_until = _held()
     q = _read()
@@ -601,7 +753,19 @@ def gpu_call(engine, request, fn):
         if not _persist(to_hub=True):  # (no note in the dataset: a restart couldn't know about this call)
             with _state_lock:
                 state['inflight'] = None
+            if _gen['replaced']:
+                raise QuotaError('A newer worker took over: this one makes no more AI calls', wait=STOPPED_WAIT,
+                                 reason='loading', guard=True)
             raise QuotaError("The GPU guard couldn't save its note to your dataset", wait=LOADING_WAIT,
+                             reason='saving', guard=True)
+        if not _newest():  # (only AFTER the note is there: a newer worker that started reads it, or is seen here)
+            with _state_lock:
+                state['inflight'] = None
+            _persist(to_hub=not _gen['replaced'])  # (a newer worker's gpu.json is never written over)
+            if _gen['replaced']:
+                raise QuotaError('A newer worker took over: this one makes no more AI calls', wait=STOPPED_WAIT,
+                                 reason='loading', guard=True)
+            raise QuotaError("The GPU guard couldn't check your dataset for a newer worker", wait=LOADING_WAIT,
                              reason='saving', guard=True)
         call = {'engine': engine, 'submitted': False, 'abandoned': False}
         _local.call = call

@@ -37,6 +37,7 @@
 # worker.py calls this module through small hooks marked "(Sing)" and passes itself in as `w`, so this file never
 # imports worker.py and can be tested on its own.
 
+import copy
 import json
 import math
 import os
@@ -105,6 +106,7 @@ IMAGE_SPACE, IMAGE_REQUEST = 'black-forest-labs/FLUX.1-schnell', 120  # a painte
 
 # ---------- the song side ----------
 KNOWN_SONGS = [{'name': 'Rauf & Faik - Детство', 'seconds': 188.41, 'meme': 49.13, 'bpm': 99.4}]  # facts only
+KNOWN_ALSO = {'Rauf & Faik - Детство': ('detstvo',)}  # other spellings of a known song's title (in a file name)
 PARTS = ('meme', 'chorus', 'whole', 'custom')
 MEME_SECONDS, CHORUS_SECONDS = 15.0, 29.0
 TEST_SECONDS = 5.0
@@ -565,13 +567,20 @@ def _plain(text):
 
 
 def known_song(seconds=None, name=None):
-    """A song antics knows the facts of (KNOWN_SONGS), by its length (within 1 s) or its name (the whole name, or
-    its title after ' - ')."""
+    """A song antics knows the facts of (KNOWN_SONGS): its name must match (its title, after ' - ', or another
+    spelling of it, is in the name), and its length too (within 1 s) when the length is given. Never by the length
+    alone: any other song of that length keeps the meme-part finder's own pick."""
+    if not name:
+        return None
+    said = _plain(name)
     for k in KNOWN_SONGS:
-        if seconds is not None and abs(float(seconds) - k['seconds']) <= 1.0:
-            return k
-        if name and _plain(name) in (_plain(k['name']), _plain(k['name'].split(' - ')[-1])):
-            return k
+        titles = {_plain(k['name']), _plain(k['name'].split(' - ')[-1])}
+        titles |= {_plain(x) for x in KNOWN_ALSO.get(k['name'], ())}
+        if not any(t and t in said for t in titles):
+            continue
+        if seconds is not None and abs(float(seconds) - k['seconds']) > 1.0:
+            continue
+        return k
     return None
 
 
@@ -721,7 +730,7 @@ def prepare_song(song_id, engine, out=None, song_path=None, chorus_info=None):
         work.mkdir(parents=True)
         info = beats.analyse(path)
         if chorus_info is None:
-            known = known_song(song.get('duration'))
+            known = known_song(song.get('duration'), song.get('name'))
             start = song.get('start') if song.get('start') is not None else (known or {}).get('meme', 0.0)
             chorus_info = {'start': float(start or 0.0), 'seconds': float(song.get('seconds_hint') or MEME_SECONDS),
                            'bpm': round(float(info['bpm']), 1) if info else None}
@@ -1142,6 +1151,18 @@ def part_range(pack, part, part_from=None, part_to=None, song=None):
     return round(lo, 2), round(hi, 2)
 
 
+def friend_limit(pack, song=None):
+    """The longest part a friend's video may sing: the chorus part (about 29 s). A friend never gets the whole song
+    (also not as a 'custom' part from its start to its end)."""
+    a, b = part_range(pack, 'chorus', song=song)
+    return round(b - a, 2)
+
+
+def friend_part_ok(pack, part, a, b, song=None):
+    """True when a friend may sing [a, b] (custom parts are snapped to lines: 2 s of room)."""
+    return part != 'whole' and (part != 'custom' or b - a <= friend_limit(pack, song) + 2.0)
+
+
 def stretches(pack, a, b, gap=MERGE_GAP):
     """The sung stretches inside [a, b]: the lines, merged when the pause between them is under `gap` s."""
     out = []
@@ -1399,6 +1420,35 @@ def per_day(spend, request, share, base=DAY_BASE):
     return n
 
 
+NIGHT_MIN = 480  # one night on the PC: 8 hours
+
+
+def both_estimate(renders, first, daily, days, pc_minutes):
+    """'Both' (online by day, the PC when it is on): never slower than the faster of the two alone, and nights
+    only when the PC's share needs them. {'days', 'nights', 'minutes', 'today'}: minutes [lo, hi] when the PC alone
+    finishes it in one go (then that is the time); days/nights otherwise."""
+    lo, hi = pc_minutes
+    if renders <= 0 or days == 1:  # (online alone: ready today)
+        return {'days': 1 if renders else 0, 'nights': 0, 'minutes': None, 'today': True}
+    if hi <= NIGHT_MIN:  # (the PC alone, in one evening or night)
+        return {'days': 0, 'nights': 0, 'minutes': [lo, hi], 'today': False}
+    per_night = renders * NIGHT_MIN / float(hi)  # (renders the PC sings in a night, at its slower speed)
+    done, d, n = 0.0, 0, 0
+    while done < renders and d < 60:  # day by day: online first, then the PC that night
+        d += 1
+        done += first if d == 1 else daily
+        if done >= renders:
+            break
+        n += 1
+        done += per_night
+    pc_nights = math.ceil(hi / NIGHT_MIN)
+    if days is not None and days <= max(d, n):  # (online alone is as fast)
+        return {'days': days, 'nights': 0, 'minutes': None, 'today': False}
+    if pc_nights <= max(d, n) and pc_nights < d + (n > 0):  # (the PC alone is faster)
+        return {'days': 0, 'nights': pc_nights, 'minutes': None, 'today': False}
+    return {'days': d, 'nights': n, 'minutes': None, 'today': False}
+
+
 def estimate(pack, part, singers=1, rule='turns', song=None, engine=None, pc_size='sharp'):
     """{'from', 'to', 'seconds', 'sung', 'online': {...}, 'pc': {...}, 'both': {...}} for one part: the calls,
     the quota seconds and the days on the approved online engine (LongCat until one is approved), and the chunks and
@@ -1434,14 +1484,15 @@ def estimate(pack, part, singers=1, rule='turns', song=None, engine=None, pc_siz
     lo, hi = PC_MINUTES['fast' if pc_size == 'fast' else 'sharp']
     if pc_measured:
         lo = hi = round(pc_measured / 60, 1)
+    pc_min = [round(chunks * lo), round(chunks * hi)]
     return {'from': a, 'to': b, 'seconds': round(b - a, 2), 'sung': round(sum(e - s for s, e in st), 1),
             'shots': len(shots),
             'online': {'engine': eng, 'name': ENGINES[eng]['name'], 'calls': renders, 'quota_s': quota_s,
                        'minutes': round(quota_s / 60), 'days': days, 'today': days == 1, 'per_day': daily,
                        'measured': measured, 'pictures': pictures},
-            'pc': {'chunks': chunks, 'minutes': [round(chunks * lo), round(chunks * hi)], 'measured': bool(pc_measured),
-                   'nights': max(1, math.ceil(chunks * hi / 480))},
-            'both': {'days': 1 if renders <= first * 2 else max(1, (days or 2) // 2), 'nights': 1}}
+            'pc': {'chunks': chunks, 'minutes': pc_min, 'measured': bool(pc_measured),
+                   'nights': max(1, math.ceil(pc_min[1] / NIGHT_MIN))},
+            'both': both_estimate(renders, first, daily, days, pc_min)}
 
 
 # ---------- singing one shot (sing_shot) ----------
@@ -1473,7 +1524,8 @@ def engine_args(eid, picture, audio, prompt, seed, seconds):
                 'seed': -1}
     if eid == 'K':
         return {'image': handle_file(str(picture)), 'audio': handle_file(str(audio)), 'prompt': prompt,
-                'seed': int(seed), 'seconds': '5'}
+                'seed': int(seed), 'seconds': 5}  # (an int: the Space's gr.Radio choices are [5, 10]; 5 s is
+    # what its request of 200 books: 2 x GPU_DURATION[5] on xlarge)
     raise ValueError(eid)
 
 
@@ -1627,8 +1679,15 @@ def pc_sing(job, shot, render, picture, audio, seconds, out, seed, mode='solo', 
         pc_task_drop(task)
 
 
+def sung_number(job, shot):
+    """(i, of): this shot's number among the shots that are sung (a cutaway is never sung), as shots_done/total."""
+    sung = [s for s in job.get('shots') or [] if s['kind'] != 'cutaway']
+    i = next((n for n, s in enumerate(sung) if s is shot or s['k'] == shot['k']), len(sung) - 1)
+    return i + 1, len(sung)
+
+
 def pc_busy_text(job, shot):
-    k, total = shot['k'] + 1, len(job.get('shots') or [])
+    k, total = sung_number(job, shot)
     if shot['kind'] == 'duet':
         return f'Your PC is singing shot {k} of {total}, the duet (10-20 min)…'
     return f'Your PC is singing shot {k} of {total} (5-10 min)…'
@@ -1846,8 +1905,8 @@ def sing_shot(job, shot, pack, d):
         eid = job.get('test_engine') if job.get('test') else (job.get('online') or default_engine())
         if eid not in ONLINE + ('L2',):
             raise RuntimeError('No singing engine is approved yet. Make the 5-second test first.')
-        W.update(job, stage=f"Singing shot {shot['k'] + 1} of {len(job['shots'])} "
-                            f"({fmt_t(shot['from'])} → {fmt_t(shot['to'])})… (1-2 min)")
+        i, of = sung_number(job, shot)
+        W.update(job, stage=f"Singing shot {i} of {of} ({fmt_t(shot['from'])} → {fmt_t(shot['to'])})… (1-2 min)")
         audio = track()
         with lock:
             spent0 = float(_ledger_now()['spent'])  # (what this render cost Sing's share: measured by the guard)
@@ -2519,6 +2578,7 @@ def process(job, w):
     """Makes a Sing video (the worker's lanes call this for kind 'sing'): the song's pack (waits for it), the singers,
     the plan, the stage pictures (then the picture check: w.Paused, it carries on by itself after 2 minutes), every
     shot (QuotaError / BusyError: the job waits and carries on by itself; PcWait: it waits for the PC), the join."""
+    recut = not needs_animation(job)  # (the quick lane: a re-cut on the CPU, which never sings)
     if job.get('picture_check'):  # (✓ Sing now, or 2 minutes passed)
         w.update(job, picture_check=False, checked=True)
     if job.get('sing_wait'):  # (it goes on now: what it waited for is set again if it still has to wait)
@@ -2543,6 +2603,9 @@ def process(job, w):
             song = dict(W.songs.get(job.get('song_id')) or {})
         a, b = part_range(pack, 'test' if job.get('test') else job['part'], job.get('ask_from'), job.get('ask_to'),
                           song)
+        if job.get('owner', 'me') != 'me' and not friend_part_ok(pack, job['part'], a, b, song):
+            host = w.host_of(w.guests.get(job.get('owner')) or {})
+            raise RuntimeError(f'Ask {host} for a part longer than {friend_limit(pack, song):.0f} s')
         if sung_in(pack, a, b) < CUTAWAY_BELOW:
             raise RuntimeError('No singing found in this part. Pick another part.')
         w.update(job, part_from=a, part_to=b)
@@ -2565,8 +2628,20 @@ def process(job, w):
     deferred = []
     deadline = float(job.get('pc_deadline') or 0)
     for n, shot in enumerate(todo):
-        if shot.get('done') and all(_have(job, f) for f in shot.get('files') or []):
-            continue
+        if shot.get('done'):
+            try:
+                if all(_have(job, f) for f in shot.get('files') or []):
+                    continue
+            except w.BusyError:  # (the Hub didn't answer for a moment: the job waits, nothing is sung again)
+                w.update(job, sing_wait='busy')
+                raise
+            if recut:  # (gone from the dataset: sung again, but in the AI lane, never from the quick one)
+                log.warning('%s: shot %d is gone from the dataset: sung again in the AI lane', job['id'], shot['k'])
+                reset_shot(shot)
+                w.update(job, shots=job['shots'], status='queued', stage='In line…', progress=0)
+                w.save(job)
+                w.enqueue(job)
+                raise w.Paused()
         shot['done'] = False
         on_pc = any((shot.get('pc_task') or {}).values())  # (a render the PC is singing, or sent meanwhile)
         if shot['kind'] == 'duet' and not on_pc and pc_can_sing() and 'sing_duet' not in (W.pc.get('can') or ()):
@@ -2618,16 +2693,35 @@ def owner_first(job):
                and needs_animation(o) for o in list(W.jobs.values()))
 
 
+HUB_RETRY = 180  # seconds before a job tries again when a saved file couldn't be fetched from the dataset
+
+
 def _have(job, name):
+    """True when the job's file is here (fetched back from the dataset after a restart), False only when the
+    dataset really doesn't have it (then it is made again). Any other error (a 429 or 5xx from the Hub, no network)
+    raises BusyError: the job tries again in a few minutes, and a shot that is already sung is never sung again for
+    it."""
     try:
         return W.local_file(job, name).exists()
-    except Exception:
-        return False
+    except Exception as e:
+        if W.not_in_dataset(e):
+            return False
+        log.warning('%s: %s could not be fetched from the Hub (%s): trying again later', job.get('id'), name, e)
+        err = W.BusyError(f"{name} couldn't be fetched from your dataset right now ({str(e)[:120]})")
+        err.wait_seconds = HUB_RETRY
+        err.stage = "Hugging Face is busy right now (a saved part couldn't be fetched). It goes on by itself."
+        raise err
 
 
 def plan_job(job, pack, keep=None):
     """The job's shot plan (saved before any GPU is used), its sung seconds and its TikTok parts. The first plan
     keeps the song's lines with the job (freeze_lines): a re-plan uses those."""
+    W.update(job, **plan_fields(job, pack, keep))
+    W.save(job)
+
+
+def plan_fields(job, pack, keep=None):
+    """plan_job's fields for this job (nothing is saved: edit() works them out on a copy of the job first)."""
     freeze_lines(job, pack)
     pack = job_pack(job, pack)
     a, b = job['part_from'], job['part_to']
@@ -2646,10 +2740,9 @@ def plan_job(job, pack, keep=None):
                            both=job.get('engine_choice') == 'both', keep=keep,
                            pc_duet=eng == 'P' and n > 1 and pc_duet_ok())
     ranges = split_posts(pack, a, b, lead=lead_seconds(job), outro=outro_seconds(job))  # (the join's own rule)
-    W.update(job, shots=shots, sung_total=sung_in(pack, a, b), plan_engine=eng,
-             posts=[{'n': i + 1, 'from': round(x, 2), 'to': round(y, 2), 'ready': False}
-                    for i, (x, y) in enumerate(ranges)] if not job.get('test') else [])
-    W.save(job)
+    return {'shots': shots, 'sung_total': sung_in(pack, a, b), 'plan_engine': eng,
+            'posts': [{'n': i + 1, 'from': round(x, 2), 'to': round(y, 2), 'ready': False}
+                      for i, (x, y) in enumerate(ranges)] if not job.get('test') else []}
 
 
 def prepare_local(job):
@@ -2832,6 +2925,8 @@ def build_jobs(w, who, f):
                 with w.songs_lock:
                     song = dict(w.songs.get(job['song_id']) or {})
                 a, b = part_range(pack, part, job['ask_from'], job['ask_to'], song)
+                if not owner and not friend_part_ok(pack, part, a, b, song):
+                    raise bad(403, f'Ask {w.host_of(who)} for a part longer than {friend_limit(pack, song):.0f} s')
                 if sung_in(pack, a, b) < CUTAWAY_BELOW:
                     raise bad(400, 'No singing found in this part. Pick another part.')
                 job.update(part_from=a, part_to=b)
@@ -3024,7 +3119,8 @@ def edit(w, job, who, f):
     sung from the original vocal), title, ending, opening, name tag, beat zooms, a part inside the one sung.
     New singing: who sings a line, a part that needs new shots, ↻ one shot (redo), a shot's angle, ↻ the pictures,
     the look, one shot / music video. Shots already sung stay wherever their times still match. A friend's edit
-    that sings again counts toward their redos."""
+    that goes back to the AI (a sung shot thrown away, new stage pictures) counts toward their redos. The edit is
+    worked out on a copy of the job: one that is refused (400/403) leaves the video exactly as it was."""
     with w.jobs_lock:
         if job['status'] == 'working':
             raise w.HTTPException(409, 'Still working on this one. Edit it when it is ready.')
@@ -3033,31 +3129,35 @@ def edit(w, job, who, f):
     pack, _ = pack_of(job)
     if pack is None or not job.get('shots'):
         raise w.HTTPException(409, 'Wait for the first version, then edit it.')
-    old = [dict(s) for s in job['shots']]
-    lost_before = {s['k'] for s in old if s.get('done')}
+    with w.jobs_lock:
+        new = copy.deepcopy(job)  # (the edit itself: only copied into the job once it is allowed)
+    old = copy.deepcopy(new['shots'])
+    old_angles = dict(new.get('angles') or {})
     changed = {}
     if f.get('voices') is not None:
-        changed['voices'] = read_voices(f['voices'], len(job['singers']))
+        changed['voices'] = read_voices(f['voices'], len(new['singers']))
     for key in ('opening', 'outro', 'brand', 'title_on', 'beat_zooms'):
         if f.get(key) is not None:
             changed[key] = _bool(f[key])
     replan = False
-    if f.get('who') is not None and len(job['singers']) > 1:
+    if f.get('who') is not None and len(new['singers']) > 1:
         new_who = read_who(f['who'], pack)
-        if new_who != job.get('who'):
+        if new_who != new.get('who'):
             changed['who'], replan = new_who, True
-    if f.get('shots') in ('cuts', 'one') and f['shots'] != job.get('shots_mode'):
+    if f.get('shots') in ('cuts', 'one') and f['shots'] != new.get('shots_mode'):
         changed['shots_mode'], replan = f['shots'], True
     if f.get('part') in PARTS or f.get('part_from') is not None:
         part = f.get('part') if f.get('part') in PARTS else 'custom'
         if part == 'whole' and who is not w.OWNER:
             raise w.HTTPException(403, f'Ask {w.host_of(who)} for a whole song')
         with w.songs_lock:
-            song = dict(w.songs.get(job.get('song_id')) or {})
+            song = dict(w.songs.get(new.get('song_id')) or {})
         a, b = part_range(pack, part, _num(f.get('part_from')), _num(f.get('part_to')), song)
+        if who is not w.OWNER and not friend_part_ok(pack, part, a, b, song):
+            raise w.HTTPException(403, f'Ask {w.host_of(who)} for a part longer than {friend_limit(pack, song):.0f} s')
         if sung_in(pack, a, b) < CUTAWAY_BELOW:
             raise w.HTTPException(400, 'No singing found in this part. Pick another part.')
-        if (a, b) != (job['part_from'], job['part_to']):
+        if (a, b) != (new['part_from'], new['part_to']):
             changed.update(part=part, part_from=a, part_to=b)
             replan = True
     redo = {int(n) for n in re.findall(r'\d+', str(f.get('redo') or ''))}
@@ -3068,40 +3168,50 @@ def edit(w, job, who, f):
         except (ValueError, AttributeError):
             raise w.HTTPException(400, "Couldn't read the new angles")
     repicture = f.get('repicture')
-    new_look = f.get('look') if f.get('look') in LOOKS and f.get('look') != job.get('look') else None
-    job.update(changed)
-    angles = dict(job.get('angles') or {})
+    new_look = f.get('look') if f.get('look') in LOOKS and f.get('look') != new.get('look') else None
+    new.update(changed)
+    angles = dict(old_angles)
     if new_look:
-        job['look'] = new_look
+        new['look'] = new_look
         angles = {}
     elif repicture:
         names = [x for x in re.split(r'[,\s]+', str(repicture)) if x in angles] if repicture not in (True, 'true', '1',
                                                                                                       'all') else []
         for name in names or list(angles):
             angles.pop(name, None)
-    job['angles'] = angles
+    new['angles'] = angles
     if replan:
-        plan_job(job, pack, keep=old)
-    for s in job['shots']:
+        new.update(plan_fields(new, pack, keep=old))
+    for s in new['shots']:
         k = s['k']
-        if k in angles_in and s['kind'] == 'sing' and len(job['singers']) == 1 and angles_in[k] != s['angle']:
+        if k in angles_in and s['kind'] == 'sing' and len(new['singers']) == 1 and angles_in[k] != s['angle']:
             reset_shot(s, angle=angles_in[k])
         if k in redo and s['kind'] != 'cutaway':
             reset_shot(s)
         if s['kind'] != 'cutaway' and any(a_ not in angles for a_ in (s.get('angles') or [] if s['kind'] == 'split'
                                                                         else [s['angle']])):
             reset_shot(s)
-    lost = lost_before - {s['k'] for s in job['shots'] if s.get('done')}
-    if who is not w.OWNER and (lost or not angles and job.get('angles')):
-        if job.get('redos', 0) >= w.GUEST_REDOS:
-            raise w.HTTPException(403, f'This video used its {w.GUEST_REDOS} new singings. Change its voices or title, '
-                                       'or make a new video.')
-    if lost or new_look or (repicture and not angles):
-        job['redos'] = job.get('redos', 0) + 1
-    if new_look or repicture:
-        job['checked'] = False
-    job['label'] = job_label(job)
-    job.update(status='queued', stage='In line…', error='', retry_at=None, progress=0)
+    # What goes back to the AI: a sung render thrown away, a stage picture dropped, or one the new plan needs that
+    # the video didn't need before. (Compared with the job as it was, never with the edit's own copy.)
+    sung = {x for s in job['shots'] if s.get('done') for x in s.get('files') or []}
+    lost = sung - {x for s in new['shots'] if s.get('done') for x in s.get('files') or []}
+    dropped = [a_ for a_ in old_angles if a_ not in angles]
+    wanted_before = set(angles_used(job)) - set(old_angles)
+    pictures = set(angles_used(new)) - set(angles) - wanted_before
+    ai_again = bool(lost or dropped or pictures)
+    if who is not w.OWNER and ai_again and job.get('redos', 0) >= w.GUEST_REDOS:
+        raise w.HTTPException(403, f'This video used its {w.GUEST_REDOS} new singings. Change its voices or title, '
+                                   'or make a new video.')
+    if ai_again:
+        new['redos'] = job.get('redos', 0) + 1
+    if dropped or pictures:  # (new stage pictures get their own 2-minute check)
+        new.update(checked=False, picture_check=False)
+    new['label'] = job_label(new)
+    new.update(status='queued', stage='In line…', error='', retry_at=None, progress=0)
+    with w.jobs_lock:
+        if job['status'] == 'working':
+            raise w.HTTPException(409, 'Still working on this one. Edit it when it is ready.')
+        job.update(new)
     w.update(job)
     w.save(job)
     w.enqueue(job)
@@ -3131,8 +3241,9 @@ def song_view(song_id, singers=1):
             queue_prepare(song_id)
             st = song_state(song_id)
     busy = prep_state['busy'] == song_id
+    known = known_song(song.get('duration'), song.get('name'))
     out = {'id': song_id, 'name': song.get('name'), 'state': st.get('state') or 'queued', 'error': st.get('error') or '',
-           'split': st.get('split'), 'best': st.get('best'), 'known': bool(known_song(song.get('duration'))),
+           'split': st.get('split'), 'best': st.get('best'), 'known': bool(known),
            'duration': song.get('duration'), 'busy': busy, 'voices': True,
            'progress': round(min(0.95, (time.time() - float(st.get('at') or time.time())) / 180), 2) if busy and
            st.get('state') == 'preparing' else None}
