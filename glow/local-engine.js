@@ -265,7 +265,7 @@
   var MSG = {
     unavailable: 'Free AI on this PC needs the Glow Studio app for Windows.',
     network: 'Lost the connection to the AI engine on this PC. Make sure Glow Studio is still open, then try again.',
-    notInstalled: 'Free AI isn’t set up on this PC yet. Open “Free AI on this PC” to install it.',
+    notInstalled: 'Free AI isn’t fully set up on this PC. Open “Free AI on this PC” to finish setting it up (only missing files are downloaded).',
     missingPack: 'The Singing add-on isn’t installed yet. Add it in “Free AI on this PC”.',
     engineFailed: 'The AI engine couldn’t start. Open “Free AI on this PC” for details, or restart your PC and try again.',
     engineStopped: 'The AI engine stopped. Open “Free AI on this PC” and press “Start engine”.',
@@ -386,8 +386,16 @@
       msg = MSG.driver;
     } else if (/out of memory|not enough memory|MemoryError/i.test(text)) {
       msg = MSG.oom;
+    } else if (launcherSentence(s && s.engine && s.engine.error)) {
+      msg = s.engine.error.trim(); // the launcher already explains it in plain words (e.g. "Another program was using the AI engine's port…")
     }
     return LocalAIError('engine-failed', msg, text.trim().slice(-4000));
+  }
+
+  // A launcher error that reads like a sentence for people (not a raw exit code or Python error).
+  function launcherSentence(t) {
+    return typeof t === 'string' && t.trim().length > 12 && t.length < 400 && /^[A-Z]/.test(t.trim()) &&
+      !/exited with code|Traceback|Exception|Error:|errno|0x[0-9a-f]{6,}/i.test(t);
   }
 
   // Resolves with the status once engine.state is 'ready'.
@@ -934,7 +942,7 @@
     var vp = videoPlan(rec);
     var still = annotated(rec.outputs.still);
     if (vp.kind === 's2v') {
-      return { graph: graphs.s2v({ image: still, audio: annotated(rec.outputs.song), offset: rec.singing.offset, prompt: rec.prompts.motion, seed: rec.seed, job: rec.id }), out: OUTPUT_NODE.s2v,
+      return { graph: graphs.s2v({ image: still, audio: annotated(rec.outputs.song), offset: rec.singing.offset, prompt: rec.singing.prompt || DEFAULT_SING_PROMPT, seed: rec.seed, job: rec.id }), out: OUTPUT_NODE.s2v,
         message: 'Making you sing… (this is the slow part)', loadingMessage: 'Loading the singing model…' };
     }
     return { graph: graphs.video({ image: still, prompt: rec.prompts.motion, negativePrompt: rec.prompts.negative, seed: rec.seed, job: rec.id, width: vp.width, height: vp.height, length: vp.length, rife: vp.rife }), out: OUTPUT_NODE.video,
@@ -1102,6 +1110,8 @@
           bpm: opts.singing.bpm || null,
           keyscale: opts.singing.keyscale || null,
           lipSync: opts.singing.lipSync !== false,
+          // lip-sync prompt: the caller's own, else the motion prompt when it is about singing, else the spec's S2V prompt
+          prompt: str(opts.singing.prompt, /\b(sing|sings|singing|canta|cantando)\b/i.test(String(opts.motionPrompt || '')) ? String(opts.motionPrompt).trim() : DEFAULT_SING_PROMPT),
           offset: opts.singing.offset != null ? clamp(num(opts.singing.offset, 0), 0, Math.max(0, secs - 5)) : Math.max(0, Math.min(secs - 5, Math.round(secs * 0.25)))
         };
       }
@@ -1223,18 +1233,21 @@
       note: 'Estimate for an RTX 5060 with 8 GB. The first video after starting the engine takes about a minute longer.'
     };
   }
-  // GB of free space a choice of packs needs (download + room to unpack the engine and save videos).
+  // GB of free space a choice of packs needs — the launcher's own rule: what is still to download (partial downloads
+  // count as done) + about 8 GB to unpack the engine + the launcher's safety margin (diskMarginGB, 10 GB).
   function diskNeededGB(packIds, s) {
     s = s || lastStatus;
     var total = 0;
     normPacks(packIds).forEach(function (id) {
       if (packInstalled(s, id)) return;
-      var sp = s && s.packs && s.packs[id] && num(s.packs[id].sizeGB, 0);
+      var sp = s && s.packs && s.packs[id];
       var def = PACKS.filter(function (p) { return p.id === id; })[0];
-      total += sp || def.sizeGB;
+      var left = sp && typeof sp.remainingGB === 'number' && sp.remainingGB >= 0 ? sp.remainingGB : (sp && num(sp.sizeGB, 0)) || def.sizeGB;
+      total += left;
     });
-    if (!packInstalled(s, 'core')) total += 8; // the unpacked engine needs a few GB next to the download
-    return Math.ceil(total + 5);
+    // the unpacked engine (embedded Python + CUDA PyTorch) next to the models, unless it is unpacked already (comfyVersion is known)
+    if (!packInstalled(s, 'core') && !(s && s.engine && s.engine.comfyVersion)) total += 8;
+    return Math.ceil(total + (s && typeof s.diskMarginGB === 'number' ? s.diskMarginGB : 10));
   }
   function friendlyFile(name) {
     if (!name) return '';

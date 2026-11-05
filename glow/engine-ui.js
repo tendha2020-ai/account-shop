@@ -23,7 +23,12 @@
   function lsSet(k, v) { try { window.localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* ignore */ } }
 
   /* ---------------- formatting (plain words) ---------------- */
-  function gb1(gb) { gb = Math.max(0, gb || 0); return (gb >= 100 ? Math.round(gb) : Math.round(gb * 10) / 10) + ' GB'; }
+  function gb1(gb) {
+    gb = Math.max(0, gb || 0);
+    if (gb >= 0.95) return (gb >= 100 ? Math.round(gb) : Math.round(gb * 10) / 10) + ' GB';
+    var mb = gb * 1000; // a single small file (e.g. the 23 MB motion model) must not read as "0 GB"
+    return (mb >= 10 ? Math.round(mb) : mb >= 0.1 ? Math.round(mb * 10) / 10 : mb > 0 ? '< 0.1' : '0') + ' MB';
+  }
   function bytesGB(b) { return gb1((b || 0) / 1e9); }
   function minRange(m) { function f(x) { return String(x).replace('.5', '½'); } return f(m[0]) + '–' + f(m[1]) + ' min'; }
   function dur(sec) {
@@ -80,7 +85,15 @@
     speeds: [], sysRamGB: null
   };
   function installed(id) { return !!(S && S.packs && S.packs[id] && S.packs[id].installed); }
-  function packInfo(id) { var p = L.packs.filter(function (x) { return x.id === id; })[0] || {}; var sp = S && S.packs && S.packs[id]; return { id: id, label: (sp && sp.label) || p.label, sizeGB: (sp && sp.sizeGB) || p.sizeGB, desc: p.desc, required: p.required, experimental: p.experimental }; }
+  function packInfo(id) {
+    var p = L.packs.filter(function (x) { return x.id === id; })[0] || {}, sp = S && S.packs && S.packs[id];
+    var label = (sp && sp.label) || p.label;
+    if (p.experimental) label = label.replace(/\s*\(experimental\)\s*$/i, ''); // shown as a tag instead
+    var size = (sp && sp.sizeGB) || p.sizeGB;
+    // what is still to download (the launcher counts partial downloads as done)
+    var left = sp && typeof sp.remainingGB === 'number' && !sp.installed ? Math.min(size, sp.remainingGB) : size;
+    return { id: id, label: label, sizeGB: size, leftGB: left, desc: p.desc, required: p.required, experimental: p.experimental };
+  }
   function ramGB() { if (S && typeof S.ramGB === 'number') return S.ramGB; if (S && typeof S.ramMB === 'number') return S.ramMB / 1024; return ui.sysRamGB; }
 
   function deriveView() {
@@ -196,7 +209,7 @@
         '<span class="eg-check" aria-hidden="true">' + ICON.ok + '</span>' +
         '<span class="eg-pb"><span class="eg-pt">' + esc(p.label) + tags + '</span>' +
         '<span class="eg-pd" id="egPd-' + p.id + '">' + esc(p.desc) + '</span>' +
-        '<span class="eg-pm"><span>' + ICON.dl + (inst ? 'Already on this PC' : gb1(p.sizeGB) + ' download') + '</span><span>' + ICON.clock + 'About ' + minRange(estimateFor(p.id)) + unit + '</span></span></span></label>';
+        '<span class="eg-pm"><span>' + ICON.dl + (inst ? 'Already on this PC' : gb1(p.sizeGB) + ' download' + (p.leftGB < p.sizeGB - 0.5 ? ' (' + gb1(p.leftGB) + ' left)' : '')) + '</span><span>' + ICON.clock + 'About ' + minRange(estimateFor(p.id)) + unit + '</span></span></span></label>';
     }).join('');
     var folder = ui.dirEdit
       ? '<div class="eg-folder-row"><label class="eg-live" for="egDir">Install folder</label><input class="eg-input" id="egDir" type="text" inputmode="text" autocomplete="off" spellcheck="false" value="' + esc(ui.dir) + '" placeholder="D:\\GlowStudio">' +
@@ -219,7 +232,7 @@
   function updPacks(root) {
     var sel = selectedPacks();
     var todo = sel.filter(function (p) { return !installed(p); });
-    var dl = todo.reduce(function (a, p) { return a + packInfo(p).sizeGB; }, 0);
+    var dl = todo.reduce(function (a, p) { return a + packInfo(p).leftGB; }, 0);
     var need = L.diskNeededGB(sel, S);
     var free = Number(S.diskFreeGB) || 0;
     var custom = ui.dirEdit && ui.dir.trim() && ui.dir.trim() !== S.installDir;
@@ -227,14 +240,15 @@
     if (sum) {
       if (!todo.length) sum.innerHTML = '<span>Everything you picked is already on this PC.</span>';
       else {
-        sum.innerHTML = '<span>Download: <b>' + gb1(dl) + '</b> — ' + dlHours(dl) + ' on a typical home connection. You can pause and continue later.</span>' +
+        sum.innerHTML = (dl >= 0.0005 ? '<span>Download: <b>' + gb1(dl) + '</b> — ' + dlHours(dl) + ' on a typical home connection. You can pause and continue later.</span>'
+          : '<span>Everything is downloaded — the files just need a final check.</span>') +
           (custom ? '<span>The free space on that drive is checked when the download starts.</span>'
             : free >= need ? '<span class="ok">Free space on this drive: ' + gb1(free) + ' (needs about ' + need + ' GB).</span>'
               : '<span class="bad">Not enough free space on this drive: ' + gb1(free) + ' free, needs about ' + need + ' GB. Free up space or choose a folder on another drive.</span>');
       }
     }
     var lab = $('[data-f="installLabel"]', root);
-    if (lab) lab.textContent = todo.length ? 'Download & install (' + gb1(dl) + ')' : 'Nothing new to install';
+    if (lab) lab.textContent = !todo.length ? 'Nothing new to install' : dl >= 0.0005 ? 'Download & install (' + gb1(dl) + ')' : 'Finish setting up';
     var btn = $('[data-act="install"]', root);
     if (btn && !ui.busy) btn.disabled = !todo.length;
     Array.prototype.forEach.call(root.querySelectorAll('.eg-pack'), function (el) {
@@ -352,7 +366,7 @@
       var x = L.explainEngineError(S);
       var fix = /Visual C\+\+/.test(x.message) ? '<a class="eg-btn glass" href="' + esc(L.vcRedistUrl) + '" target="_blank" rel="noopener">Get the Microsoft component' + ICON.ext + '</a>' : (/driver/i.test(x.message) ? driverLink() : '');
       body = '<h2 id="egH">The AI engine couldn’t start</h2><p class="eg-err" role="alert">' + esc(x.message) + '</p><p class="eg-note">Open “Details” below to see the engine’s messages.</p>';
-      actions = '<button type="button" class="eg-btn primary" data-act="start" data-primary' + (ui.busy ? ' disabled' : '') + '>Try again</button>' + fix +
+      actions = '<button type="button" class="eg-btn primary" data-act="start" data-primary' + (ui.busy ? ' disabled' : '') + '>' + ICON.play + 'Start again</button>' + fix +
         '<button type="button" class="eg-btn text" data-act="repair">Check &amp; repair files</button>';
     } else if (st === 'ready') {
       say = 'The AI engine is running';
@@ -521,7 +535,11 @@
     'continue': function () { ui.passedCheck = true; render(); },
     back: function () { ui.err = null; if (installed('core')) ui.force = null; else ui.passedCheck = false; render(); },
     dirChange: function () { ui.dirEdit = true; ui.dir = ui.dir || S.installDir || ''; render(); var i = $('#egDir'); if (i) { i.focus(); i.select(); } },
-    dirDefault: function () { ui.dirEdit = false; ui.dir = ''; render(); var b = $('[data-act="dirChange"]'); if (b) b.focus(); },
+    dirDefault: function () {
+      var def = S.defaultInstallDir;
+      if (def && def !== S.installDir) { ui.dir = def; render(); var i = $('#egDir'); if (i) { i.value = def; i.focus(); } updPacks(els.view); return; }
+      ui.dirEdit = false; ui.dir = ''; render(); var b = $('[data-act="dirChange"]'); if (b) b.focus();
+    },
     install: function () {
       var packs = selectedPacks();
       var dir;
@@ -539,8 +557,13 @@
     },
     cancel: function () { return act('cancel', function () { return L.cancel(); }); },
     resume: function () {
-      var packs = (prefs.packs && prefs.packs.length) ? prefs.packs : selectedPacks();
-      return act('resume', function () { ui.speeds = []; return L.install(packs, prefs.dir || undefined); });
+      // continue exactly the paused/failed job (the launcher reports its packs and folder), else the last choice
+      var j = S.job || {};
+      var packs = (Array.isArray(j.packs) && j.packs.length) ? j.packs : (prefs.packs && prefs.packs.length) ? prefs.packs : selectedPacks();
+      // the folder is only sent when it changes (the launcher re-validates a folder it is given)
+      var want = j.installDir || prefs.dir || '';
+      var dir = want && want !== S.installDir ? want : undefined;
+      return act('resume', function () { ui.speeds = []; return L.install(packs, dir); });
     },
     changePacks: function () { ui.force = 'packs'; ui.passedCheck = true; ui.dismissJob = true; render(); },
     notNow: function () { ui.dismissJob = true; render(); },
@@ -596,7 +619,8 @@
       heartbeat();
       if (s.engine.state === 'ready') loadSysRam();
       // a reload in the middle of a running install comes straight back to step 3 (derived from status.job)
-      if (installed('core')) ui.passedCheck = true;
+      // already installed, or set up before and now missing a file (the engine is unpacked): no need to check the PC again
+      if (installed('core') || (s.engine && s.engine.comfyVersion)) ui.passedCheck = true;
     }
     render();
     if (s) schedule();

@@ -108,6 +108,7 @@ h2:focus, main:focus { outline: none; }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
 .eg-card h2 { margin: 0 0 6px; font-size: 22px; font-weight: 800; letter-spacing: -.02em; line-height: 1.2; }
 .eg-card > p, .eg-p { margin: 0 0 14px; color: var(--muted); }
+.eg-card > p.eg-note { margin: 12px 0 0; color: var(--faint); }
 .eg-card .eg-p b, .eg-card > p b { color: var(--text); font-weight: 600; }
 .eg-kicker { margin: 0 0 6px; font-size: 12.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #c9b8ff; }
 .eg-loading { display: flex; align-items: center; gap: 14px; }
