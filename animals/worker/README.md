@@ -40,8 +40,8 @@ the next engine never runs next to it uncounted. If your key can't read the quot
 (PRO, Team, Enterprise), the worker makes no AI calls until it can, and Settings says so; a free account goes on with
 an estimate.
 
-If one of these files (`guests.json`, `push.json`, `songs.json`, `posting.json`, `gpu.json`, or a video's `job.json`) can't be
-read from the Hub when the worker starts, it is never saved over, and the worker reads it again every minute.
+If one of these files (`guests.json`, `push.json`, `songs.json`, `posting.json`, `gpu.json`, `owner.json`, or a video's
+`job.json`) can't be read from the Hub when the worker starts, it is never saved over, and the worker reads it again every minute.
 Meanwhile the friends, notifications, songs or plan answer "still loading" (503), and that video doesn't show yet.
 
 Together videos (together.py): 2-4 animals in one video. Their pictures are put into one start picture by a free
@@ -68,3 +68,19 @@ goes through the GPU guard (gpu.py) inside the free time, and Sing
 keeps to its share of the day (`sing_settings.json`, with each engine's 5-second test result). Without the guard,
 Sing makes no AI call at all. No song, stem or lyric is ever part of this Space or the app: they stay in the
 owner's private dataset.
+
+Easier setup (update.py, v16): "Update my worker" needs no Hugging Face key. The page asks the worker (POST
+`/update`, with the owner's connection key only) to update itself: the worker reads the new worker files from antics'
+own site (a fixed address, `https://tendha2020-ai.github.io/account-shop/animals/worker/`, never one sent to it),
+checks that the site already has the new version (worker.py is read first), takes the list of files from the new
+`update.py` on the site (its `FILES`, read without running it: the page must ask for exactly those), and sends them all
+to this Space in one commit with the key the Space already holds. worker.py is read again at the end: if the site
+changed meanwhile (a deploy), nothing is sent. Hugging Face then builds the new version; the old one answers until it
+is ready. Nothing is sent unless every file was read, and nothing when the worker already is that version.
+`POST /update/restart` (a factory restart, when Hugging Face doesn't start that build) works only while a version this
+worker sent isn't running yet. The worker also keeps `owner.json` in the same private dataset (its connection key,
+Space and web address), so the owner's new phone or computer connects to this worker with the owner's own Hugging
+Face key instead of making it again; it is written when the worker starts (only when it is missing or different, never
+with empty values, never over an `owner.json` that couldn't be read, and only while Hugging Face says the dataset is
+private: in a public one it is not kept, and one that is there is deleted). A new version that adds or drops a
+worker file changes `FILES` in `update.py` and `WORKER_FILES` in `app.js` together.

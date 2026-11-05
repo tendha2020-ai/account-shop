@@ -57,7 +57,7 @@ import numpy as np
 import requests
 from fastapi import Body, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from PIL import Image, ImageDraw, ImageFont
 
 import beats
@@ -103,11 +103,18 @@ try:  # (Sing) animals singing a song; if its files or their packages are missin
 except Exception as e:
     logging.getLogger('antics').warning('no Sing videos: %s', e)
     sing = None
+try:  # (Setup) the one-tap update (POST /update) and owner.json; if update.py is missing or broken, the worker runs
+    import update as updater  # without them and the page asks for the Hugging Face key, as before
+except Exception as e:
+    logging.getLogger('antics').warning('no one-tap update: %s', e)
+    updater = None
 
-VERSION = '14'  # (Sing)
+VERSION = '16'  # (Setup)
 HF_TOKEN = os.environ.get('HF_TOKEN') or None
 ANTICS_KEY = os.environ.get('ANTICS_KEY', '')
 DATASET = os.environ.get('ANTICS_DATASET', '')
+SPACE_ID = os.environ.get('SPACE_ID', '')  # (Setup) this worker's own Space (owner/name) and web address, set by
+SPACE_HOST = os.environ.get('SPACE_HOST', '')  # Hugging Face: the one-tap update and owner.json need them
 DATA = Path(os.environ.get('ANTICS_DATA', '/tmp/antics'))
 FONT = os.environ.get('ANTICS_FONT', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf')
 
@@ -401,6 +408,8 @@ def after_read(name):
     """What waited for a file that was read late."""
     if name == 'posting.json':
         plan_cuts()
+    if name == OWNER_FILE:  # (Setup) now it can be saved, if it isn't this worker's any more
+        save_owner()
     with unread_lock:
         videos_all_read = not any(n.endswith('/job.json') for n in unread)
     if videos_all_read and (name.endswith('/job.json') or name == 'posting.json'):
@@ -461,6 +470,87 @@ def save_push():
                             repo_type='dataset', commit_message='notifications')
         except Exception as e:
             log.warning('saving notifications to the Hub failed: %s', e)
+
+
+# (Setup) owner.json in the private dataset: this worker's connection key, Space and web address
+# ({v: 1, key, space, url}), so the owner's new phone or computer connects to it with the owner's own Hugging Face
+# key instead of making the worker again. Written at the start when it is missing or different; never with empty
+# values, never over an owner.json that couldn't be read, only when the dataset's files could be listed, and only
+# while Hugging Face says the dataset is private (a public one: no owner.json, and one that is there is deleted).
+OWNER_FILE = 'owner.json'
+owner_seen = {'text': None}  # owner.json as it is in the dataset (None: not there)
+owner_saving = threading.Lock()
+OWNER_TRIES = (0, 10, 30)  # seconds before each try at the start (the Hub can be busy for a moment)
+
+
+def load_owner(text):
+    owner_seen['text'] = text
+
+
+def dataset_private():
+    """(Setup) True / False: Hugging Face says the dataset is private / public; None when it didn't say."""
+    try:
+        private = getattr(hub.repo_info(DATASET, repo_type='dataset'), 'private', None)
+    except Exception as e:
+        log.warning("owner.json: the dataset's visibility couldn't be read: %s", e)
+        return None
+    return private if isinstance(private, bool) else None
+
+
+def save_owner():
+    """owner.json, when it isn't this worker's yet. True when it is (saved now, or already), or when it must not be
+    (the dataset is public: then none is kept there); False when it can't be yet (an empty value, no dataset,
+    owner.json unread, the dataset's visibility unknown) or the Hub save failed."""
+    record = updater.owner_record(ANTICS_KEY, SPACE_ID, SPACE_HOST) if updater else None
+    if not record or not hub or not DATASET:
+        return False
+    with owner_saving:
+        if is_unread(OWNER_FILE):  # (it would be saved over before it was read)
+            return False
+        private = dataset_private()  # (owner.json holds the owner's connection key: a private dataset only)
+        if private is None:
+            return False
+        if not private:
+            log.warning('owner.json: the dataset is public, so the connection key is not kept there')
+            if owner_seen['text'] is not None:
+                try:
+                    hub.delete_file(OWNER_FILE, repo_id=DATASET, repo_type='dataset',
+                                    commit_message='owner (the dataset is public)')
+                except Exception as e:
+                    log.warning('deleting owner.json from the public dataset failed: %s', e)
+                    return False
+                owner_seen['text'] = None
+                log.warning('owner.json deleted from the public dataset')
+            return True
+        if not updater.owner_differs(owner_seen['text'], record):
+            return True
+        text = json.dumps(record)
+        DATA.mkdir(parents=True, exist_ok=True)
+        path, part = DATA / OWNER_FILE, DATA / (OWNER_FILE + '.part')
+        part.write_text(text)
+        os.replace(part, path)
+        try:
+            hub.upload_file(path_or_fileobj=str(path), path_in_repo=OWNER_FILE, repo_id=DATASET,
+                            repo_type='dataset', commit_message='owner')
+        except Exception as e:
+            log.warning('saving owner.json to the Hub failed: %s', e)
+            return False
+        owner_seen['text'] = text
+        log.info('owner.json saved (so your other devices can connect)')
+        return True
+
+
+def save_owner_at_start():
+    """(In the background, after the dataset was read) owner.json, tried a few times when the Hub save fails."""
+    if not updater or not updater.owner_record(ANTICS_KEY, SPACE_ID, SPACE_HOST):
+        return  # (an empty value: never saved)
+    for wait in OWNER_TRIES:
+        time.sleep(wait)
+        try:
+            if save_owner() or not hub or is_unread(OWNER_FILE):
+                return
+        except Exception as e:
+            log.warning('owner.json: %s', e)
 
 
 def load_guests(text):
@@ -655,6 +745,8 @@ def load_jobs():
             loaders['posting.json'] = load_plan
         if sing:  # (Sing) its share of the day, the engines' test results, the PC's measurements
             loaders[sing.SETTINGS_FILE] = sing.load_settings
+        if updater:  # (Setup) this worker's connection details for the owner's other devices
+            loaders[OWNER_FILE] = load_owner
         for name in names:
             if name in loaders:
                 read_hub(name, loaders[name])
@@ -2452,6 +2544,7 @@ async def lifespan(_app):
     if sing:
         sing.attach(THIS)  # (Sing)
     load_jobs()
+    threading.Thread(target=save_owner_at_start, daemon=True).start()  # (Setup) owner.json
     threading.Thread(target=worker_loop, args=(work_queue,), daemon=True).start()
     threading.Thread(target=worker_loop, args=(quick_queue,), daemon=True).start()
     threading.Thread(target=cut_loop, daemon=True).start()
@@ -2553,12 +2646,19 @@ def features():
     order/names). library: the free clip library (library.json, by id in a Together video's cast).
     (Sing) sing: Sing videos (mode 'sing' of POST /jobs, /songs/{id}/sing, /songs/{id}/voice, /gpu, /settings,
     /jobs/{id}/test, /jobs/{id}/shots/{k}/redo), only when sing.py, sing_audio.py and a voice/music split import
-    here; sing_duet: two singers; sing_best: the best split (RoFormer); gpu_guard: the free-for-sure GPU guard."""
+    here; sing_duet: two singers; sing_best: the best split (RoFormer); gpu_guard: the free-for-sure GPU guard.
+    (Setup) selfupdate: POST /update (the one-tap update, no key on the page) and POST /update/restart (its factory
+    restart, only while a version it sent isn't running yet), only on a Space whose key works."""
     return (['chain'] + (['meme'] if meme and sfx else []) + ['opening', 'outro']
             + (['voice'] if pet_voice and pet_voice.ready() else []) + (['push'] if webpush else []) + ['songs']
             + (['plan'] if posting else []) + ['gpu']
             + (['together'] if together else []) + (['library'] if together and together.load_library() else [])
-            + (sing.features() if sing else []))
+            + (sing.features() if sing else []) + (['selfupdate'] if can_self_update() else []))
+
+
+def can_self_update():
+    """(Setup) The one-tap update works here: update.py, a Space and its key (one that works)."""
+    return bool(updater and updater.can_update(SPACE_ID, HF_TOKEN) and token_ok and not gpu.view()['key_refused'])
 
 
 @app.get('/health')
@@ -2592,6 +2692,84 @@ def gpu_resume(x_antics_key: str = Header(None)):
 @app.get('/me')
 def whoami(x_antics_key: str = Header(None)):
     return {**me_view(caller(x_antics_key)), 'version': VERSION}
+
+
+# ---------- (Setup) The one-tap update ----------
+self_updating = threading.Lock()  # one update at a time
+update_sent = {'version': None}  # the version this process sent to its Space (POST /update): a restart is for it
+
+
+def making_now():
+    """A video is being made or is in line (the page's own rule for "Update anyway"): an update restarts the worker,
+    so a clip being made would be cut off and made again."""
+    with jobs_lock:
+        return any(j.get('status') in ('working', 'queued') for j in jobs.values())
+
+
+@app.post('/update')
+def self_update(body: Any = Body(None), x_antics_key: str = Header(None)):
+    """(Setup) Owner only: the worker updates itself from antics' own site (update.py: the files are read from its
+    fixed address, all of them before anything is sent, then go to this Space in one commit with the Space's own
+    key). Body {files: [...], version: '16', force: false}; 409 while a video is being made, unless force."""
+    check(x_antics_key)
+    if not can_self_update():
+        return JSONResponse({'detail': "This worker can't update itself. Use your Hugging Face key instead.",
+                             'reason': 'unavailable'}, status_code=503)
+    if not self_updating.acquire(blocking=False):
+        return JSONResponse({'detail': 'An update is already on its way. Wait a minute.', 'reason': 'updating'},
+                            status_code=409)
+    try:
+        names, version, force = updater.check_request(body)
+        if version == VERSION:  # (already that version: nothing to send, nothing to build)
+            log.info('update: already version %s, nothing sent', version)
+            return {'ok': True, 'already': True, 'commit': '', 'version': version, 'files': []}
+        if making_now() and not force:
+            raise updater.UpdateError(409, updater.BUSY, 'busy')
+        files = updater.fetch_all(names, version)
+        if making_now() and not force:  # (one went in line while the files were read)
+            raise updater.UpdateError(409, updater.BUSY, 'busy')
+        commit = updater.commit(SPACE_ID, HF_TOKEN, files, version)
+        update_sent['version'] = version
+    except updater.UpdateError as e:
+        log.warning('update: %s (%s)', e.reason, e.message)
+        return JSONResponse(e.body(), status_code=e.status)
+    finally:
+        self_updating.release()
+    log.info('update to version %s sent (%d files, commit %s): Hugging Face builds it now', version, len(files),
+             commit[:12])
+    return {'ok': True, 'commit': commit, 'version': version, 'files': sorted(files)}
+
+
+RESTART_EVERY = 120  # seconds: at most one factory restart asked for in this time
+restart_asked = {'at': float('-inf')}
+
+
+@app.post('/update/restart')
+def self_update_restart(x_antics_key: str = Header(None)):
+    """(Setup) Owner only: Hugging Face builds this Space again from its files (a factory restart). The page asks for
+    it once, when the new version was sent (POST /update) but Hugging Face hasn't started building it after 3 minutes,
+    as it does itself when it has the owner's key. Only while a version this process sent isn't running: a worker that
+    sent nothing (a fresh start, e.g. after such a restart) or already is that version says no, so the connection key
+    can't keep the worker rebuilding."""
+    check(x_antics_key)
+    if not can_self_update():
+        return JSONResponse({'detail': "This worker can't restart itself. Use your Hugging Face key instead.",
+                             'reason': 'unavailable'}, status_code=503)
+    with self_updating:
+        if not update_sent['version'] or update_sent['version'] == VERSION:
+            return JSONResponse({'detail': 'Your worker has no new version waiting to be built.',
+                                 'reason': 'nothing_sent'}, status_code=409)
+        if time.time() - restart_asked['at'] < RESTART_EVERY:
+            return JSONResponse({'detail': 'Your worker is already restarting. Wait a few minutes.',
+                                 'reason': 'too_soon'}, status_code=429)
+        try:
+            updater.restart(SPACE_ID, HF_TOKEN)
+        except updater.UpdateError as e:
+            log.warning('restart: %s', e.message)
+            return JSONResponse(e.body(), status_code=e.status)
+        restart_asked['at'] = time.time()
+    log.info('factory restart asked for: Hugging Face builds the worker again')
+    return {'ok': True}
 
 
 @app.get('/jobs')

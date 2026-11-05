@@ -8,8 +8,10 @@ const DATASET_NAME = 'antics-videos';
 const WORKER_FILES = ['Dockerfile', 'README.md', 'requirements.txt', 'worker.py', 'ideas.py', 'beats.py', 'meme.py', 'sfx.py',
   'voice.py', 'webpush.py', 'chorus.py', 'posting.py', 'gpu.py',
   'together.py', 'library.json', // Together (v13): several animals in one video, and the free clips
-  'sing.py', 'sing_audio.py']; // (Sing) v14: animals sing a song (the song's voice and music, the lip-sync AIs)
-const WORKER_VERSION = '14'; // bump with VERSION in worker/worker.py
+  'sing.py', 'sing_audio.py', // (Sing) v14: animals sing a song (its voice and music, the lip-sync AIs)
+  'update.py']; // (Setup) v16: the worker updates itself (POST /update) and keeps owner.json for new devices
+const WORKER_VERSION = '16'; // bump with VERSION in worker/worker.py
+// ((Setup) WORKER_FILES: the same names as FILES in worker/update.py, which the one-tap update checks them against)
 const KEYS = {
   worker: 'antics.worker', clips: 'antics.clips', captions: 'antics.captions', style: 'antics.style', music: 'antics.music',
   track: 'antics.track', part: 'antics.part', seconds: 'antics.seconds', speed: 'antics.speed', animal: 'antics.animal',
@@ -195,7 +197,9 @@ async function api(path, opts = {}) {
     throw Object.assign(new Error('Your worker is waking up'), { waking: true });
   }
   const body = await res.json();
-  if (!res.ok) throw Object.assign(new Error(body.detail || `Worker error ${res.status}`), { status: res.status });
+  if (!res.ok) { // ((Setup) reason: the one-tap update's short word for what happened)
+    throw Object.assign(new Error(body.detail || `Worker error ${res.status}`), { status: res.status, reason: body.reason || '' });
+  }
   return body;
 }
 
@@ -311,8 +315,9 @@ function readInvite() {
   return useLink(link, true);
 }
 
-// A link put another worker on this device: start fresh with it.
-function workerChanged() {
+// A link put another worker on this device: start fresh with it. (Setup) keepSettings: Settings stays as it is (the
+// setup that just connected this device shows its steps, all done, until Settings closes).
+function workerChanged(keepSettings = false) {
   state.jobs = [];
   state.me = null;
   state.health = null;
@@ -326,7 +331,7 @@ function workerChanged() {
   renderGpu();
   renderWorkerDot(false);
   renderConnect();
-  if ($('#settings').open) renderSettings();
+  if ($('#settings').open && !keepSettings) renderSettings();
   if (state.worker) refreshJobs();
 }
 
@@ -437,7 +442,266 @@ function randomKey() {
   return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+// (Setup) v16: a newer setup or update takes over (Use my Hugging Face key instead, during a one-tap wait): the
+// older one's wait stops there, without a word.
+let setupRun = 0;
+const BUSY_TEXT = 'A video is being made right now. Update when it is done, or tap Update my worker again to update '
+  + 'anyway (it starts that video again).';
+const videoBeingMade = () => (state.jobs || []).some((j) => j.status === 'working' || j.status === 'queued');
+
+// (Setup) v16: a worker that lists 'selfupdate' updates itself: one tap, no key. Not when its own Hugging Face key
+// broke (it can't send anything to Hugging Face then: a new key makes it again), and not after Use my key instead.
+const oneTap = () => state.setupMode === 'update' && Boolean(state.worker) && !isGuest() && canDo('selfupdate')
+  && !keyBroken() && !state.updateWithKey;
+
+function showSteps() {
+  $('#steps').hidden = false;
+  $('#steps').querySelectorAll('li').forEach((li) => { li.className = ''; });
+  $('#steps').scrollIntoView({ block: 'nearest', behavior: 'smooth' }); // (on a phone it starts under the button)
+}
+
+// (Setup) The key field instead of the one tap (the worker is older, or it couldn't update itself). why: what went
+// wrong, said above the steps; empty when the owner picked it.
+function useKeyInstead(why = '') {
+  setupRun++; // (a one-tap wait going on stops)
+  state.updateWithKey = true;
+  state.keyWhy = why ? `${why} Update with your Hugging Face key instead: the steps below.` : '';
+  renderSettings();
+  $('#steps').hidden = true;
+  $('#setupBtn').disabled = false;
+  note($('#setupNote'), '');
+  if (why) $('#setupWhy').scrollIntoView({ block: 'nearest' });
+  else $('#token').focus();
+}
+
+// (Setup) v16: one tap. The worker reads every new file from the antics site itself, sends them to its own Space in
+// one go, and the page waits for the new version as with a key. A worker that can't (older, asleep, Hugging Face
+// failing, the new version it sent didn't start) leaves the key field: the update with a key works as before. When the
+// worker couldn't read the antics site, the one tap stays (the key reads the same site): try again in a few minutes.
+async function selfUpdate() {
+  const msg = $('#setupNote');
+  // The page's two-tap rule: an update restarts the worker, so a video being made would be made again.
+  if (!state.updateAnyway && videoBeingMade()) {
+    state.updateAnyway = true;
+    note(msg, BUSY_TEXT, 'bad');
+    return;
+  }
+  const run = ++setupRun;
+  const live = () => run === setupRun;
+  const space = state.worker.space;
+  note(msg, '');
+  $('#setupBtn').disabled = true;
+  showSteps();
+  try {
+    step('key', 'active');
+    step('create', 'active');
+    const stop = new AbortController();
+    const timer = setTimeout(() => stop.abort(), 120000);
+    let sent = null;
+    try {
+      sent = await api('/update', { ...jsonPost({ files: WORKER_FILES, version: WORKER_VERSION, force: Boolean(state.updateAnyway) }), signal: stop.signal });
+    } catch (e) {
+      if (!live()) return;
+      if (!stop.signal.aborted) {
+        $('#steps').querySelectorAll('li.active').forEach((li) => { li.className = ''; });
+        selfUpdateRefused(e, space);
+        return;
+      }
+      // It didn't answer in time, but it may still be sending the new version: the key only if nothing happens.
+      if (!(await sentAnyway(space, run))) {
+        if (live()) useKeyInstead("Your worker didn't answer.");
+        return;
+      }
+      if (!live()) return;
+      note(msg, '');
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!live()) return;
+    if (sent && sent.already) { // (it is that version already: nothing was sent, nothing to build)
+      updated(msg, 'Your worker already has the newest version.');
+      return;
+    }
+    state.selfSent = space; // (while this wait goes on, a key only has to start the build: the new files are there)
+    step('key', 'done');
+    step('create', 'done');
+    step('build', 'active');
+    const url = await waitForBuild(space, {
+      version: WORKER_VERSION,
+      run,
+      // No key on this page: the worker asks Hugging Face itself to start the build (POST /update/restart, its own
+      // key, once). If it can't, say so and keep waiting (a key can).
+      onStuck: async () => {
+        try {
+          await api('/update/restart', { method: 'POST' });
+          if (live()) note(msg, "Hugging Face hadn't started building the new version, so your worker asked it to. Still building…");
+        } catch {
+          if (live()) {
+            note(msg, "Hugging Face hasn't started building the new version yet. It usually starts by itself; "
+              + 'or tap Use my Hugging Face key instead: with a key it starts now.');
+          }
+        }
+      },
+    });
+    if (!live()) return;
+    state.worker = { ...state.worker, url };
+    save(KEYS.worker, state.worker);
+    await waitForHealth();
+    if (!live()) return;
+    updated(msg);
+  } catch (e) {
+    if (!live() || e.superseded) return;
+    $('#steps').querySelectorAll('li.active').forEach((li) => { li.className = ''; });
+    if (state.selfSent === space) {
+      // The new version was sent but didn't build or start (or is taking far too long): the worker may not answer
+      // any more, so only the key can repair it, sending every file again (not just starting the same build).
+      state.selfSent = null;
+      state.selfFailed = space;
+      useKeyInstead(e.stage ? `The new version didn't start on your worker (${e.stage}). Open huggingface.co/spaces/${space} to see why.`
+        : 'The new version is taking too long to build.');
+      return;
+    }
+    note(msg, e.message, 'bad');
+  } finally {
+    if (live()) $('#setupBtn').disabled = false;
+  }
+}
+
+// (Setup) What the page does when the worker said no to POST /update (or couldn't be asked).
+function selfUpdateRefused(e, space) {
+  const msg = $('#setupNote');
+  if (e.status === 409 && (e.reason === 'busy' || (!e.reason && !/on the site/i.test(e.message)))) {
+    state.updateAnyway = true; // a video is being made (one this page didn't know of yet): the next tap goes anyway
+    note(msg, BUSY_TEXT, 'bad');
+    return;
+  }
+  if (e.status === 409) { // the site doesn't have this version yet (or changed meanwhile), an update is on its way: wait
+    note(msg, e.message, 'bad');
+    return;
+  }
+  if (e.status === 502 && e.reason === 'site') { // nothing was sent; the key reads the same site, so: a bit later
+    note(msg, `${e.message} Or tap Use my Hugging Face key instead.`, 'bad');
+    return;
+  }
+  const down = e.waking || !e.status;
+  useKeyInstead(down && state.selfFailed === space ? "The new version didn't start on your worker, so it can't update itself."
+    : e.waking ? "Your worker is asleep or starting, so it can't update itself right now."
+      : e.status === 404 || e.status === 405 || e.reason === 'unavailable' ? "Your worker can't update itself."
+        : e.status ? e.message : "Your worker didn't answer.");
+}
+
+// (Setup) POST /update got no answer in time (2 min), but the worker may still be sending the new version (Hugging
+// Face slow to take it): it does, when Hugging Face starts building or the new version answers. True when that
+// happens within 3 minutes; false when nothing does (then the key), or when a newer setup took over.
+async function sentAnyway(space, run) {
+  note($('#setupNote'), "Your worker hasn't answered yet. Checking whether it sent the new version (up to 3 min)…");
+  const started = Date.now();
+  while (Date.now() - started < 3 * 60 * 1000) {
+    await sleep(6000);
+    if (run !== setupRun) return false;
+    try {
+      const res = await fetch(`${HF}/api/spaces/${space}/runtime`, { cache: 'no-store' });
+      const rt = res.ok ? await res.json() : null;
+      if (rt && /BUILD|STARTING|ERROR/.test(rt.stage || '')) return true; // (a build: the usual wait takes over)
+    } catch {
+      // try again
+    }
+    const h = await healthOf(state.worker.url);
+    if (h && h.version === WORKER_VERSION) return true;
+  }
+  return false;
+}
+
+// After an update (one tap or a key): the new version answers. text: what the note says (by default, Updated).
+function updated(msg, text = 'Updated. All the new options work now.') {
+  refreshHealth();
+  step('build', 'done');
+  step('ready', 'done');
+  state.setupMode = 'setup';
+  state.selfSent = null;
+  state.selfFailed = null;
+  renderWorkerDot(true);
+  note(msg, text, 'good');
+  toast('Worker updated');
+  refreshJobs();
+  setTimeout(() => closeDialog($('#settings')), 1500);
+}
+
+// (Setup) v16: the worker's own address and connection key, as it keeps them in the private dataset (owner.json,
+// workers from v16), read with the owner's key and checked with the worker itself: its /me must say owner.
+// { worker } when it fits; { asleep: true } when it fits but the worker didn't answer; null when there is none
+// (an older worker) or it doesn't fit (then setting up makes the worker again, as before).
+async function findWorker(user, space, token) {
+  let saved = null;
+  try {
+    const res = await hf(`/datasets/${user}/${DATASET_NAME}/resolve/main/owner.json`, token, { cache: 'no-store' });
+    if (!res.ok) return null;
+    saved = await res.json();
+  } catch {
+    return null;
+  }
+  const w = saved && saved.v === 1 && typeof saved.url === 'string' && typeof saved.key === 'string' && typeof saved.space === 'string'
+    ? { space: saved.space, url: saved.url, key: saved.key } : null;
+  // (the key only ever goes to a Hugging Face Space's own address, and only to this account's worker: its usual
+  // address, or one Hugging Face lists for it)
+  if (!w || !/^https:\/\/[a-z0-9-]+\.hf\.space$/.test(w.url) || !/^[\w-]{6,200}$/.test(w.key)
+    || w.space.toLowerCase() !== space.toLowerCase()) return null;
+  const host = w.url.slice('https://'.length);
+  if (host !== `${space.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase()}.hf.space`) {
+    const rt = await fetch(`${HF}/api/spaces/${space}/runtime`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    if (!rt || !(rt.domains || []).some((d) => d.domain === host)) return null;
+  }
+  const started = Date.now();
+  while (Date.now() - started < 100000) { // a worker that slept wakes in about a minute
+    const role = await roleAt(w);
+    if (role === 'owner') return { worker: w };
+    if (role) return null; // it answered, but not to this key: owner.json is old
+    $('#steps [data-step="create"]').textContent = `Waking up your worker (${Math.round((Date.now() - started) / 1000)} s, up to 2 min)`;
+    await sleep(4000);
+  }
+  return { asleep: true };
+}
+
+// Who the worker says this key is: 'owner', another word when it answered but not as the owner (a friend's key, a
+// wrong one: 'no'), or null when it didn't answer (asleep, starting, offline).
+async function roleAt(w) {
+  const stop = new AbortController();
+  const timer = setTimeout(() => stop.abort(), 10000);
+  try {
+    const res = await fetch(`${w.url}/me`, { headers: { 'X-Antics-Key': w.key }, cache: 'no-store', signal: stop.signal });
+    if (!(res.headers.get('content-type') || '').includes('json')) return null;
+    const body = await res.json();
+    return res.ok && body.role === 'owner' ? 'owner' : 'no';
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// (Setup) v16: this device connects to the worker that is already there: nothing is made again.
+function connectFound(w, msg) {
+  state.worker = { space: w.space, url: w.url, key: w.key };
+  save(KEYS.worker, state.worker);
+  $('#token').value = '';
+  $('#steps [data-step="create"]').textContent = 'Found your worker';
+  $('#steps [data-step="build"]').textContent = 'Already built and running'; // (nothing is built again)
+  step('create', 'done');
+  step('build', 'done');
+  step('ready', 'done');
+  note(msg, 'Connected to your worker. Your videos, songs and friends are here.', 'good');
+  msg.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  toast('Connected to your worker');
+  workerChanged(true); // (the setup pane stays, all done, until Settings closes)
+  renderWorkerDot(true);
+  const pending = state.pending;
+  state.pending = null;
+  setTimeout(() => closeDialog($('#settings')), pending ? 900 : 1500);
+  if (pending) submit(pending);
+}
+
 async function setupWorker() {
+  if (oneTap()) return selfUpdate(); // (Setup) v16
   const updating = state.setupMode === 'update' && Boolean(state.worker);
   const token = $('#token').value.trim();
   const msg = $('#setupNote');
@@ -447,16 +711,18 @@ async function setupWorker() {
   }
   // An update restarts the worker: a clip being made right now would be cut off and made again (its AI time used
   // twice), so the first tap asks to wait for it.
-  if (updating && !state.updateAnyway && (state.jobs || []).some((j) => j.status === 'working' || j.status === 'queued')) {
+  if (updating && !state.updateAnyway && videoBeingMade()) {
     state.updateAnyway = true;
-    note(msg, 'A video is being made right now. Update when it is done, or tap Update my worker again to update '
-      + 'anyway (it starts that video again).', 'bad');
+    note(msg, BUSY_TEXT, 'bad');
     return;
   }
+  const run = ++setupRun;
+  const live = () => run === setupRun;
   note(msg, '');
+  state.keyWhy = ''; // (Setup) (why the key: answered now)
+  note($('#setupWhy'), '');
   $('#setupBtn').disabled = true;
-  $('#steps').hidden = false;
-  $('#steps').querySelectorAll('li').forEach((li) => { li.className = ''; });
+  showSteps();
   try {
     step('key', 'active');
     const whoRes = await hf('/api/whoami-v2', token);
@@ -464,7 +730,7 @@ async function setupWorker() {
     if (!whoRes.ok) throw new Error(await hfError(whoRes));
     const who = await whoRes.json();
     if (who.auth && who.auth.accessToken && who.auth.accessToken.role === 'read') {
-      throw new Error('This key can only read. Make a new one and pick Write (step 2).');
+      throw new Error('This key can only read. Make a new one and pick Write (step 1).');
     }
     const user = who.name;
     // antics is TENDHA2's private tool: only the owner's Hugging Face account may set up or update a worker
@@ -479,30 +745,63 @@ async function setupWorker() {
     step('key', 'done');
 
     step('create', 'active');
+    const existing = await hf(`/api/spaces/${space}`, token);
+    // (Setup) v16: a device that isn't connected yet, and the worker is there: this device connects to it (the
+    // worker keeps its address and connection key in the private dataset). Nothing is made again, and the other
+    // devices keep working. The same for Set up again on a device whose saved worker doesn't answer as the owner
+    // (its key is old: the worker was made again on another device), before anything is made again.
+    let found = null;
+    const lost = existing.ok && !updating && Boolean(state.worker) && (await roleAt(state.worker)) !== 'owner';
+    if (!live()) return;
+    if (existing.ok && !updating && (!state.worker || lost)) {
+      $('#steps [data-step="create"]').textContent = 'Looking for your worker';
+      found = await findWorker(user, space, token);
+      if (!live()) return;
+      if (found && found.worker) {
+        connectFound(found.worker, msg);
+        return;
+      }
+      $('#steps [data-step="create"]').textContent = 'Creating your worker';
+    }
     // A web page can set a Space's secrets (its Hugging Face key, its connection key) only while it
     // creates the Space. So an update sends the new files to the worker that is already there: nothing
     // is deleted, and its keys, connections and videos stay. The worker is made again from scratch only
     // when its own Hugging Face key stopped working, or when the page doesn't know its connection key.
     // Videos live in the dataset and are kept either way.
+    const inPlace = existing.ok && updating && !keyBroken();
+    // (Setup) The worker already sent itself the new version (one tap, its wait still going on) and only the build
+    // didn't start: the key just starts it. Not once that build failed (the runtime says ERROR): every file again.
+    let startOnly = inPlace && state.selfSent === space;
+    if (startOnly) {
+      const rt = await fetch(`${HF}/api/spaces/${space}/runtime`, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      if (!rt || /ERROR/.test(rt.stage || '')) startOnly = false;
+      if (!live()) return;
+    }
     // Every worker file is read first, so a file the site can't serve stops the setup before anything
     // on Hugging Face is touched.
     const summary = updating ? 'Update the Animal Antics worker' : 'Set up the Animal Antics worker';
     const lines = [{ key: 'header', value: { summary, description: '' } }];
-    for (const name of WORKER_FILES) {
+    for (const name of startOnly ? [] : WORKER_FILES) {
       const res = await fetch(`worker/${name}`, { cache: 'no-store' });
       if (!res.ok) throw new Error(`Could not read worker/${name} (${res.status}). Nothing was changed. Try again in a few minutes.`);
       lines.push({ key: 'file', value: { content: base64(await res.text()), path: name, encoding: 'base64' } });
     }
-    const existing = await hf(`/api/spaces/${space}`, token);
     // A device that isn't connected doesn't know the worker's connection key, so setting up here makes the
     // worker again. Videos, songs and friends are kept (they live in the dataset), but other devices then
     // need the new app link: say so first.
-    if (existing.ok && !updating && !confirm(`You already have a worker (${space}). Setting it up again here makes it new: your videos, songs and friends stay, but your other phones and computers will need the new app link afterwards.\n\nTip: on a device that already works, tap Settings, Copy app link, and open that link here instead.\n\nSet it up again?`)) {
-      throw new Error('Nothing was changed. On a device that already works, tap Settings, Copy app link, and open that link here.');
+    if (existing.ok && !updating) {
+      const ask = found && found.asleep
+        ? `Your worker (${space}) didn't answer, so this device can't connect to it right now. Wait a minute and tap Set up my worker again.\n\nOr set it up again here: your videos, songs and friends stay, but your other phones and computers will need the new app link afterwards.\n\nSet it up again now?`
+        : `You already have a worker (${space}). Setting it up again here makes it new: your videos, songs and friends stay, but your other phones and computers will need the new app link afterwards.\n\nTip: on a device that already works, tap Settings, Connect another phone, and scan its QR code (or copy its app link) instead.\n\nSet it up again?`;
+      if (!confirm(ask)) {
+        throw new Error(found && found.asleep ? "Nothing was changed. Your worker didn't answer: try again in a minute."
+          : 'Nothing was changed. On a device that already works, tap Settings, Connect another phone, and scan its QR code or open its app link here.');
+      }
     }
-    const inPlace = existing.ok && updating && !keyBroken();
+    if (!live()) return;
     const key = updating ? state.worker.key : randomKey();
     if (!inPlace) {
+      $('#steps [data-step="create"]').textContent = existing.ok ? 'Making your worker again' : 'Creating your worker';
       if (existing.ok) {
         const del = await hf('/api/repos/delete', token, {
           method: 'DELETE',
@@ -530,33 +829,42 @@ async function setupWorker() {
       if (!created.ok) throw new Error(await hfError(created));
     }
 
-    const commit = await hf(`/api/spaces/${space}/commit/main`, token, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-ndjson' },
-      body: lines.map((l) => JSON.stringify(l)).join('\n'),
-    });
-    if (!commit.ok) throw new Error(await hfError(commit));
+    if (startOnly) {
+      await hf(`/api/spaces/${space}/restart?factory=true`, token, { method: 'POST' }).catch(() => {});
+    } else {
+      const commit = await hf(`/api/spaces/${space}/commit/main`, token, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-ndjson' },
+        body: lines.map((l) => JSON.stringify(l)).join('\n'),
+      });
+      if (!commit.ok) throw new Error(await hfError(commit));
+    }
     step('create', 'done');
 
     step('build', 'active');
     $('#token').value = '';
     // After an update in place the old worker keeps answering until the new one is built.
-    const url = await waitForBuild(space, inPlace ? { version: WORKER_VERSION, token } : {});
+    const url = await waitForBuild(space, inPlace ? { version: WORKER_VERSION, token, run } : { run });
+    if (!live()) return;
     const changed = !state.worker || state.worker.url !== url || state.worker.key !== key;
     state.worker = { space, url, key };
     save(KEYS.worker, state.worker);
     if (changed) resetPings(); // a new worker: its own notifications
     renderConnect();
     await waitForHealth();
+    if (!live()) return;
+    if (updating) {
+      updated(msg);
+      return;
+    }
     refreshHealth();
     step('build', 'done');
     step('ready', 'done');
     state.setupMode = 'setup';
     renderWorkerDot(true);
-    note(msg, updating ? 'Updated. All the new options work now.' : 'All set. You can make videos now.', 'good');
-    toast(updating ? 'Worker updated' : 'Worker ready');
+    note(msg, 'All set. You can make videos now.', 'good');
+    toast('Worker ready');
     refreshJobs();
-    if (updating) setTimeout(() => closeDialog($('#settings')), 1500);
     if (state.pending) {
       const pending = state.pending;
       state.pending = null;
@@ -564,10 +872,11 @@ async function setupWorker() {
       submit(pending);
     }
   } catch (e) {
+    if (!live() || e.superseded) return;
     $('#steps').querySelectorAll('li.active').forEach((li) => { li.className = ''; });
     note(msg, e.message, 'bad');
   } finally {
-    $('#setupBtn').disabled = false;
+    if (live()) $('#setupBtn').disabled = false;
   }
 }
 
@@ -590,14 +899,17 @@ async function healthOf(url) {
 }
 
 // Polls the Space until Docker has built it. Returns its web address. With a version (an update in
-// place), it also waits until the worker itself answers with that version.
-async function waitForBuild(space, { version = null, token = null } = {}) {
+// place), it also waits until the worker itself answers with that version. (Setup) run: the setup this wait is for
+// (a newer one takes over: it stops); onStuck: run once when the build didn't start by itself and there is no key (the
+// one-tap update: the worker asks Hugging Face itself).
+async function waitForBuild(space, { version = null, token = null, run = 0, onStuck = null } = {}) {
   const started = Date.now();
   let errors = 0;
   let building = false;
   let kicked = false;
   while (Date.now() - started < 15 * 60 * 1000) {
     await sleep(6000);
+    if (run && run !== setupRun) throw Object.assign(new Error('superseded'), { superseded: true });
     let rt;
     try {
       const res = await fetch(`${HF}/api/spaces/${space}/runtime`);
@@ -615,7 +927,7 @@ async function waitForBuild(space, { version = null, token = null } = {}) {
     // Right after a rebuild the old stage can linger, so only a repeated error after a short wait counts.
     errors = /ERROR/.test(stage) && Date.now() - started > 45000 ? errors + 1 : 0;
     if (errors >= 2) {
-      throw new Error(`The worker failed to build (${stage}). Open huggingface.co/spaces/${space} to see why, then tap ${version ? 'Update' : 'Set up'} again.`);
+      throw Object.assign(new Error(`The worker failed to build (${stage}). Open huggingface.co/spaces/${space} to see why, then tap ${version ? 'Update' : 'Set up'} again.`), { stage });
     }
     if (stage === 'RUNNING') {
       const domain = (rt.domains || []).find((d) => d.stage === 'READY') || (rt.domains || [])[0];
@@ -624,10 +936,11 @@ async function waitForBuild(space, { version = null, token = null } = {}) {
       const health = await healthOf(url);
       if (health && health.version === version) return url;
       // Still the old worker. Hugging Face starts the new build by itself a few seconds after the files
-      // arrive; if it hasn't after 3 minutes, ask it to (once).
-      if (!building && !kicked && token && Date.now() - started > 3 * 60 * 1000) {
+      // arrive; if it hasn't after 3 minutes, ask it to (once). (Setup) Without a key (one tap): onStuck.
+      if (!building && !kicked && (token || onStuck) && Date.now() - started > 3 * 60 * 1000) {
         kicked = true;
-        await hf(`/api/spaces/${space}/restart?factory=true`, token, { method: 'POST' }).catch(() => {});
+        if (token) await hf(`/api/spaces/${space}/restart?factory=true`, token, { method: 'POST' }).catch(() => {});
+        else await onStuck();
       }
     }
   }
@@ -1480,7 +1793,9 @@ async function refreshJobs() {
     }
     $('#wakeNote').textContent = e.waking || e instanceof TypeError
       ? 'Waking up your worker… (up to a minute)'
-      : `Worker problem: ${e.message}`;
+      : !isGuest() && e.status === 401 // ((Setup) v16: the worker was made again on another device: reconnect here)
+        ? `Worker problem: ${e.message}. Was your worker set up again on another device? Then tap ⚙, Set up again: with your Hugging Face key this device connects to it (nothing is made again).`
+        : `Worker problem: ${e.message}`;
     schedulePoll(6000);
   }
 }
@@ -3148,12 +3463,14 @@ function renderPings() {
   $('#installHelp').hidden = !tab || isIOS() || Boolean(pings.install);
   $('#installHelp').textContent = touch ? 'Put antics on your Home Screen: open the browser menu, then Add to Home screen or Install app.'
     : 'Install antics as an app: open the browser menu, then Install app.';
-  $('#copyAppLink').hidden = !(tab && owner && state.worker.space);
-  $('#copyInvite').hidden = !(tab && isGuest());
+  // (Setup) v16: the links sit in Connect another phone, with their QR code: in the Home Screen app too
+  $('#copyAppLink').hidden = !(owner && state.worker.space);
+  $('#copyInvite').hidden = !isGuest();
   $('#appLinkHelp').hidden = $('#copyAppLink').hidden && $('#copyInvite').hidden;
-  $('#appLinkHelp').textContent = owner ? 'Keep it private: anyone with this link can use your antics.'
-    : 'Paste it in the Home Screen app, or open it on another phone.';
+  $('#appLinkHelp').textContent = owner ? 'Keep it private: anyone with this code or link can use your antics.'
+    : 'Your own invite: open it only on your own phones. It works in the Home Screen app too.';
   $('#appBox').hidden = !inSettings || (!tab && !pings.install);
+  renderQrBox(inSettings && !$('#appLinkHelp').hidden);
   // The nudge, while one of your videos is being made: once, until you answer it
   const mine = (j) => isGuest() || !j.owner || j.owner === 'me';
   const busy = state.jobs.some((j) => ['queued', 'working', 'waiting'].includes(j.status) && mine(j));
@@ -3261,6 +3578,8 @@ function showLinked(jobs) {
 function openUpdate() {
   state.setupMode = 'update';
   state.updateAnyway = false;
+  state.updateWithKey = false; // (Setup) one tap first, when the worker can
+  state.keyWhy = '';
   openSettings();
 }
 
@@ -4392,8 +4711,10 @@ const gpuInfo = () => (state.worker && !isGuest() && canDo('gpu') && state.healt
 // The quota can't be read: the worker makes no AI calls on an account that could be charged ('key': the key can't
 // read it; 'down': Hugging Face didn't answer); a free account goes on, estimated.
 const GPU_BLIND = {
+  // ((Setup) v16: an update, with one tap or a key, never changes the key the worker keeps: it is replaced on Hugging Face)
   key: "Your Hugging Face key can't read your free AI time, so antics makes no AI clips (it never risks your credits). "
-    + 'Make a new key with Write (step 2), then Update my worker with it.',
+    + 'Make a new key with Write on huggingface.co/settings/tokens, then open your worker (the link above), Settings, '
+    + 'Variables and secrets, and put the new key in HF_TOKEN.',
   down: "Your free AI time can't be checked right now, so AI clips wait. They go on by themselves.",
   estimated: "Your key can't read your free AI time, so antics only estimates it.",
 };
@@ -4458,7 +4779,8 @@ function renderPc() {
   $('#updateBanner').hidden = !(outdated || broken);
   $('#updateText').textContent = broken
     ? "Your worker's Hugging Face key stopped working, so videos can't be made. Paste a new Write key to fix it."
-    : 'A new version of antics is ready, with more options.';
+    : canDo('selfupdate') ? 'A new version of antics is ready. One tap updates your worker, no key needed.' // (Setup)
+      : 'A new version of antics is ready, with more options.';
 }
 
 async function getPairCode() {
@@ -4474,6 +4796,75 @@ async function getPairCode() {
   } finally {
     btn.disabled = false;
   }
+}
+
+// ---------- (Setup) v16: Connect another phone ----------
+
+// A QR code of the owner's app link (a friend: their own invite link), shown on a tap (it holds the key, so it
+// isn't on screen whenever Settings opens), gone again when Settings closes.
+const qr = { shown: false, text: '' };
+const qrLink = () => (isGuest() ? myInviteLink() : appLink());
+
+function renderQrBox(show) {
+  $('#qrBox').hidden = !show;
+  if (!show && qr.shown) hideQr();
+  if (!show) return;
+  const guest = isGuest();
+  $('#qrTitle').textContent = guest ? 'Open on another phone' : 'Connect another phone';
+  $('#qrHelp').textContent = guest
+    ? 'On your other phone, open the camera and point it at this code: your invite opens there, with your videos.'
+    : 'On the other phone or computer, open the camera and point it at this code: antics opens there, already connected. No setup, no key.';
+  $('#qrShow').textContent = qr.shown ? 'Hide the QR code' : 'Show the QR code';
+  $('#qrWrap').hidden = !qr.shown;
+  if (qr.shown && qr.text !== qrLink()) drawQr(); // (another worker or name meanwhile)
+}
+
+function drawQr() {
+  const text = qrLink();
+  const canvas = $('#qrCode');
+  qr.text = text;
+  const can = typeof window.qrcode === 'function'; // (qr.js; offline before it was ever kept: Copy still works)
+  canvas.hidden = !can;
+  $('#qrFail').hidden = can;
+  if (!can) return;
+  const code = window.qrcode(0, 'M'); // (the smallest size that holds the link; M: still reads when a bit is lost)
+  code.addData(text);
+  code.make();
+  const n = code.getModuleCount();
+  const quiet = 4; // the white border scanners need
+  const cell = Math.max(4, Math.floor(600 / (n + 2 * quiet)));
+  const size = (n + 2 * quiet) * cell;
+  canvas.width = size;
+  canvas.height = size;
+  const g = canvas.getContext('2d');
+  g.fillStyle = '#ffffff';
+  g.fillRect(0, 0, size, size);
+  g.fillStyle = '#000000';
+  for (let r = 0; r < n; r++) {
+    for (let c = 0; c < n; c++) if (code.isDark(r, c)) g.fillRect((c + quiet) * cell, (r + quiet) * cell, cell, cell);
+  }
+  canvas.setAttribute('aria-label', isGuest() ? 'QR code of your invite link' : 'QR code of your app link');
+}
+
+function hideQr() {
+  qr.shown = false;
+  qr.text = '';
+  $('#qrWrap').hidden = true;
+  $('#qrShow').textContent = 'Show the QR code';
+  const canvas = $('#qrCode');
+  canvas.width = 0; // (the key doesn't stay drawn)
+  canvas.height = 0;
+}
+
+function toggleQr() {
+  if (qr.shown) {
+    hideQr();
+    return;
+  }
+  qr.shown = true;
+  drawQr();
+  renderQrBox(true);
+  $('#qrBox').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 function renderSettings() {
@@ -4503,14 +4894,37 @@ function renderSettings() {
   $('#optionsPane').hidden = !ready;
   $('#setupTitle').textContent = updating ? 'Update your worker' : 'One-time setup';
   const rebuild = updating && keyBroken();
-  $('#setupIntro').textContent = rebuild
-    ? 'Paste a new Hugging Face Write key. Your worker is made again with this key and the newest version (2–5 min). Your videos and connections are kept.'
-    : updating
-      ? 'Paste a Hugging Face Write key. Your worker gets the newest version (2–5 min). Nothing is deleted: your videos and connections stay.'
-      : 'Your videos are made on your own free Hugging Face worker, so it keeps going when your phone is locked.';
+  const tap = oneTap(); // (Setup) v16: one tap, no key
+  const again = !updating && Boolean(state.worker); // (Set up again, on a connected device)
+  $('#setupIntro').textContent = tap
+    ? 'One tap, no key: your worker gets the newest version from the antics site by itself and builds it (2–5 min). Nothing is deleted: your videos, friends and connections stay.'
+    : rebuild
+      ? 'Paste a new Hugging Face Write key. Your worker is made again with this key and the newest version (2–5 min). Your videos and connections are kept.'
+      : updating
+        ? 'Paste a Hugging Face Write key. Your worker gets the newest version (2–5 min). Nothing is deleted: your videos and connections stay.'
+        : `Your videos are made on your own free Hugging Face worker, so it keeps going when your phone is locked. Three steps, about 5 minutes${again ? '' : ', only once'}.`;
+  // (Setup) v16: the numbered steps say what each one does and how long it takes; one tap needs none of them.
+  $('#setupHow').hidden = tap;
+  $('#setupFine').hidden = tap;
+  // (Setup) a device that isn't connected: the easier way first (a phone that works shows a QR code: no key at all)
+  $('#setupQrTip').hidden = Boolean(state.worker);
+  $('#setupKeyWhat').textContent = rebuild ? 'It lets antics make your worker again on your Hugging Face account.'
+    : updating ? 'It lets antics send the new version to your worker.'
+      : 'It lets antics make your worker on your Hugging Face account, or find the one you have.';
+  $('#setupGoLabel').textContent = updating ? 'Tap Update my worker' : 'Tap Set up my worker';
+  $('#setupGoTime').textContent = updating || again ? '2–5 min' : '2–5 min, only once';
+  $('#setupGoWhat').textContent = rebuild
+    ? 'Your worker is made again with this key and the newest version. Your videos and connections are kept.'
+    : updating ? 'Your worker gets the new version. Nothing is deleted: your videos, friends and connections stay.'
+      : again ? "If this device lost its connection to your worker, it connects again in a few seconds. Otherwise your worker is made again with this key: your videos, songs and friends stay, but your other phones and computers will need the new app link."
+        : 'antics makes your own free worker on Hugging Face and builds it. Already have one? Then this device just connects to it, in a few seconds.';
+  $('#setupUseKey').hidden = !(updating && !rebuild && canDo('selfupdate')); // (one tap or the key: the other way)
+  note($('#setupWhy'), updating && !tap && state.updateWithKey ? state.keyWhy || '' : '', 'bad'); // (why the key, after one tap failed)
+  $('#setupUseKey').textContent = tap ? 'Use my Hugging Face key instead' : 'Update with one tap instead (no key)';
   $('#setupBtn').textContent = updating ? 'Update my worker' : 'Set up my worker';
-  $('#steps [data-step="create"]').textContent = rebuild ? 'Making your worker again'
-    : updating ? 'Sending the new version' : 'Creating your worker';
+  $('#steps [data-step="key"]').textContent = tap ? 'Asking your worker to update' : 'Checking your key';
+  $('#steps [data-step="create"]').textContent = tap ? 'It gets the new version from the antics site'
+    : rebuild ? 'Making your worker again' : updating ? 'Sending the new version' : 'Creating your worker';
   $('#steps [data-step="build"]').textContent = 'Building it (2–5 min)';
   if (ready) {
     const link = $('#workerLink');
@@ -4712,6 +5126,19 @@ function init() {
   $('#openSettings').addEventListener('click', openSettings);
   $('#closeSettings').addEventListener('click', () => closeDialog($('#settings')));
   $('#setupBtn').addEventListener('click', setupWorker);
+  $('#setupUseKey').addEventListener('click', () => { // (Setup) v16: one tap or the key
+    if (oneTap()) {
+      useKeyInstead();
+      return;
+    }
+    if ($('#setupBtn').disabled) return; // (an update with the key is going on)
+    state.updateWithKey = false;
+    state.keyWhy = '';
+    note($('#setupNote'), '');
+    $('#steps').hidden = true;
+    renderSettings();
+  });
+  $('#qrShow').addEventListener('click', toggleQr); // (Setup) Connect another phone
   $('#pairBtn').addEventListener('click', getPairCode);
   $('#updateBtn').addEventListener('click', openUpdate);
   $('#updateBtnMain').addEventListener('click', openUpdate);
@@ -4720,6 +5147,7 @@ function init() {
   onClosed($('#settings'), () => {
     state.setupMode = 'setup';
     $('#steps').hidden = true;
+    if (qr.shown) hideQr(); // (Setup) the QR code (it holds the key) is gone with Settings
     if (previewing.startsWith('song:')) preview.pause();
   });
   $('#redoSetup').addEventListener('click', () => {

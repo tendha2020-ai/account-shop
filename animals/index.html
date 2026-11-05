@@ -20,6 +20,8 @@
   <script defer src="together.js"></script>
   <!-- (Sing) Sing: animals sing a song (loaded after together.js; app.js calls it through window.Sing) -->
   <script defer src="sing.js"></script>
+  <!-- (Setup) v16: QR codes (Settings, Connect another phone), vendored qrcode-generator (MIT) -->
+  <script defer src="qr.js"></script>
 </head>
 <body>
   <header class="bar">
@@ -705,14 +707,30 @@
         <h2 id="setupTitle">One-time setup</h2>
         <p id="setupLinkLine" class="note" hidden>Already use antics in your browser? <button type="button" id="toConnect" class="link-btn">Paste your antics link instead</button></p>
         <p id="privateLine" class="note">antics is TENDHA2's private tool. Friends: open the invite link TENDHA2 sent you.</p>
-        <p id="setupIntro">Your videos are made on your own free Hugging Face worker, so it keeps going when your phone is locked.</p>
-        <ol class="how">
-          <li>Open <a href="https://huggingface.co/settings/tokens/new?tokenType=write" target="_blank" rel="noopener">this page</a> (sign in if asked).</li>
-          <li>Pick <b>Write</b>, type any name, tap <b>Create token</b>, copy it.</li>
-          <li>Paste it here:</li>
+        <p id="setupIntro">Your videos are made on your own free Hugging Face worker, so it keeps going when your phone is locked. Three steps, about 5 minutes, only once.</p>
+        <!-- (Setup) v16: a device that isn't connected: no key needed when another phone already works -->
+        <p id="setupQrTip" class="note setup-tip">Already use antics on another phone? There: ⚙ Settings, Connect another phone, then scan the code with this phone's camera. No key needed.</p>
+        <!-- (Setup) v16: why the key, when the one-tap update didn't work -->
+        <p id="setupWhy" class="note bad" hidden></p>
+        <!-- (Setup) v16: numbered steps, each with what it does and how long it takes (hidden for the one-tap update) -->
+        <ol id="setupHow" class="setup-how">
+          <li>
+            <span class="setup-head"><b>Get a Hugging Face key</b> <span class="setup-time">1 min</span></span>
+            <span class="setup-what">Open <a id="tokenLink" href="https://huggingface.co/settings/tokens/new?tokenType=write" target="_blank" rel="noopener">the token page</a>
+              (sign in if asked). Pick <b>Write</b>, type any name, tap <b>Create token</b>, then copy it.</span>
+          </li>
+          <li>
+            <span class="setup-head"><b>Paste it here</b> <span class="setup-time">a few seconds</span></span>
+            <span class="setup-what" id="setupKeyWhat">It lets antics make your worker on your Hugging Face account, or find the one you have.</span>
+            <input type="password" id="token" placeholder="hf_…" autocomplete="off" spellcheck="false" aria-label="Hugging Face key">
+          </li>
+          <li>
+            <span class="setup-head"><b id="setupGoLabel">Tap Set up my worker</b> <span class="setup-time" id="setupGoTime">2–5 min, only once</span></span>
+            <span class="setup-what" id="setupGoWhat">antics makes your own free worker on Hugging Face and builds it. Already have one? Then this device just connects to it, in a few seconds.</span>
+          </li>
         </ol>
-        <input type="password" id="token" placeholder="hf_…" autocomplete="off" spellcheck="false" aria-label="Hugging Face key">
-        <button type="button" id="setupBtn" class="go small">Set up my worker</button>
+        <button type="button" id="setupBtn" class="go setup-go">Set up my worker</button>
+        <button type="button" id="setupUseKey" class="link-btn setup-alt" hidden>Use my Hugging Face key instead</button>
         <ul id="steps" class="steps" hidden>
           <li data-step="key">Checking your key</li>
           <li data-step="create">Creating your worker</li>
@@ -720,7 +738,7 @@
           <li data-step="ready">Ready</li>
         </ul>
         <p id="setupNote" class="note" hidden></p>
-        <p class="fine">The key is stored inside your worker as a secret, not on this phone.</p>
+        <p class="fine" id="setupFine">The key is stored inside your worker as a secret, not on this device.</p>
       </div>
 
       <div id="optionsPane" hidden>
@@ -917,10 +935,25 @@
           <p class="fine" id="installHelp" hidden></p>
           <div class="row">
             <button type="button" id="installBtn" class="plain" hidden>📲 Add to Home Screen</button>
+          </div>
+        </div>
+        <!-- (Setup) v16: Connect another phone: a QR code of the owner's app link (a friend: their own invite link),
+             shown on a tap, with Copy app link and the keep-it-private warning -->
+        <div id="qrBox" class="pc-box qr-box" hidden>
+          <div class="opt">
+            <span id="qrTitle">Connect another phone</span>
+          </div>
+          <p class="fine" id="qrHelp"></p>
+          <div class="row">
+            <button type="button" id="qrShow" class="plain">Show the QR code</button>
             <button type="button" id="copyAppLink" class="plain" hidden>Copy app link</button>
             <button type="button" id="copyInvite" class="plain" hidden>Copy my invite link</button>
           </div>
-          <p class="fine" id="appLinkHelp" hidden></p>
+          <div id="qrWrap" class="qr-wrap" hidden>
+            <canvas id="qrCode" class="qr-code" width="0" height="0" role="img" aria-label="QR code of your app link"></canvas>
+            <p id="qrFail" class="note" hidden>The QR code can't be shown right now. Copy the link instead.</p>
+          </div>
+          <p class="note bad qr-private" id="appLinkHelp" hidden></p>
         </div>
       </div>
       <button type="button" id="closeSettings" class="plain close">Close</button>
