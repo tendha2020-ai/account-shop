@@ -189,7 +189,8 @@ def separate(song, out_dir, engine='roformer', start=0.0, seconds=None, cache_di
 
 def split_ready(engine):
     """True when this split can run here: 'spleeter' needs sherpa-onnx (its 75 MB model downloads on first use),
-    'roformer' torch + audio-separator (its 913 MB checkpoint downloads on first use)."""
+    'roformer' torch + audio-separator + onnxruntime (its Separator imports it; the 913 MB checkpoint downloads on
+    first use)."""
     try:
         if engine == 'spleeter':  # (small: imported to be sure it loads)
             importlib.import_module('sherpa_onnx')
@@ -197,7 +198,7 @@ def split_ready(engine):
         if engine != 'roformer':
             return False
         # (big: torch is only looked for here, and imported when a song is split)
-        return all(importlib.util.find_spec(name) is not None for name in ('torch', 'audio_separator'))
+        return all(importlib.util.find_spec(name) is not None for name in ('torch', 'audio_separator', 'onnxruntime'))
     except Exception:
         return False
 
