@@ -1662,12 +1662,15 @@
     if ((engine || S.engine) === 'local') return storyOk() ? ALL_LENGTHS : [5];
     return sc.story ? ALL_LENGTHS : LENGTHS;
   }
+  // The length a scene starts at: a story its 20 s; any other scene its usual length in the cloud, and one quick 5 s
+  // shot on this PC as before (a longer video there is the user's own choice, since every extra shot adds minutes).
+  function defaultLen(sc, engine) { return sc.story || (engine || S.engine) !== 'local' ? (sc.length || 5) : 5; }
   function fitLen(sc, want) {
-    var L = lengthsFor(sc), w = want || S.userLen || sc.length || 5;
+    var L = lengthsFor(sc), d = defaultLen(sc), w = want || S.userLen || d;
     if (L.indexOf(w) >= 0) return w;
-    if (!want && !S.userLen && L.indexOf(sc.length) >= 0) return sc.length;
+    if (!want && !S.userLen && L.indexOf(d) >= 0) return d;
     var best = L[0];
-    L.forEach(function (d) { if (Math.abs(d - w) < Math.abs(best - w)) best = d; });
+    L.forEach(function (x) { if (Math.abs(x - w) < Math.abs(best - w)) best = x; });
     return best;
   }
   // Lip-sync to the chosen song: this PC with the Singing add-on (Wan2.2-S2V), the AI song or the user's own song.
@@ -2156,7 +2159,12 @@
       if (sm && k === 'beat' && lipsOk) sm.textContent = rangeText(localRange(planFor(sc, { sound: sound, sync: 'beat' })));
     });
     var t = '', tr = trackById(S.trackId), b2 = S.own && S.own.beat;
-    if (sync === 'lips') t = 'Every shot is lip-synced to the song, one after another from ' + (sound === 'own' && S.own ? fmtP(S.own.start) : 'its start') + ' — slow but fun: each 5 s shot takes about 6–9 min on this PC.';
+    if (sync === 'lips') {
+      // the time per shot, from the engine's own estimate for this plan (about 5½–8½ min on an RTX 5060)
+      var lp = planFor(sc, { sound: sound, sync: 'lips' }), lm = localRange(lp), k = Math.max(1, lp.shots ? lp.shots.length : 1);
+      var per0 = Math.max(0.5, Math.round(lm[0] / k * 2) / 2), per1 = Math.max(per0 + 0.5, Math.round(lm[1] / k * 2) / 2);
+      t = 'Every shot is lip-synced to the song, one after another from ' + (sound === 'own' && S.own ? fmtP(S.own.start) : 'its start') + ' — slow but fun: each 5 s shot takes about ' + half(per0) + '–' + half(per1) + ' min on this PC.';
+    }
     else if (allLip) t = 'Every shot sings the song in sync (lip-sync), and the cuts follow its beat.';
     else if (sound === 'music') t = tr ? 'Moves and cuts follow the beat of ' + tr.name + ' (' + tr.bpm + ' BPM).' : 'Moves and cuts follow the beat.';
     else if (sound === 'own') t = !S.own ? 'Moves and cuts will follow your song’s beat.' : b2 && b2.bpm ? 'Moves and cuts follow your song’s beat (about ' + Math.round(b2.bpm) + ' BPM).' : 'No steady beat found in your song — the shots are simply cut one after another.';
@@ -2559,6 +2567,10 @@
   (function () { var t = lsJSON('glow.ai.see'); SEE.ticked = t && Array.isArray(t.ticked) ? t.ticked : SEE_DEFAULT.slice(); if (t && Array.isArray(t.queue)) SEE.queue = t.queue; })();
   function seeSave() { lsSet('glow.ai.see', JSON.stringify({ ticked: SEE.ticked, queue: SEE.queue })); }
   function seeAvailable() { return isLocal() && !!LOC.api && localState() === 'ready'; }
+  // a preview already made from this same selfie (making it again would only cost the user time)
+  function seeFresh(id) { var r = SEE.saved[id]; return !!(r && S.photo && r.photoKey && r.photoKey === S.photo.key); }
+  // the ticked scenes that still need a preview of this selfie, in the order of the scene list
+  function seeTodo() { return SCENES.map(function (sc) { return sc.id; }).filter(function (id) { return SEE.ticked.indexOf(id) >= 0 && !seeFresh(id); }); }
   function seeMinutes(n) {
     var m = [2.5, 4];
     try { m = LOC.api.estimate({ quality: 'fast' }).minutes; } catch (e) { /* defaults */ }
@@ -2603,13 +2615,14 @@
       var id = lab.dataset.scene, cb = lab.querySelector('input');
       cb.checked = SEE.ticked.indexOf(id) >= 0;
       cb.disabled = SEE.running;
-      var state = SEE.cur === id ? 'making' : SEE.saved[id] ? 'done' : SEE.queue.indexOf(id) >= 0 ? 'queued' : SEE.failed.indexOf(id) >= 0 ? 'failed' : '';
+      var state = SEE.cur === id ? 'making' : seeFresh(id) ? 'done' : SEE.queue.indexOf(id) >= 0 ? 'queued' : SEE.failed.indexOf(id) >= 0 ? 'failed' : '';
       lab.dataset.state = state;
       lab.querySelector('.ai-see-st').textContent = state === 'making' ? Math.round(SEE.pct * 100) + '%' : state === 'done' ? '✓' : state === 'queued' ? '·' : '';
     });
-    var todo = SEE.running || SEE.queue.length ? SEE.queue.length : SEE.ticked.length;
+    var todo = SEE.running || SEE.queue.length ? SEE.queue.length : seeTodo().length;
     var m = seeMinutes(Math.max(1, todo));
-    el.seeTime.textContent = todo ? todo + ' preview' + (todo > 1 ? 's' : '') + ' · ' + rangeText(m) + ' in all on this PC' + (SEE.running ? '' : ' · 5 s each, Fast quality') : 'Tick the scenes you want to see yourself in.';
+    el.seeTime.textContent = todo ? todo + ' preview' + (todo > 1 ? 's' : '') + ' · ' + rangeText(m) + ' in all on this PC' + (SEE.running ? '' : ' · 5 s each, Fast quality') :
+      SEE.ticked.length ? 'Your previews are on the scene cards. Tick more scenes to add them.' : 'Tick the scenes you want to see yourself in.';
     el.seeGo.hidden = SEE.running;
     el.seeGo.disabled = !todo;
     el.seeGo.textContent = !SEE.running && SEE.queue.length ? 'Resume previews (' + SEE.queue.length + ' left)' : 'Make my previews';
@@ -2624,8 +2637,8 @@
     if (!canRecord()) { refuseUnsupported(); return; }
     if (running() || RUN.starting) { toast('Your video is being made — the previews can start when it’s done.', 'info', 4000); return; }
     ensureAudio();
-    if (!SEE.queue.length || SEE.photoSeq !== S.photo.seq) SEE.queue = SCENES.map(function (sc) { return sc.id; }).filter(function (id) { return SEE.ticked.indexOf(id) >= 0; });
-    if (!SEE.queue.length) return;
+    if (!SEE.queue.length || SEE.photoSeq !== S.photo.seq) SEE.queue = seeTodo();
+    if (!SEE.queue.length) { renderSee(); return; }
     SEE.photoSeq = S.photo.seq; SEE.running = true; SEE.done = []; SEE.failed = [];
     seeSave(); renderSee();
     announce('Making ' + SEE.queue.length + ' previews');
@@ -2649,7 +2662,7 @@
     if (running() || RUN.starting || LOC.api.isBusy() || document.hidden || !seeAvailable()) { SEE.wait = setTimeout(seeNext, 2500); return; }
     if (!S.photo || S.photo.seq !== SEE.photoSeq || !S.consent) { seePause(); return; }
     if (!(await acquireLocalLock())) { SEE.wait = setTimeout(seeNext, 4000); return; }
-    var sc = sceneById(id), photoSeq = SEE.photoSeq;
+    var sc = sceneById(id), photoSeq = SEE.photoSeq, photoKey = S.photo.key;
     SEE.cur = id; SEE.pct = 0; renderSee();
     var ctl = SEE.ctl = typeof AbortController === 'function' ? new AbortController() : null;
     var pjob = { kind: 'preview', engine: 'local', sceneId: id, sound: 'none', createdAt: Date.now(), engineJob: null };
@@ -2672,7 +2685,7 @@
         { silent: true, size: { w: 360, h: 624 }, canvas: document.createElement('canvas'), host: seeHost(), check: alive, transitions: false, punches: false,
           onFrac: function (f) { SEE.pct = 0.9 + 0.1 * f; renderSee(); } });
       alive();
-      var rec = { id: id, sceneId: id, blob: fin.blob, type: fin.type, at: Date.now(), labelled: true };
+      var rec = { id: id, sceneId: id, blob: fin.blob, type: fin.type, at: Date.now(), labelled: true, photoKey: photoKey };
       SEE.saved[id] = rec;
       xidb('previews', 'readwrite', function (st) { return st.put(rec); }).catch(function (e) { console.warn('[glow-ai] preview not kept', e); });
       SEE.queue.shift(); SEE.done.push(id);
@@ -2758,7 +2771,9 @@
         var thumb = drawScaled(full, full.width, full.height, 200).toDataURL('image/jpeg', 0.8);
         full.width = 1; full.height = 1;
         if (S.photo && S.photo.url) URL.revokeObjectURL(S.photo.url);
-        S.photo = { blob: blob, url: URL.createObjectURL(blob), small: small, thumb: thumb, w: d.w, h: d.h, seq: ++photoSeq, uploaded: null };
+        // key: the same photo file picked again (also after a reload) is recognised, so its previews are not made twice
+        var key = 'p' + seedOf([file.name || '', file.size || 0, file.lastModified || 0, d.w, d.h].join('|')).toString(36);
+        S.photo = { blob: blob, url: URL.createObjectURL(blob), small: small, thumb: thumb, w: d.w, h: d.h, seq: ++photoSeq, uploaded: null, key: key };
         S.consent = false; // consent is per photo
         if (SEE.running) seePause('Previews stopped — they were for your previous photo.');
         SEE.queue = []; seeSave();
