@@ -1,15 +1,22 @@
 // Glow Studio desktop launcher: serves the bundled web app on 127.0.0.1
 // and opens it in an app window (Edge/Chrome) or the default browser.
-// It quits by itself a few minutes after the app window is closed, unless the
-// free local AI engine is still busy (install running or ComfyUI rendering).
+//
+// It quits by itself only when no app window has pinged it for 30 minutes AND
+// nothing is in flight: no install, no ComfyUI render, no video or story the
+// page is making (POST /__glow/engine/hold). After an install or a render ends,
+// the 30 minutes count from that moment, so a window that slept through a long
+// download still finds the launcher running. Every exit is logged with its
+// reason in %LOCALAPPDATA%\GlowStudio\logs\launcher.log (see logs.go).
 package main
 
 import (
 	"bytes"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -17,6 +24,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -26,7 +34,7 @@ import (
 var bundle embed.FS
 
 const preferredPort = 47821
-const idleExit = 3 * time.Minute
+const idleExit = 30 * time.Minute
 
 // Each open app page pings every 15 s; background tabs may slow this to once a minute.
 const heartbeat = `<script>(function(){function p(){fetch('/__glow/ping',{cache:'no-store'}).catch(function(){})}p();setInterval(p,15000)})();</script>`
@@ -37,6 +45,15 @@ var lastPing atomic.Int64
 var onExit = func() {}
 
 func main() {
+	logDir := logsDir()
+	if err := launcherLog.open(filepath.Join(logDir, "launcher.log"), logRotateBytes); err != nil {
+		fmt.Fprintln(os.Stderr, "launcher log:", err)
+	}
+	if _, err := setupCrashLog(logDir); err != nil {
+		launcherLog.printf("[launcher] crash log not available: %v", err)
+	}
+	launcherLog.line(startupLine())
+
 	app, err := fs.Sub(bundle, "glow")
 	if err != nil {
 		fatal("The app files are missing from this program.", err)
@@ -50,34 +67,21 @@ func main() {
 	if v, err := strconv.Atoi(os.Getenv("GLOW_PORT")); err == nil && v > 0 {
 		ports = []int{v}
 	}
-	var ln net.Listener
-	for _, p := range ports {
-		l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p))
-		if err == nil {
-			ln = l
-			break
-		}
-		// Already running? Then just open another window on it.
-		if alreadyRunning(p) {
-			openApp(fmt.Sprintf("http://127.0.0.1:%d/", p))
-			return
-		}
+	ln, running, err := listen(ports)
+	if err != nil {
+		fatal("Glow Studio could not start its local server.", err)
 	}
-	if ln == nil {
-		// A copy that had to take a random port records it in instance.json.
-		if p := readInstancePort(); p > 0 && alreadyRunning(p) {
-			openApp(fmt.Sprintf("http://127.0.0.1:%d/", p))
-			return
-		}
-		l, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			fatal("Glow Studio could not start its local server.", err)
-		}
-		ln = l
+	if running != "" {
+		// Already running: open another window on it.
+		launcherLog.printf("[launcher] Glow Studio is already running at %s: opening a window on it; this copy exits", running)
+		openApp(running)
+		launcherLog.close()
+		return
 	}
 	myPort := ln.Addr().(*net.TCPAddr).Port
 	writeInstancePort(myPort)
 	url := fmt.Sprintf("http://%s/", ln.Addr().String())
+	launcherLog.printf("[launcher] listening on %s", url)
 
 	index, err := fs.ReadFile(app, "index.html")
 	if err != nil {
@@ -138,28 +142,105 @@ func main() {
 		tick = time.Second
 	}
 	lastPing.Store(time.Now().UnixNano())
-	go func() {
+	goSafe("idle exit", func() {
+		lastBusy := time.Now()
+		wasBusy := ""
+		summary := time.Now()
 		for range time.Tick(tick) {
-			// Keep running while an install or a render is in progress, even if
-			// the window was closed; quit once it is done.
-			if time.Since(time.Unix(0, lastPing.Load())) > idle && !engine.Busy() {
-				onExit()
-				os.Exit(0)
+			now := time.Now()
+			busy, why := engine.BusyReason()
+			if busy {
+				lastBusy = now
+			}
+			if why != wasBusy {
+				if why != "" {
+					launcherLog.printf("[launcher] busy: %s", why)
+				} else {
+					launcherLog.printf("[launcher] nothing running any more")
+				}
+				wasBusy = why
+			}
+			if now.Sub(summary) >= 10*time.Minute {
+				requests.flush()
+				summary = now
+			}
+			if exit, reason := idleDecision(now, time.Unix(0, lastPing.Load()), lastBusy, idle, busy); exit {
+				exitApp(0, reason)
 			}
 		}
-	}()
-	go func() {
+	})
+	goSafe("signals", func() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-		<-sig
-		onExit()
-		os.Exit(0)
-	}()
+		s := <-sig
+		exitApp(0, "asked to stop ("+s.String()+")")
+	})
 
-	go openApp(url)
-	if err := http.Serve(ln, mux); err != nil {
+	goSafe("open window", func() { openApp(url) })
+	srv := &http.Server{Handler: logRequests(mux), ErrorLog: log.New(launcherLog, "[http] ", 0)}
+	if err := srv.Serve(ln); err != nil {
 		fatal("Glow Studio's local server stopped.", err)
 	}
+}
+
+// idleDecision: quit only when nothing is in flight and neither a page ping nor
+// any work happened for idle (30 minutes). reason explains the exit for the log.
+func idleDecision(now, lastPing, lastBusy time.Time, idle time.Duration, busy bool) (exit bool, reason string) {
+	if busy {
+		return false, ""
+	}
+	last := lastPing
+	if lastBusy.After(last) {
+		last = lastBusy
+	}
+	if now.Sub(last) < idle {
+		return false, ""
+	}
+	return true, fmt.Sprintf("idle exit: no Glow Studio window has been open for %s and nothing is running (last ping %s ago, last work %s ago)",
+		idle, now.Sub(lastPing).Round(time.Second), now.Sub(lastBusy).Round(time.Second))
+}
+
+var exitOnce sync.Once
+
+// exitApp logs why the launcher quits, stops the engine and exits.
+func exitApp(code int, reason string) {
+	exitOnce.Do(func() {
+		requests.flush()
+		launcherLog.printf("[launcher] exiting: %s", reason)
+		onExit()
+		launcherLog.printf("[launcher] stopped (exit code %d)", code)
+		launcherLog.close()
+		os.Exit(code)
+	})
+	select {} // another goroutine is already exiting
+}
+
+// listen picks the launcher's port: the first of ports that is free, unless a
+// Glow Studio is already answering on one of them (running is then its URL).
+// When every fixed port is taken by other programs, the port recorded in
+// instance.json is checked (a copy that had to use a random port), and a random
+// port is used otherwise. A copy that is gone (crashed, killed) leaves nothing
+// that blocks a fresh start: its port is free again, and a stale instance.json
+// is ignored because nothing answers the ping there.
+func listen(ports []int) (ln net.Listener, running string, err error) {
+	for _, p := range ports {
+		l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p))
+		if err == nil {
+			return l, "", nil
+		}
+		if alreadyRunning(p) {
+			return nil, fmt.Sprintf("http://127.0.0.1:%d/", p), nil
+		}
+		launcherLog.printf("[launcher] port %d is used by another program", p)
+	}
+	if p := readInstancePort(); p > 0 && alreadyRunning(p) {
+		return nil, fmt.Sprintf("http://127.0.0.1:%d/", p), nil
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, "", err
+	}
+	return l, "", nil
 }
 
 func withHeartbeat(page []byte) []byte {
@@ -205,7 +286,14 @@ func alreadyRunning(port int) bool {
 }
 
 func fatal(msg string, err error) {
+	if err == nil {
+		err = errors.New("unknown error")
+	}
+	launcherLog.printf("[launcher] fatal: %s %v", msg, err)
+	requests.flush()
 	onExit()
+	launcherLog.printf("[launcher] exiting: fatal error (exit code 1)")
+	launcherLog.close()
 	showError(msg + "\n\n" + err.Error())
 	os.Exit(1)
 }

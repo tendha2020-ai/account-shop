@@ -17,16 +17,34 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
 )
 
-func (e *Engine) runInstall(ctx context.Context, j *Job, done chan struct{}) {
+// runInstall runs the install job. persist writes the manifest snapshot taken
+// when the job was accepted (the unfinished install, so a restart offers Resume).
+func (e *Engine) runInstall(ctx context.Context, j *Job, done chan struct{}, persist func() error) {
 	defer close(done)
 	stopSpeed := make(chan struct{})
-	go j.trackSpeed(stopSpeed)
-	err := e.install(ctx, j)
+	goSafe("download speed", func() { j.trackSpeed(stopSpeed) })
+	err := func() (err error) {
+		// A bug must not leave the job "running" for ever (that would also keep
+		// the launcher from ever quitting): report it as a failed install.
+		defer func() {
+			if v := recover(); v != nil {
+				launcherLog.printf("[launcher] PANIC in the install job (recovered): %v\n%s", v, debug.Stack())
+				err = friendly(fmt.Errorf("internal error: %v", v), "Something went wrong in Glow Studio while installing. Press “Try again”.")
+			}
+		}()
+		if persist != nil {
+			if err := persist(); err != nil {
+				return dirError(err, j.InstallDir)
+			}
+		}
+		return e.install(ctx, j)
+	}()
 	close(stopSpeed)
 
 	j.mu.Lock()
@@ -167,7 +185,6 @@ func (e *Engine) install(ctx context.Context, j *Job) error {
 	}
 	j.set("Finishing up…", "", 0, 0)
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, id := range j.Packs {
 		ok := true
@@ -181,7 +198,9 @@ func (e *Engine) install(ctx context.Context, j *Job) error {
 		}
 	}
 	e.man.Pending, e.man.PendingRepair = nil, false
-	if err := e.man.save(dir); err != nil {
+	write := e.manifestWriterLocked(dir)
+	e.mu.Unlock()
+	if err := write(); err != nil {
 		return dirError(err, dir)
 	}
 	return nil
@@ -274,15 +293,38 @@ func (e *Engine) recordFile(dir string, it planItem, size int64, sha string) err
 		sha = it.f.SHA256 // verifyExisting compared against it
 	}
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	e.man.Files[it.key] = FileRecord{Size: size, SHA256: sha, Verified: time.Now().UTC().Format(time.RFC3339)}
-	if err := e.man.save(dir); err != nil {
+	write := e.manifestWriterLocked(dir)
+	e.mu.Unlock()
+	if err := write(); err != nil {
 		return dirError(err, dir)
 	}
 	return nil
 }
 
 var pctRe = regexp.MustCompile(`(\d{1,3})%`)
+
+// sevenZipProgressRe: a 7-Zip progress update ("  45% 10 - ComfyUI_windows_portable\…",
+// " 3%", "100% 1234") — not a message for people.
+var sevenZipProgressRe = regexp.MustCompile(`^\d{1,3}%(\s+\d+)?(\s+[-+U]\s.*)?$`)
+
+const sevenZipProgress = "[7-zip] unpacking… "
+
+// sevenZipLine sorts one line of 7-Zip output: progress (pct >= 0), a real
+// message, or nothing (the backspaces and spaces 7-Zip uses to redraw its
+// progress leave empty pieces).
+func sevenZipLine(line string) (msg string, pct int) {
+	t := strings.TrimSpace(line)
+	if t == "" {
+		return "", -1
+	}
+	if sevenZipProgressRe.MatchString(t) {
+		m := pctRe.FindStringSubmatch(t)
+		p, _ := strconv.Atoi(m[1])
+		return "", min(p, 100)
+	}
+	return t, -1
+}
 
 // extractEngine unpacks the portable ComfyUI with 7zr.exe (once).
 func (e *Engine) extractEngine(ctx context.Context, j *Job) error {
@@ -332,16 +374,27 @@ func (e *Engine) extractEngine(ctx context.Context, j *Job) error {
 		afterStart(cmd)
 		var tail []string
 		pumped := make(chan struct{})
+		lastFile := -10
 		go func() {
 			defer close(pumped)
+			defer recoverLog("7-zip output")
 			e.logs.pump(out, func(line string) {
-				if m := pctRe.FindAllStringSubmatch(line, -1); len(m) > 0 {
-					pct, _ := strconv.Atoi(m[len(m)-1][1])
+				msg, pct := sevenZipLine(line)
+				if pct >= 0 {
 					j.set(step, e.cat.Engine.Name, size*int64(pct)/100, size)
+					// one line in Details, updated in place; the log file gets every 10 %
+					toFile := pct >= lastFile+10 || pct == 100
+					if toFile {
+						lastFile = pct
+					}
+					e.logs.setProgress(sevenZipProgress, fmt.Sprintf("%s%d%%", sevenZipProgress, pct), toFile)
 					return
 				}
-				e.logs.add("[7-zip] " + line)
-				if tail = append(tail, line); len(tail) > 20 {
+				if msg == "" {
+					return
+				}
+				e.logs.add("[7-zip] " + msg)
+				if tail = append(tail, msg); len(tail) > 20 {
 					tail = tail[1:]
 				}
 			})
@@ -375,8 +428,9 @@ func (e *Engine) extractEngine(ctx context.Context, j *Job) error {
 				os.Remove(archive)
 				e.mu.Lock()
 				delete(e.man.Files, fileKey(e.cat.Engine))
-				e.man.save(dir)
+				write := e.manifestWriterLocked(dir)
 				e.mu.Unlock()
+				write()
 				return friendly(werr, "The AI engine download was damaged. Press “Try again” to download it again.")
 			case code == 8:
 				return friendly(werr, "This PC ran out of memory while unpacking the AI engine. Close other programs, then press “Try again”.")
@@ -404,9 +458,9 @@ func (e *Engine) extractEngine(ctx context.Context, j *Job) error {
 	e.man.EngineExtracted, e.man.ComfyVersion = true, comfyVersion
 	e.man.EngineFiles, e.man.EngineKey, e.man.EngineSuspect = count, key, false
 	delete(e.man.Files, fileKey(e.cat.Engine))
-	err := e.man.save(dir)
+	write := e.manifestWriterLocked(dir)
 	e.mu.Unlock()
-	if err != nil {
+	if err := write(); err != nil {
 		return dirError(err, dir)
 	}
 	// The 2 GB archive is not needed any more.
@@ -568,9 +622,9 @@ func (e *Engine) checkEngine(ctx context.Context, j *Job) error {
 	}
 	e.mu.Lock()
 	e.man.EngineExtracted = false
-	err = e.man.save(dir)
+	write := e.manifestWriterLocked(dir)
 	e.mu.Unlock()
-	if err != nil {
+	if err := write(); err != nil {
 		return dirError(err, dir)
 	}
 	return nil

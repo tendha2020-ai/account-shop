@@ -10,6 +10,7 @@
    * ------------------------------------------------------------------ */
   var FX = window.GlowFX || null;
   var MU = window.GlowMusic || null;
+  var BEAT = window.GlowBeat || null;
   var $ = function (s, r) { return (r || document).querySelector(s); };
   var wait = function (ms) { return new Promise(function (r) { setTimeout(r, ms || 0); }); };
   var nextTick = function () { return new Promise(function (r) { setTimeout(r, 0); }); };
@@ -47,7 +48,32 @@
   var tracks = (MU && Array.isArray(MU.tracks)) ? MU.tracks.filter(function (t) { return t && t.id; }) : [];
 
   function tplById(id) { for (var i = 0; i < templates.length; i++) if (templates[i].id === id) return templates[i]; return templates[0] || null; }
-  function trackById(id) { for (var i = 0; i < tracks.length; i++) if (tracks[i].id === id) return tracks[i]; return tracks[0] || null; }
+  function trackById(id) { if (id === 'own') return null; for (var i = 0; i < tracks.length; i++) if (tracks[i].id === id) return tracks[i]; return tracks[0] || null; }
+  function ownOn() { return S.trackId === 'own' && !!S.own; }
+  // The beat the template cuts on: the built-in track's tempo, or the one found in the user's song.
+  function sceneBpm() { if (ownOn()) return S.own.bpm; var t = trackById(S.trackId); return t ? t.bpm : 120; }
+  // The music for a video of `dur` seconds: the built-in track, or the user's song from its downbeat (so the
+  // template's beat 0 lands on the song's downbeat at t = 0), looped by whole bars if it is short, faded at the end.
+  function musicFor(dur) {
+    if (ownOn()) return Promise.resolve(ownSlice(dur));
+    var t = trackById(S.trackId);
+    return t ? getMusic(t.id, dur) : Promise.resolve(null);
+  }
+  function ownSlice(dur) {
+    var own = S.own, src = own.buffer, ctx = ensureAudio();
+    var sr = src.sampleRate, n = Math.max(1, Math.round(dur * sr)), chs = Math.max(2, src.numberOfChannels);
+    var out = ctx ? ctx.createBuffer(chs, n, sr) : new AudioBuffer({ numberOfChannels: chs, length: n, sampleRate: sr });
+    var from = Math.round(own.offset * sr), avail = src.length - from, bar = Math.round(4 * 60 / own.bpm * sr);
+    var loop = avail >= n ? n : Math.max(bar, Math.floor(avail / bar) * bar);
+    for (var c = 0; c < chs; c++) {
+      var d = src.getChannelData(Math.min(c, src.numberOfChannels - 1)), o = out.getChannelData(c);
+      for (var i = 0; i < n; i++) { var k = from + (i % loop); o[i] = k < src.length ? d[k] : 0; }
+      var fi = Math.min(n, Math.round(0.01 * sr)), fo = Math.min(n, Math.round(1.0 * sr));
+      for (var a = 0; a < fi; a++) o[a] *= a / fi;
+      for (var b = 0; b < fo; b++) o[n - 1 - b] *= b / fo;
+    }
+    return out;
+  }
   function aspectById(id) { for (var i = 0; i < ASPECTS.length; i++) if (ASPECTS[i].id === id) return ASPECTS[i]; return ASPECTS[0]; }
 
   var S = {
@@ -59,7 +85,8 @@
     aspect: '9:16', quality: '1080',
     scene: null, buffer: null,
     playing: false, offset: 0, startAt: 0, perfStart: 0, src: null,
-    gen: 0, building: false, exporting: false, renderErr: false
+    gen: 0, building: false, exporting: false, renderErr: false,
+    own: null                // "My song": { name, buffer, beat, start, offset (downbeat at/after start), bpm }, trackId 'own'
   };
   var firstTpl = tplById(S.templateId);
   S.trackId = (firstTpl && trackById(firstTpl.track) && firstTpl.track) || (tracks[0] ? tracks[0].id : '');
@@ -77,7 +104,9 @@
     exLeft: $('#exLeft'), exWarn: $('#exWarn'), exPrepT: $('#exPrepT'), exMonitor: $('#exMonitor'), cancel: $('#btnCancel'),
     resModal: $('#resultModal'), video: $('#resultVideo'), resMeta: $('#resMeta'), dl: $('#btnDownload'), share: $('#btnShare'),
     another: $('#btnAnother'), resClose: $('#resClose'),
-    infoModal: $('#infoModal'), infoTitle: $('#infoTitle'), infoText: $('#infoText'), infoOk: $('#infoOk')
+    infoModal: $('#infoModal'), infoTitle: $('#infoTitle'), infoText: $('#infoText'), infoOk: $('#infoOk'),
+    own: $('#pvOwn'), ownName: $('#pvOwnName'), ownMeta: $('#pvOwnMeta'), ownAt: $('#pvOwnAt'), ownPrev: $('#pvOwnPrev'), ownNext: $('#pvOwnNext'),
+    ownChange: $('#pvOwnChange'), ownNote: $('#pvOwnNote'), ownFile: $('#pvOwnFile')
   };
   var pvCtx = el.pv.getContext('2d');
 
@@ -453,7 +482,7 @@
   function updateNowLine() {
     var t = tplById(S.templateId), tr = trackById(S.trackId);
     el.nowTpl.textContent = t ? t.name : '—';
-    el.nowTrack.textContent = tr ? tr.name : '—';
+    el.nowTrack.textContent = ownOn() ? 'My song: ' + S.own.name : tr ? tr.name : '—';
   }
   function updateCta() {
     if (!S.photos.length) { el.ctaSub.textContent = 'Add photos to start'; el.create.classList.add('idle'); return; }
@@ -496,7 +525,7 @@
     }
     var playAfter = autoplayNext;
     S.building = true; setStage();
-    var track = trackById(S.trackId), size = previewSize(S.aspect), scene = null;
+    var track = ownOn() ? null : trackById(S.trackId), size = previewSize(S.aspect), scene = null, own = ownOn();
     try {
       await fontsReady();
       if (g !== S.gen) return;
@@ -504,13 +533,13 @@
         templateId: S.templateId,
         photos: S.photos.map(function (p) { return p.src; }),
         width: size[0], height: size[1],
-        bpm: track ? track.bpm : 120
+        bpm: sceneBpm()
       });
       if (g !== S.gen) { disposeScene(scene); return; }
       if (!scene || typeof scene.render !== 'function' || !(scene.duration > 0)) throw new Error('Template returned an invalid scene');
       var buffer = null;
-      if (track) {
-        try { buffer = await getMusic(track.id, scene.duration); }
+      if (track || own) {
+        try { buffer = await musicFor(scene.duration); }
         catch (e) { console.warn('[glow] music failed', e); if (g === S.gen) toast('Couldn’t make the music — the preview will play silently.', 'warn'); }
       }
       if (g !== S.gen) { disposeScene(scene); return; }
@@ -626,7 +655,7 @@
   function selectTemplate(id) {
     var t = tplById(id);
     if (!t) return;
-    var tr = t.track ? trackById(t.track) : null;
+    var tr = t.track && !ownOn() ? trackById(t.track) : null; // the user's own song stays chosen
     var changed = t.id !== S.templateId || (tr && tr.id === t.track && tr.id !== S.trackId);
     S.templateId = t.id;
     if (tr && tr.id === t.track) S.trackId = tr.id;
@@ -710,7 +739,7 @@
       if (!card) continue;
       try {
         var tr = trackById(t.track);
-        var sc = await FX.createScene({ templateId: t.id, photos: posterSet(photos, t, i), width: POSTER_W, height: POSTER_H, bpm: tr ? tr.bpm : 120 });
+        var sc = await FX.createScene({ templateId: t.id, photos: posterSet(photos, t, i), width: POSTER_W, height: POSTER_H, bpm: ownOn() ? S.own.bpm : tr ? tr.bpm : 120 });
         if (g !== posterGen) { disposeScene(sc); return; }
         var off = makeCanvas(POSTER_W, POSTER_H), offCx = off.getContext('2d');
         var best = null, bestScore = -1e9, times = posterTimes(sc);
@@ -765,6 +794,27 @@
       el.tracks.appendChild(wrap);
       trackCards[tr.id] = { wrap: wrap, play: playB, pick: pick, best: best };
     });
+    // "My song": the user's own audio file; the template cuts on its beat
+    var ow = document.createElement('div');
+    ow.className = 'track track-own'; ow.dataset.track = 'own';
+    ow.style.setProperty('--c1', '#22d3ee'); ow.style.setProperty('--c2', '#a457ff');
+    var oPlay = document.createElement('button');
+    oPlay.type = 'button'; oPlay.className = 'track-play'; oPlay.innerHTML = ICON.play + ICON.stop;
+    oPlay.setAttribute('aria-label', 'Preview your song');
+    oPlay.addEventListener('click', function (e) { e.stopPropagation(); if (!S.own) { openOwnPicker(); return; } toggleTrackPreview('own'); });
+    var oPick = document.createElement('button');
+    oPick.type = 'button'; oPick.className = 'track-pick';
+    var on = document.createElement('span'); on.className = 'track-name'; on.textContent = 'My song';
+    var om = document.createElement('span'); om.className = 'track-meta'; om.textContent = 'Upload a song';
+    var ob = document.createElement('span'); ob.className = 'track-bpm'; ob.innerHTML = '<i></i>'; ob.appendChild(document.createTextNode('Your beat'));
+    oPick.appendChild(on); oPick.appendChild(om); oPick.appendChild(ob);
+    oPick.setAttribute('aria-label', 'Use my own song');
+    oPick.addEventListener('click', function () { if (!S.own) openOwnPicker(); else selectTrack('own'); });
+    var oeq = document.createElement('span'); oeq.className = 'eq'; oeq.setAttribute('aria-hidden', 'true'); oeq.innerHTML = '<i></i><i></i><i></i>';
+    var obest = document.createElement('span'); obest.className = 'best'; obest.hidden = true;
+    ow.appendChild(oPlay); ow.appendChild(oPick); ow.appendChild(oeq); ow.appendChild(obest);
+    el.tracks.appendChild(ow);
+    trackCards.own = { wrap: ow, play: oPlay, pick: oPick, best: obest, meta: om, bpm: ob };
     updateTrackUI();
   }
   function updateTrackUI() {
@@ -773,12 +823,19 @@
       var c = trackCards[id], sel = id === S.trackId;
       c.wrap.classList.toggle('sel', sel);
       c.pick.setAttribute('aria-pressed', sel ? 'true' : 'false');
-      c.best.hidden = !(t && t.track === id);
+      c.best.hidden = id === 'own' || !(t && t.track === id);
     });
+    var oc = trackCards.own;
+    if (oc) {
+      oc.meta.textContent = S.own ? S.own.name : 'Upload a song';
+      oc.bpm.lastChild.textContent = S.own ? Math.round(S.own.bpm) + ' BPM' : 'Your beat';
+      oc.pick.setAttribute('aria-label', S.own ? 'Use my song, ' + S.own.name + ', about ' + Math.round(S.own.bpm) + ' BPM' : 'Use my own song (choose a file)');
+    }
+    renderOwnBar();
     updateNowLine();
   }
   function selectTrack(id) {
-    var tr = trackById(id);
+    var tr = id === 'own' ? (S.own ? { id: 'own' } : null) : trackById(id);
     if (!tr) return;
     var changed = tr.id !== S.trackId;
     S.trackId = tr.id;
@@ -791,6 +848,79 @@
 
   var tp = { id: null, src: null, token: 0 };
   function setTrackPlayState(id, cls, on) { var c = trackCards[id]; if (c) c.play.classList.toggle(cls, on); }
+  /* My song: decode, find the beat (GlowBeat), start on a downbeat. Kept in memory for this visit only. */
+  var ownSeq = 0;
+  function openOwnPicker() { if (!el.ownFile) return; try { el.ownFile.value = ''; } catch (e) { /* ignore */ } el.ownFile.click(); }
+  async function loadOwn(file) {
+    if (!file) return;
+    if (!(/^audio\//i.test(file.type || '') || /\.(mp3|m4a|aac|mp4|wav|wave|ogg|oga|opus|webm|flac)$/i.test(file.name || ''))) { toast('That file doesn’t look like a song. Use an MP3, M4A, WAV or OGG file.', 'warn', 5000); return; }
+    if (file.size > 20 * 1024 * 1024) { toast('Please use a song file up to 20 MB (an MP3 or M4A is much smaller than a WAV).', 'warn', 6000); return; }
+    if (S.exporting) return;
+    var ctx = ensureAudio();
+    if (!ctx) { toast('Audio isn’t supported in this browser.', 'error'); return; }
+    var seq = ++ownSeq;
+    toast('Opening your song…', 'info', 1800);
+    try {
+      var ab = await file.arrayBuffer();
+      var buf = await new Promise(function (res, rej) { var p = ctx.decodeAudioData(ab, res, rej); if (p && p.then) p.then(res, rej); });
+      if (seq !== ownSeq) return;
+      var beat = null;
+      try { beat = BEAT ? await BEAT.analyze(buf) : null; } catch (e) { beat = null; }
+      if (seq !== ownSeq) return;
+      var own = { name: (file.name || 'My song').replace(/\.[a-z0-9]+$/i, ''), buffer: buf, beat: beat, bpm: beat && beat.bpm > 0 ? beat.bpm : 120, start: 0, offset: 0 };
+      own.start = liveliestStart(own);
+      own.offset = downbeatAt(own, own.start);
+      S.own = own;
+      stopTrackPreview();
+      selectTrack('own');
+      toast(beat && beat.bpm ? 'Your song: about ' + Math.round(beat.bpm) + ' BPM — the template cuts on its beat.' : 'Your song is ready. No steady beat was found, so cuts follow 120 BPM.', 'ok', 4000);
+    } catch (e) {
+      console.warn('[glow] song decode failed', e);
+      if (seq === ownSeq) toast('That song couldn’t be opened in this browser. Try an MP3 or M4A file.', 'warn', 6000);
+    }
+  }
+  // the first downbeat at or after t (beat 0 of the template lands on it)
+  function downbeatAt(own, t) {
+    var d = own.beat && own.beat.downbeats ? own.beat.downbeats : [];
+    for (var i = 0; i < d.length; i++) if (d[i] >= t - 0.02) return d[i];
+    return Math.max(0, t);
+  }
+  // the liveliest 20 seconds (loudest beats) — usually the chorus — as the default start
+  function liveliestStart(own) {
+    var b = own.beat, len = 20;
+    if (!b || !b.downbeats || !b.downbeats.length || own.buffer.duration <= len + 1) return b && b.firstDownbeat != null ? b.firstDownbeat : 0;
+    var best = b.downbeats[0], bs = -1;
+    b.downbeats.forEach(function (d) {
+      if (d + len > own.buffer.duration) return;
+      var e = 0, c = 0;
+      b.beats.forEach(function (t, k) { if (t >= d && t < d + len) { e += b.energy[k] || 0; c++; } });
+      if (c && e / c > bs + 0.02) { bs = e / c; best = d; }
+    });
+    return best;
+  }
+  function moveOwn(bars) {
+    var own = S.own; if (!own) return;
+    var d = own.beat && own.beat.downbeats && own.beat.downbeats.length ? own.beat.downbeats : null, at = own.offset;
+    if (d) {
+      var i = d.indexOf(at); if (i < 0) i = 0;
+      i = Math.max(0, Math.min(d.length - 1, i + bars));
+      at = d[i];
+    } else at = Math.max(0, Math.min(own.buffer.duration - 4, at + bars * 4 * 60 / own.bpm));
+    own.start = own.offset = at;
+    stopTrackPreview();
+    renderOwnBar();
+    if (S.photos.length) scheduleRebuild({ autoplay: S.playing });
+  }
+  function renderOwnBar() {
+    if (!el.own) return;
+    var on = ownOn();
+    el.own.hidden = !on; if (el.ownNote) el.ownNote.hidden = !on;
+    if (!on) return;
+    var t = S.own.offset, m = Math.floor(t / 60), sec = Math.floor(t - m * 60);
+    el.ownName.textContent = S.own.name;
+    el.ownMeta.textContent = (S.own.beat && S.own.beat.bpm ? 'about ' + Math.round(S.own.bpm) + ' BPM' : 'no steady beat found') + ' · starts on a downbeat';
+    el.ownAt.textContent = 'Starts at ' + m + ':' + (sec < 10 ? '0' : '') + sec;
+  }
   function stopTrackPreview() {
     if (!tp.id) return;
     var id = tp.id;
@@ -810,7 +940,7 @@
     tp.id = id;
     setTrackPlayState(id, 'busy', true);
     try {
-      var buf = await getMusic(id, 8);
+      var buf = id === 'own' ? ownSlice(Math.min(8, S.own.buffer.duration - S.own.offset)) : await getMusic(id, 8);
       if (token !== tp.token) return;
       var src = ctx.createBufferSource();
       src.buffer = buf; src.connect(master); src.start();
@@ -1003,15 +1133,15 @@
       made = ph.made;
       if (EX.cancelled) return;
       el.exPrepT.textContent = 'Preparing full-quality frames…';
-      var track = trackById(S.trackId);
-      scene = await FX.createScene({ templateId: S.templateId, photos: ph.list, width: size[0], height: size[1], bpm: track ? track.bpm : 120 });
+      var track = ownOn() ? null : trackById(S.trackId), own = ownOn();
+      scene = await FX.createScene({ templateId: S.templateId, photos: ph.list, width: size[0], height: size[1], bpm: sceneBpm() });
       // The scene keeps its own graded copies, so the big decoded sources can go before recording starts.
       made.forEach(releaseCanvas); made = [];
       if (EX.cancelled) return;
       if (!scene || typeof scene.render !== 'function' || !(scene.duration > 0)) throw new Error('invalid scene');
       el.exPrepT.textContent = 'Mixing the music…';
       var buffer = null;
-      if (track) { try { buffer = await getMusic(track.id, scene.duration); } catch (e) { console.warn('[glow] export music failed', e); } }
+      if (track || own) { try { buffer = await musicFor(scene.duration); } catch (e) { console.warn('[glow] export music failed', e); } }
       if (EX.cancelled) return;
       if (!buffer && ctx) {
         toast('Music couldn’t be created — your video will be silent.', 'warn');
@@ -1258,6 +1388,10 @@
   el.btnDemo.addEventListener('click', loadDemo);
   el.emptyDemo.addEventListener('click', loadDemo);
   el.btnClear.addEventListener('click', clearPhotos);
+  if (el.ownFile) el.ownFile.addEventListener('change', function () { var f = el.ownFile.files; if (f && f.length) loadOwn(f[0]); });
+  if (el.ownChange) el.ownChange.addEventListener('click', openOwnPicker);
+  if (el.ownPrev) el.ownPrev.addEventListener('click', function () { moveOwn(-4); });
+  if (el.ownNext) el.ownNext.addEventListener('click', function () { moveOwn(4); });
   el.file.addEventListener('change', function () { var f = el.file.files; if (f && f.length) addFiles(f); });
   el.surprise.addEventListener('click', surprise);
   el.create.addEventListener('click', startExport);
@@ -1325,7 +1459,8 @@
       return {
         photos: S.photos.length, templateId: S.templateId, trackId: S.trackId, aspect: S.aspect, quality: S.quality,
         playing: S.playing, building: S.building, exporting: S.exporting, duration: S.scene ? S.scene.duration : 0,
-        time: nowT(), hasMusic: !!S.buffer, stage: el.screen.dataset.state
+        time: nowT(), hasMusic: !!S.buffer, stage: el.screen.dataset.state,
+        own: S.own ? { name: S.own.name, bpm: S.own.bpm, offset: S.own.offset, duration: S.own.buffer.duration } : null, bpm: sceneBpm(), bufferDuration: S.buffer ? S.buffer.duration : 0
       };
     }
   };

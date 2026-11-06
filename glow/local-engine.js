@@ -20,6 +20,13 @@
  * Privacy: once a video is handed over (or cancelled, discarded, failed), the launcher deletes the selfie copy and
  * the unlabelled outputs ComfyUI kept for it, and ComfyUI forgets the prompts (POST /__glow/engine/cleanup).
  *
+ * Stories (several shots from ONE selfie, see generateStory below): all stills first (one photo-model load), then the
+ * AI song if any, then the dance videos, then every lip-sync shot (each one verified single S2V chunk driven by its own
+ * segment of the soundtrack) — so the big models are loaded once each on an 8 GB card with 32 GB of RAM.
+ *
+ * While a job runs the page asks the launcher to stay up (POST /__glow/engine/hold), so a hidden or sleeping window
+ * (no pings) never lets the launcher quit in the middle of a long story; the hold ends with the job.
+ *
  * Classic script, no dependencies. Test hooks: window.__GLOW_LOCALAI_TEST__ = { historyPollMs, safetyPollMs,
  * statusPollMs, wsConnectMs, readyTimeoutMs, noWebSocket, forceProbe }.
  */
@@ -286,7 +293,12 @@
     lost: 'The AI engine restarted, so this video was lost. Please try again.',
     failed: 'Something went wrong while making the video. Please try again.',
     rejected: 'The AI engine didn’t accept this job. Press “Check & repair files” to check the AI files.',
-    download: 'The finished video couldn’t be loaded from the AI engine. Please try again.'
+    download: 'The finished video couldn’t be loaded from the AI engine. Please try again.',
+    badAudio: 'This song file couldn’t be read. Please try another file (MP3, M4A, WAV or OGG).',
+    audioShort: 'Your song is too short for this video. Pick an earlier start point or a longer song.',
+    needSong: 'Lip-sync needs a song: choose the AI song or your own song.',
+    twoSongs: 'Choose either the AI song or your own song, not both.',
+    shots: 'A story needs 1 to 4 shots, each with a scene description.'
   };
 
   /* ------------------------------------------------------------------ *
@@ -362,8 +374,15 @@
       return delay(700).then(function () { return getStatus({ timeout: 5000 }); }).catch(function () { return null; });
     });
   }
-  // status({refresh: true}) also re-checks the graphics card (for "Check again" after a driver update)
-  function status(opt) { return getStatus(opt && opt.refresh ? { refresh: true } : undefined); }
+  // status({refresh: true}) also re-checks the graphics card (for "Check again" after a driver update);
+  // status({timeout: ms}) waits that long for an answer (default 8 s; the setup page uses 15 s while it downloads).
+  function status(opt) {
+    opt = opt || {};
+    var o = {};
+    if (opt.refresh) o.refresh = true;
+    if (num(opt.timeout, 0) > 0) o.timeout = num(opt.timeout, 0);
+    return getStatus(o.refresh || o.timeout ? o : undefined);
+  }
 
   function normPacks(packs) {
     var list = Array.isArray(packs) ? packs : (typeof packs === 'string' ? [packs] : []);
@@ -390,6 +409,8 @@
   function cancel() { return postEngine('/cancel', {}, 'cancel-failed', 'The download couldn’t be paused.'); }
   function start() { return postEngine('/start', {}, 'engine-failed', MSG.engineFailed); }
   function stop() { return postEngine('/stop', {}, 'stop-failed', 'The AI engine couldn’t be stopped.'); }
+  // Opens the launcher's log folder in File Explorer. Resolves {ok, opened, dir} (opened is false off Windows).
+  function openLogs() { return postEngine('/open-logs', {}, 'open-logs-failed', 'The log folder couldn’t be opened.'); }
 
   // e.code: 'vcredist' (missing Microsoft component), 'driver' (old NVIDIA driver), 'missing-model' (engine files
   // damaged: "Check & repair files"), else 'engine-failed'. The launcher's own plain sentence wins over the log patterns
@@ -939,10 +960,20 @@
   // Ask the launcher to delete the selfie copy and the unlabelled outputs of this job, and ComfyUI to forget its prompts.
   function cleanupJob(rec, afterMs) {
     if (!rec || !rec.id || !isLoopbackPage()) return Promise.resolve();
-    var prompts = (rec.promptIds || []).concat(rec.promptId ? [rec.promptId] : []).filter(function (p, i, a) { return p && a.indexOf(p) === i; });
+    var prompts = (rec.promptIds || []).concat(rec.promptId ? [rec.promptId] : []).filter(function (p, i, a) { return p && a.indexOf(p) === i; }).slice(-64);
     var go = function () { return request('POST', ENGINE + '/cleanup', { job: safeJob(rec.id), prompts: prompts }, { timeout: 15000 }).then(function () {}, function () { /* swept at the next engine start */ }); };
     // after an abort: now, and once more a moment later (the interrupted prompt may still write a file as it stops)
     return go().then(function () { return afterMs ? delay(afterMs).then(go) : undefined; });
+  }
+  // Ask the launcher not to quit while this job is in flight, even when the window is hidden or asleep and stops
+  // pinging (renewed at every step; it lapses by itself after 2 hours). release: the job is over. An older launcher
+  // without this endpoint answers 404, which is fine.
+  var noHold = false;
+  function holdJob(id, release) {
+    if (!id || noHold || !isLoopbackPage()) return;
+    request('POST', ENGINE + '/hold', { job: safeJob(id), release: !!release }, { timeout: 8000 }).then(function (res) {
+      if (res.status === 404) noHold = true; // a launcher from before holds: it never quits while ComfyUI renders anyway
+    }, function () { /* best effort */ });
   }
   // Forget a job (and delete the engine's files for it). For a record kept with {keep: true} once the page is done.
   function release(job) {
@@ -1033,6 +1064,7 @@
     function stageRun(stage) {
       if (rec.done[stage]) return Promise.resolve();
       var spec = graphFor(rec, stage);
+      holdJob(rec.id);
       var t0 = now();
       var resumeId = (rec.stage === stage && rec.promptId) ? rec.promptId : null;
       var promptId = null;
@@ -1071,6 +1103,7 @@
       });
     }
 
+    holdJob(rec.id);
     var p = ensureReady(ctx).then(function () {
       socket = openSocket(rec.clientId);
       ctx.socket = socket;
@@ -1128,7 +1161,7 @@
       }
       throw e;
     });
-    function finish() { if (socket) socket.close(); if (active === token) active = null; }
+    function finish() { if (socket) socket.close(); if (active === token) active = null; holdJob(rec.id, true); }
   }
 
   function packInstalled(s, id) { return !!(s && s.packs && s.packs[id] && s.packs[id].installed); }
@@ -1167,9 +1200,489 @@
         singing: sg, selfie: null, stage: 'upload', promptId: null, outputs: {}, done: {}, timings: {}
       };
       if (!rec.prompts.still) throw LocalAIError('bad-request', 'A scene description is needed.', 'opts.stillPrompt is empty');
-      if (!rec.prompts.motion) rec.prompts.motion = 'The person dances happily toward the camera, smiling, natural motion, handheld smartphone video.';
+      if (!rec.prompts.motion) rec.prompts.motion = DEFAULT_MOTION;
+      dropFailedStory();
       return runJob(rec, onProgress, signal, { photo: opts.photo, keep: !!opts.keep });
     });
+  }
+  var DEFAULT_MOTION = 'The person dances happily toward the camera, smiling, natural motion, handheld smartphone video.';
+
+  /* ------------------------------------------------------------------ *
+   * Stories: 1–4 shots (about 5 s each) made from ONE selfie, so the person looks the same in every shot.
+   *
+   * GlowLocalAI.generateStory(opts, onProgress) -> Promise<StoryResult>
+   *   opts = { photo: Blob, quality: 'best'|'fast', seed?, signal?, keep?,
+   *            shots: [{ id, stillPrompt, motionPrompt, negativePrompt?, lipSync?, audioStart? }, …]   (1–4)
+   *            song?:  { lyrics, style, language: 'es', seconds, bpm?, keyscale? }   AI song (Singing add-on)
+   *            audio?: { blob, start }                                             OR the user's own song }
+   * Order of work: every still (photo model loaded once) -> the song -> every dance video (video model loaded once)
+   * -> every lip-sync shot (one verified 77-frame S2V chunk each, driven by its own 5 s segment of the soundtrack).
+   * Soundtrack timeline ("songOffsets"): shot i starts at its audioStart, else where the shot before it ended,
+   * counting from 0 in the AI song or from audio.start in the user's file (seconds in THAT file). A dance clip lasts
+   * 161/32 = 5.03 s, a lip-sync clip 77/16 = 4.81 s; a lip-sync clip is in sync when it plays at normal speed exactly
+   * at songOffsets[id] of the soundtrack. The AI song is made long enough for every segment (never shorter than asked).
+   * For the user's own song only the needed part is decoded in the browser, cut into a WAV and sent to the engine.
+   *
+   * Errors: a failure that a retry can fix (out of graphics memory, the engine stopped or restarted, a lost
+   * connection, missing files after a repair …) keeps the job and every finished shot: the error has
+   * e.resumable = true and GlowLocalAI.resume() offers the job with state 'failed'; its attach() continues from the
+   * shot that failed (finished stills and clips are not made again). Cancelling, a bad photo or song file, a missing
+   * add-on or a bad request end the job (its files on this PC are deleted).
+   * ------------------------------------------------------------------ */
+  var I2V_SECONDS = 161 / 32;     // 81 frames, RIFE x2 -> 161 frames at 32 fps
+  var S2V_SECONDS = 77 / 16;      // one S2V chunk, 77 frames at 16 fps
+  var S2V_AUDIO_SECONDS = 5.0;    // the S2V graph's TrimAudioDuration "duration"
+  var MAX_SHOTS = 4;
+  var MAX_AUDIO_BYTES = 50 * 1024 * 1024;
+  var NON_RESUMABLE = /^(bad-photo|bad-request|bad-audio|missing-pack|not-installed|unavailable|busy)$/;
+
+  function round2(x) { return Math.round(x * 100) / 100; }
+  function round6(x) { return Math.round(x * 1e6) / 1e6; } // drops float noise; 161/32 and 77/16 stay exact
+  function shotSeed(seed, i) { return (seed + i * 1000003) % 9007199254740992; }
+  function stepParts(key) { var m = /^([a-z]+):(\d+)$/.exec(String(key || '')); return m ? { stage: m[1], shot: +m[2] } : { stage: key || null, shot: null }; }
+  function storySteps(rec) {
+    var s = [];
+    rec.shots.forEach(function (sh, i) { s.push('still:' + i); });
+    if (rec.song) s.push('song');
+    rec.shots.forEach(function (sh, i) { if (!sh.lipSync) s.push('video:' + i); });
+    rec.shots.forEach(function (sh, i) { if (sh.lipSync) s.push('lipsync:' + i); });
+    return s;
+  }
+  function clipStep(rec, i) { return (rec.shots[i].lipSync ? 'lipsync:' : 'video:') + i; }
+  function needsAudioFile(rec) { return !!(rec.audioSource === 'user' && rec.audio && rec.audio.needed); }
+  function storyStepSec(rec, key) {
+    var st = stepParts(key).stage;
+    if (st === 'still') return rec.stillModel === 'klein' ? STAGE_SEC.stillKlein : STAGE_SEC.stillQwen;
+    if (st === 'video') return rec.quality === 'fast' ? STAGE_SEC.videoFast : STAGE_SEC.video;
+    if (st === 'lipsync') return STAGE_SEC.s2v;
+    if (st === 'song') return STAGE_SEC.song;
+    if (st === 'upload') return needsAudioFile(rec) ? STAGE_SEC.upload * 2 : STAGE_SEC.upload;
+    if (st === 'download') return STAGE_SEC.download * rec.shots.length;
+    return STAGE_SEC[st] || 5;
+  }
+  function invalidate(rec, key) {
+    var sp = stepParts(key);
+    var drop = [key];
+    if (sp.stage === 'still') drop.push(clipStep(rec, sp.shot));                  // its clip was made from that still
+    if (key === 'song') rec.shots.forEach(function (sh, i) { if (sh.lipSync) drop.push('lipsync:' + i); });
+    // a step made again gets a new file name: ComfyUI would otherwise answer the same graph from its cache with
+    // the name of the file that is gone (only the save node runs again when the rest is still cached)
+    rec.takes = rec.takes || {};
+    drop.forEach(function (k) { delete rec.done[k]; delete rec.outputs[k]; rec.takes[k] = (rec.takes[k] || 0) + 1; });
+    if (drop.indexOf(rec.stage) >= 0) rec.promptId = null;
+  }
+  function storyGraph(rec, key) {
+    var sp = stepParts(key), i = sp.shot, n = rec.shots.length, sh = i != null ? rec.shots[i] : null;
+    var take = rec.takes && rec.takes[key];
+    var job = rec.id + (i != null ? '_s' + i : '') + (take ? '_r' + take : '');
+    var of = n > 1 && i != null ? ' ' + (i + 1) + ' of ' + n : '';
+    if (sp.stage === 'still') {
+      return { graph: graphs.still({ image: rec.selfie, prompt: sh.still, seed: shotSeed(rec.seed, i), job: job, model: rec.stillModel }),
+        out: OUTPUT_NODE[rec.stillModel === 'klein' ? 'stillKlein' : 'stillQwen'],
+        message: n > 1 ? 'Placing you in shot' + of + '…' : 'Placing you in the scene…', loadingMessage: 'Loading the photo model (the first time after starting takes longer)…' };
+    }
+    if (sp.stage === 'song') {
+      var sg = rec.song;
+      return { graph: graphs.song({ tags: sg.style, lyrics: sg.lyrics, seed: rec.seed, seconds: sg.seconds, language: sg.language, bpm: sg.bpm, keyscale: sg.keyscale, job: job }),
+        out: OUTPUT_NODE.song, message: sg.language === 'es' ? 'Writing your Spanish song…' : 'Writing your song…', loadingMessage: 'Loading the song model…' };
+    }
+    var still = annotated(rec.outputs['still:' + i]);
+    if (sp.stage === 'lipsync') {
+      var fromSong = rec.audioSource === 'song';
+      return { graph: graphs.s2v({ image: still, audio: fromSong ? annotated(rec.outputs.song) : rec.audio.file, offset: fromSong ? sh.offset : sh.offset - rec.audio.start,
+        prompt: sh.motion || DEFAULT_SING_PROMPT, seed: shotSeed(rec.seed, i), job: job }),
+        out: OUTPUT_NODE.s2v, message: 'Making you sing' + (of ? ' in shot' + of : '') + '… (this is the slow part)', loadingMessage: 'Loading the singing model…' };
+    }
+    var fast = rec.quality === 'fast';
+    return { graph: graphs.video({ image: still, prompt: sh.motion, negativePrompt: sh.negative, seed: shotSeed(rec.seed, i), job: job, width: fast ? 384 : 480, height: fast ? 672 : 832, length: 81, rife: true }),
+      out: OUTPUT_NODE.video, message: (of ? 'Bringing shot' + of + ' to life' : 'Bringing the scene to life') + '… (this is the slow part)', loadingMessage: 'Loading the video model…' };
+  }
+
+  // Checks and normalises the story request (throws LocalAIError 'bad-request').
+  function planStory(opts) {
+    var list = opts.shots;
+    if (!Array.isArray(list) || list.length < 1 || list.length > MAX_SHOTS) throw LocalAIError('bad-request', MSG.shots, 'opts.shots must have 1..' + MAX_SHOTS + ' items');
+    var seen = {};
+    var shots = list.map(function (s, i) {
+      s = s && typeof s === 'object' ? s : {};
+      var id = String(s.id != null && s.id !== '' ? s.id : 'shot' + (i + 1)).slice(0, 64);
+      if (seen[id]) id = id + '-' + (i + 1);
+      seen[id] = true;
+      var still = typeof s.stillPrompt === 'string' ? s.stillPrompt.trim() : '';
+      if (!still) throw LocalAIError('bad-request', MSG.shots, 'shots[' + i + '].stillPrompt is empty');
+      var lip = !!s.lipSync;
+      var at = s.audioStart != null && s.audioStart !== '' && isFinite(Number(s.audioStart)) ? Math.max(0, Number(s.audioStart)) : null;
+      return { id: id, still: still, motion: str(s.motionPrompt, lip ? DEFAULT_SING_PROMPT : DEFAULT_MOTION), negative: str(s.negativePrompt, ''),
+        lipSync: lip, audioStart: at, seconds: lip ? S2V_SECONDS : I2V_SECONDS, offset: null };
+    });
+    var song = opts.song && typeof opts.song === 'object' ? opts.song : null;
+    var audio = null;
+    if (opts.audio) {
+      if (typeof opts.audio !== 'object' || !opts.audio.blob || typeof opts.audio.blob.size !== 'number') throw LocalAIError('bad-request', MSG.badAudio, 'opts.audio.blob must be a Blob');
+      audio = opts.audio;
+    }
+    if (song && audio) throw LocalAIError('bad-request', MSG.twoSongs, 'opts.song and opts.audio are both set');
+    var lips = shots.filter(function (sh) { return sh.lipSync; });
+    if (lips.length && !song && !audio) throw LocalAIError('bad-request', MSG.needSong, 'lip-sync shots without opts.song or opts.audio');
+    var source = song ? 'song' : audio ? 'user' : null;
+    var base = audio ? Math.max(0, num(audio.start, 0)) : 0;
+    var total = shots.reduce(function (a, sh) { return a + sh.seconds; }, 0);
+    if (source) {
+      var cur = base;
+      shots.forEach(function (sh) { var at = sh.audioStart != null ? sh.audioStart : cur; sh.offset = round6(at); cur = at + sh.seconds; });
+    }
+    var sg = null;
+    if (song) {
+      // long enough for every shot (a lip-sync shot reads 5 s of it); never shorter than asked
+      var need = shots.reduce(function (m, sh) { return Math.max(m, sh.offset + (sh.lipSync ? S2V_AUDIO_SECONDS : sh.seconds)); }, 0);
+      if (need > 120) throw LocalAIError('bad-request', 'The AI song can be at most 2 minutes long.', 'song needed up to ' + need + ' s');
+      var asked = num(song.seconds, 0) > 0 ? num(song.seconds, 0) : total;
+      sg = {
+        lyrics: str(song.lyrics, DEFAULT_LYRICS), style: str(song.style, str(song.tags, DEFAULT_SONG_TAGS)),
+        language: ACE_LANGS.indexOf(song.language) >= 0 ? song.language : 'es',
+        seconds: Math.round(clamp(Math.max(asked, Math.ceil(need * 10) / 10), 5, 120) * 10) / 10,
+        bpm: song.bpm ? Math.round(clamp(num(song.bpm, 100), 60, 200)) : null, keyscale: ACE_KEYS.indexOf(song.keyscale) >= 0 ? song.keyscale : null
+      };
+    }
+    var wav = null;
+    if (audio && lips.length) {
+      if (audio.blob.size > MAX_AUDIO_BYTES) throw LocalAIError('bad-audio', MSG.badAudio, 'audio file is ' + audio.blob.size + ' bytes');
+      wav = { start: Math.min.apply(null, lips.map(function (sh) { return sh.offset; })), end: Math.max.apply(null, lips.map(function (sh) { return sh.offset + S2V_AUDIO_SECONDS; })) };
+    }
+    return { shots: shots, song: sg, audio: audio, source: source, base: base, lips: lips.length, total: total, wav: wav };
+  }
+
+  // The user's song -> a mono 16-bit WAV of [start, end) seconds (silence past the end of the song).
+  function decodeAudio(blob) {
+    return (typeof blob.arrayBuffer === 'function' ? blob.arrayBuffer() : new Response(blob).arrayBuffer()).then(function (buf) {
+      var AC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+      if (!AC) throw new Error('no OfflineAudioContext');
+      var ac = new AC(1, 2, 44100);
+      return new Promise(function (resolve, reject) {
+        var p = ac.decodeAudioData(buf, resolve, reject);
+        if (p && typeof p.then === 'function') p.then(resolve, reject);
+      });
+    }).then(function (ab) {
+      if (!ab || !ab.length || !ab.sampleRate) throw new Error('empty audio');
+      return ab;
+    }).catch(function (e) { throw LocalAIError('bad-audio', MSG.badAudio, 'decode: ' + String(e && e.message || e)); });
+  }
+  function wavSegment(ab, start, end) {
+    var sr = ab.sampleRate, n = Math.max(1, Math.round((end - start) * sr)), s0 = Math.round(start * sr);
+    var dv = new DataView(new ArrayBuffer(44 + n * 2));
+    function txt(o, t) { for (var k = 0; k < t.length; k++) dv.setUint8(o + k, t.charCodeAt(k)); }
+    txt(0, 'RIFF'); dv.setUint32(4, 36 + n * 2, true); txt(8, 'WAVE'); txt(12, 'fmt ');
+    dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true); dv.setUint32(24, sr, true);
+    dv.setUint32(28, sr * 2, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true); txt(36, 'data'); dv.setUint32(40, n * 2, true);
+    var chs = [];
+    for (var c = 0; c < ab.numberOfChannels; c++) chs.push(ab.getChannelData(c));
+    for (var i = 0; i < n; i++) {
+      var j = s0 + i, v = 0;
+      if (j >= 0 && j < ab.length) { for (c = 0; c < chs.length; c++) v += chs[c][j]; v /= chs.length; }
+      v = v < -1 ? -1 : v > 1 ? 1 : v;
+      dv.setInt16(44 + i * 2, v < 0 ? v * 32768 : v * 32767, true);
+    }
+    return new Blob([dv.buffer], { type: 'audio/wav' });
+  }
+
+  // A failed story the user did not retry is replaced by a new job: delete its files now (not in a day).
+  function dropFailedStory() {
+    var old = loadRec();
+    if (old && old.kind === 'story' && old.failed) { clearRec(old.id); cleanupJob(old); }
+  }
+
+  function generateStory(opts, onProgress) {
+    opts = opts || {};
+    var signal = opts.signal || null;
+    if (signal && signal.aborted) return Promise.reject(abortError());
+    if (!opts.photo || typeof opts.photo.size !== 'number') return Promise.reject(LocalAIError('bad-photo', MSG.badPhoto, 'opts.photo must be a Blob'));
+    if (active) return Promise.reject(LocalAIError('busy', MSG.busy));
+    var plan;
+    try { plan = planStory(opts); } catch (e) { return Promise.reject(e); }
+    var quality = opts.quality === 'fast' ? 'fast' : 'best';
+    var st;
+    return getStatus({ signal: signal }).then(function (s) {
+      st = s;
+      if (!packInstalled(s, 'core')) throw LocalAIError('not-installed', MSG.notInstalled);
+      // lip-sync needs the Singing add-on's voice listener + singing video model, even for the user's own song
+      if ((plan.lips || plan.song) && !packInstalled(s, 'singing')) throw LocalAIError('missing-pack', MSG.missingPack);
+      if (!plan.wav) return null;
+      return decodeAudio(plan.audio.blob).then(function (ab) {
+        if (plan.shots.some(function (sh) { return sh.lipSync && sh.offset >= ab.duration - 0.25; })) throw LocalAIError('bad-audio', MSG.audioShort, 'song is ' + round2(ab.duration) + ' s');
+        return wavSegment(ab, plan.wav.start, plan.wav.end);
+      });
+    }).then(function (wav) {
+      if (signal && signal.aborted) throw abortError();
+      if (active) throw LocalAIError('busy', MSG.busy);
+      dropFailedStory();
+      var rec = {
+        v: 1, kind: 'story', id: newJobId(), clientId: 'glow-' + uuid().replace(/-/g, '').slice(0, 20), startedAt: now(), updatedAt: now(),
+        quality: quality, stillModel: quality === 'fast' && packInstalled(st, 'fast') ? 'klein' : 'qwen', seed: seedOf(opts.seed),
+        shots: plan.shots, song: plan.song, audioSource: plan.source,
+        audio: plan.source === 'user' ? { base: plan.base, start: plan.wav ? plan.wav.start : plan.base, needed: !!plan.wav, file: null } : null,
+        selfie: null, stage: 'upload', promptId: null, promptIds: [], outputs: {}, done: {}, timings: {}, failed: null
+      };
+      return runStory(rec, onProgress, signal, { photo: opts.photo, wav: wav, keep: !!opts.keep });
+    });
+  }
+
+  function runStory(rec, onProgress, signal, opt) {
+    opt = opt || {};
+    if (active) return Promise.reject(LocalAIError('busy', MSG.busy));
+    var token = {};
+    active = token;
+    rec.failed = null;
+    var n = rec.shots.length;
+    var steps = storySteps(rec);
+    var needUpload = !rec.selfie || (needsAudioFile(rec) && !rec.audio.file);
+    var stageList = ['starting'].concat(needUpload ? ['upload'] : [], steps, ['download']);
+    var weights = {};
+    stageList.forEach(function (s) { weights[s] = storyStepSec(rec, s); });
+    var reached = null;
+    var ctx = makeCtx(stageList, weights, function (p) {
+      var sp = stepParts(p.stage);
+      reached = p.stage;
+      p.stage = sp.stage; p.shot = sp.shot; p.shots = n; p.job = rec.id;
+      if (p.stillUrl) p.shotIndex = sp.shot;
+      safeCall(onProgress, p);
+    }, signal);
+    var stills = {};   // shot index -> { blob, url }
+    var socket = null;
+    holdJob(rec.id);
+
+    function stepRun(key) {
+      if (rec.done[key]) return Promise.resolve();
+      if (signal && signal.aborted) return Promise.reject(abortError());
+      var spec = storyGraph(rec, key);
+      var t0 = now();
+      var resumeId = (rec.stage === key && rec.promptId) ? rec.promptId : null;
+      var promptId = null;
+      holdJob(rec.id);
+      var check = resumeId ? promptState(resumeId, signal) : Promise.resolve(null);
+      return check.then(function (state) {
+        // still queued, running or finished in ComfyUI: re-attach to it (a prompt that failed is made again)
+        var reuse = state === 'running' || state === 'pending' || state === 'done';
+        promptId = reuse ? resumeId : uuid();
+        rec.stage = key; rec.promptId = promptId; rec.stageStartedAt = reuse ? (rec.stageStartedAt || t0) : t0;
+        rec.promptIds = (rec.promptIds || []).filter(function (x) { return x !== promptId; }).concat([promptId]);
+        saveRec(rec);
+        ctx.stage(key, 0, spec.message);
+        var queued = reuse ? Promise.resolve(promptId) : queuePrompt(spec.graph, promptId, rec.clientId, signal);
+        return queued.then(function () {
+          return track(ctx, { graph: spec.graph, promptId: promptId, stage: key, expectSec: storyStepSec(rec, key), message: spec.message, loadingMessage: spec.loadingMessage });
+        }, function (e) {
+          if (isAbort(e)) return interruptPrompt(promptId).then(function () { throw e; });
+          throw e;
+        });
+      }).then(function (h) {
+        var file = pickFile(h.outputs, spec.out);
+        if (!file) throw LocalAIError('failed', MSG.failed, 'no output file in history for node ' + spec.out);
+        rec.outputs[key] = file;
+        rec.done[key] = true;
+        rec.timings[key] = Math.round((now() - (rec.stageStartedAt || t0)) / 100) / 10;
+        saveRec(rec);
+        var sp = stepParts(key);
+        if (sp.stage === 'still') return loadStill(sp.shot);
+        ctx.stage(key, 1, sp.stage === 'song' ? 'Your song is ready.' : n > 1 ? 'Shot ' + (sp.shot + 1) + ' is finished.' : 'Video finished.');
+      }).catch(function (e) { if (e && typeof e === 'object' && !isAbort(e) && !e.step) e.step = key; throw e; });
+    }
+    function inputsReady(key) {
+      var sp = stepParts(key);
+      if (sp.stage === 'video') return !!rec.done['still:' + sp.shot];
+      if (sp.stage === 'lipsync') return !!rec.done['still:' + sp.shot] && (rec.audioSource !== 'song' || !!rec.done.song);
+      return true;
+    }
+    function loadStill(i) {
+      return fetchFile(rec.outputs['still:' + i], signal).then(function (b) {
+        stills[i] = { blob: b, url: URL.createObjectURL(b) };
+        ctx.stage('still:' + i, 1, n > 1 ? 'The photo for shot ' + (i + 1) + ' is ready.' : 'Your scene photo is ready.', { stillUrl: stills[i].url });
+      });
+    }
+    // after a reload: show the stills that are already made (one that is gone from this PC is made again)
+    function preloadStills() {
+      var chain = Promise.resolve();
+      rec.shots.forEach(function (sh, i) {
+        chain = chain.then(function () {
+          if (!rec.done['still:' + i] || stills[i]) return;
+          return loadStill(i).catch(function (e) {
+            if (e && e.code === 'lost') { invalidate(rec, 'still:' + i); saveRec(rec); return; }
+            throw e;
+          });
+        });
+      });
+      return chain;
+    }
+    function download() {
+      var keys = rec.shots.map(function (sh, i) { return clipStep(rec, i); });
+      var total = keys.length + (rec.audioSource === 'song' ? 1 : 0), got = 0;
+      var blobs = [], song = null;
+      ctx.stage('download', 0.05, n > 1 ? 'Saving your clips…' : 'Saving your video…');
+      var chain = Promise.resolve();
+      keys.forEach(function (k, i) {
+        chain = chain.then(function () { return fetchFile(rec.outputs[k], signal); }).then(function (b) {
+          blobs[i] = b; got++;
+          ctx.stage('download', 0.05 + 0.9 * got / total, n > 1 ? 'Saving your clips…' : 'Saving your video…');
+        }, function (e) { if (e && typeof e === 'object' && !e.step) e.step = k; throw e; });
+      });
+      if (rec.audioSource === 'song') {
+        chain = chain.then(function () { return fetchFile(rec.outputs.song, signal); }).then(function (b) { song = b; }, function (e) { if (e && typeof e === 'object' && !e.step) e.step = 'song'; throw e; });
+      }
+      return chain.then(function () { return { blobs: blobs, song: song }; });
+    }
+
+    var p = ensureReady(ctx).then(function () {
+      socket = openSocket(rec.clientId);
+      ctx.socket = socket;
+      return socket.ready;
+    }).then(function () {
+      if (!needUpload) return;
+      ctx.stage('upload', 0.1, 'Sending your photo to the AI engine…');
+      var up = rec.selfie ? Promise.resolve() : preparePhoto(opt.photo).then(function (ph) {
+        return uploadImage(ph.blob, 'selfie_' + rec.id + '.' + ph.ext, signal);
+      }).then(function (name) { rec.selfie = name; saveRec(rec); });
+      return up.then(function () {
+        if (!needsAudioFile(rec) || rec.audio.file) return;
+        if (!opt.wav) throw LocalAIError('lost', MSG.lost, 'the song was never sent to the engine');
+        ctx.stage('upload', 0.6, 'Sending your song to the AI engine…');
+        return uploadImage(opt.wav, 'audio_' + rec.id + '.wav', signal).then(function (name) { rec.audio.file = name; saveRec(rec); });
+      }).then(function () { ctx.stage('upload', 1, 'Sent.'); });
+    }).then(preloadStills).then(function () {
+      // after a reload the step that was in flight goes first: ComfyUI finishes its prompt before anything new
+      // (re-attached, not queued again); only when what it was made from is still there
+      var order = steps.slice();
+      if (rec.promptId && order.indexOf(rec.stage) > 0 && !rec.done[rec.stage] && inputsReady(rec.stage)) {
+        order.splice(order.indexOf(rec.stage), 1);
+        order.unshift(rec.stage);
+      }
+      var chain = Promise.resolve();
+      order.forEach(function (k) { chain = chain.then(function () { return stepRun(k); }); });
+      return chain;
+    }).then(function () {
+      var chain = Promise.resolve();
+      rec.shots.forEach(function (sh, i) { chain = chain.then(function () { if (!stills[i]) return loadStill(i); }); });
+      return chain;
+    }).then(download).then(function (d) {
+      var fast = rec.quality === 'fast';
+      var offsets = rec.audioSource ? {} : null;
+      var clips = rec.shots.map(function (sh, i) {
+        var lip = !!sh.lipSync;
+        var c = { id: sh.id, video: d.blobs[i], width: lip || !fast ? 480 : 384, height: lip || !fast ? 832 : 672, fps: lip ? 16 : 32,
+          seconds: sh.seconds, stillUrl: stills[i].url, still: stills[i].blob, lipSync: lip };
+        if (offsets) { offsets[sh.id] = sh.offset; c.audioOffset = sh.offset; }
+        return c;
+      });
+      var t = { stills: {}, clips: {}, song: rec.timings.song || 0, total: Math.round((now() - rec.startedAt) / 1000) };
+      rec.shots.forEach(function (sh, i) { t.stills[sh.id] = rec.timings['still:' + i] || 0; t.clips[sh.id] = rec.timings[clipStep(rec, i)] || 0; });
+      var result = {
+        clips: clips, seconds: round6(rec.shots.reduce(function (a, sh) { return a + sh.seconds; }, 0)),
+        audioSource: rec.audioSource, seed: rec.seed, timings: t, quality: rec.quality, stillModel: rec.stillModel, job: rec.id
+      };
+      if (d.song) { result.audio = d.song; result.songSeconds = rec.song.seconds; }
+      if (offsets) result.songOffsets = offsets;
+      ctx.stage('download', 1, 'Done!');
+      if (opt.keep) { rec.delivered = true; saveRec(rec); } // kept until release(job)
+      else { clearRec(rec.id); cleanupJob(rec); }
+      return result;
+    });
+
+    return p.then(function (r) { finish(); return r; }, function (e) {
+      finish();
+      // the soundtrack file is gone from the engine: the AI song can be made again, the user's song cannot
+      var audioGone = !!(e && e.step && /^lipsync:/.test(e.step) && /Invalid audio file/i.test(String(e.detail || '')));
+      var keepIt = !isAbort(e) && !!rec.selfie && !(e && NON_RESUMABLE.test(e.code || '')) && !(audioGone && rec.audioSource !== 'song');
+      if (keepIt) {
+        if (audioGone) invalidate(rec, 'song');
+        // a file that is gone from this PC is made again by the retry
+        if (e && (e.code === 'missing-still' || e.code === 'lost') && e.step) {
+          var sp = stepParts(e.step);
+          if (e.code === 'missing-still' && sp.shot != null) invalidate(rec, 'still:' + sp.shot);
+          else if (rec.done[e.step]) invalidate(rec, e.step);
+        }
+        rec.failed = { code: (e && e.code) || 'failed', step: (e && e.step) || rec.stage, message: (e && e.message) || MSG.failed, at: now() };
+        saveRec(rec);
+      } else {
+        clearRec(rec.id);
+        cleanupJob(rec, isAbort(e) ? 3000 : 0); // after an abort, give the interrupted prompt a moment to stop writing
+      }
+      if (e && typeof e === 'object' && !isAbort(e)) {
+        var sp2 = stepParts(e.step || reached);
+        e.resumable = keepIt;
+        e.job = rec.id;
+        if (!e.stage) e.stage = sp2.stage;  // where it stopped ('starting' = the engine never got going)
+        if (e.shot == null) e.shot = sp2.shot;
+        e.shotsDone = rec.shots.filter(function (sh, i) { return rec.done[clipStep(rec, i)]; }).length;
+        e.stillUrls = rec.shots.map(function (sh, i) { return stills[i] ? stills[i].url : null; });
+        var first = e.stillUrls.filter(Boolean)[0];
+        if (first) e.stillUrl = first;
+      }
+      throw e;
+    });
+    function finish() { if (socket) socket.close(); if (active === token) active = null; holdJob(rec.id, true); }
+  }
+
+  function resumeStory(rec, s) {
+    var ready = s.engine.state === 'ready';
+    var steps = storySteps(rec);
+    var made = steps.every(function (k) { return rec.done[k]; });
+    var st = rec.failed ? Promise.resolve('failed') : made ? Promise.resolve('done')
+      : rec.promptId && ready ? promptState(rec.promptId).catch(function () { return 'unknown'; }) : Promise.resolve(rec.promptId ? (ready ? 'unknown' : 'lost') : 'not-started');
+    return st.then(function (state) {
+      var sp = stepParts(rec.stage);
+      var canAttach = !!rec.selfie && (!needsAudioFile(rec) || !!rec.audio.file);
+      return {
+        kind: 'story', promptId: rec.promptId, job: rec.id, stage: sp.stage, shot: sp.shot, shots: rec.shots.length,
+        shotIds: rec.shots.map(function (sh) { return sh.id; }), state: state, startedAt: rec.startedAt, quality: rec.quality, seed: rec.seed,
+        song: !!rec.song, audioSource: rec.audioSource, lipSync: rec.shots.filter(function (sh) { return sh.lipSync; }).length,
+        stillsReady: rec.shots.filter(function (sh, i) { return rec.done['still:' + i]; }).length,
+        shotsDone: rec.shots.filter(function (sh, i) { return rec.done[clipStep(rec, i)]; }).length,
+        failed: rec.failed ? { code: rec.failed.code, message: rec.failed.message, stage: stepParts(rec.failed.step).stage, shot: stepParts(rec.failed.step).shot } : null,
+        made: made, delivered: !!rec.delivered, canAttach: canAttach,
+        // continue the story (from the shot that failed, after a failure): resolves with the same StoryResult as generateStory()
+        attach: function (onProgress, o) {
+          var cur = loadRec();
+          if (!cur || cur.id !== rec.id) return Promise.reject(LocalAIError('lost', MSG.lost, 'job record gone'));
+          if (!cur.selfie || (needsAudioFile(cur) && !cur.audio.file)) { clearRec(cur.id); cleanupJob(cur); return Promise.reject(LocalAIError('lost', MSG.lost, 'the photo or song was never sent to the engine')); }
+          return runStory(cur, onProgress, o && o.signal, { keep: !!(o && o.keep) });
+        },
+        cancel: function () { var id = rec.promptId; clearRec(rec.id); var live = id && !made && !rec.failed; var c = live ? interruptPrompt(id) : Promise.resolve(); return c.then(function () { cleanupJob(rec, live ? 3000 : 0); }); },
+        discard: function () { clearRec(rec.id); cleanupJob(rec); }
+      };
+    });
+  }
+
+  // Honest minutes for a story on this PC (desktop RTX 5060 8 GB, from the spec's timings; laptop +20–40 %).
+  // Per shot: photo 1–1.5 min (Fast pack 15–27 s), dance video 3.7–6.5 min (Fast 2.2–4), lip-sync 4.5–7 min;
+  // the song 0.5–1.5 min; 0.2–1 min each time another AI model has to be loaded; 0.5–1.5 min to read the first
+  // model from disk. A 20 s story (4 shots) is about 20–35 min, with the song and one lip-sync shot about 21–39 min.
+  var STORY_MIN = { stillQwen: [1, 1.5], stillKlein: [0.25, 0.45], swap: [0.2, 1], song: [0.5, 1.5], video: [3.7, 6.5], videoFast: [2.2, 4], s2v: [4.5, 7], cold: [0.5, 1.5] };
+  function estimateStory(o) {
+    o = o || {};
+    var shots = o.shots, n, lip = 0;
+    if (Array.isArray(shots)) { n = shots.length; lip = shots.filter(function (s) { return s && s.lipSync; }).length; }
+    else n = Math.round(num(shots, 4));
+    n = clamp(n || 1, 1, MAX_SHOTS);
+    if (typeof o.lipSync === 'number') lip = clamp(Math.round(o.lipSync), 0, n);
+    else if (o.lipSync === true && !lip) lip = n;                // "Lip-sync to the song": every shot
+    else if (o.lipSync === false) lip = 0;
+    var fast = o.quality === 'fast';
+    var hasFast = typeof o.fastPack === 'boolean' ? o.fastPack : packInstalled(lastStatus, 'fast') || !lastStatus;
+    var song = !!o.song;
+    var lo = 0, hi = 0;
+    function add(r, k) { k = k == null ? 1 : k; lo += r[0] * k; hi += r[1] * k; }
+    add(STORY_MIN.cold);
+    add(fast && hasFast ? STORY_MIN.stillKlein : STORY_MIN.stillQwen, n);
+    add(STORY_MIN.swap, (song ? 1 : 0) + (n - lip > 0 ? 1 : 0) + (lip > 0 ? 1 : 0));
+    if (song) add(STORY_MIN.song);
+    add(fast ? STORY_MIN.videoFast : STORY_MIN.video, n - lip);
+    add(STORY_MIN.s2v, lip);
+    var laptop = isLaptop(o);
+    if (laptop) { lo *= 1.2; hi *= 1.4; }
+    var a = Math.max(1, Math.round(lo)), b = Math.max(a + 1, Math.ceil(hi));
+    return {
+      minutes: [a, b], shots: n, lipSync: lip, laptop: laptop,
+      seconds: round2((n - lip) * I2V_SECONDS + lip * S2V_SECONDS),
+      note: 'Estimate for an RTX 5060 with 8 GB. Starting the AI engine first adds about a minute.'
+    };
   }
 
   // Re-attach to a job that was running when the page was reloaded (or one kept with {keep: true}).
@@ -1179,6 +1692,7 @@
     if (now() - (rec.updatedAt || 0) > CFG.maxJobAgeMs) { clearRec(rec.id); cleanupJob(rec); return Promise.resolve(null); }
     return detect().then(function (s) {
       if (!s) return null;
+      if (rec.kind === 'story') return resumeStory(rec, s);
       var ready = s.engine.state === 'ready';
       // every stage is done: only the outputs are fetched again (they are files on disk, whatever ComfyUI remembers)
       var made = !!(rec.done && rec.done.video);
@@ -1186,7 +1700,7 @@
         : rec.promptId && ready ? promptState(rec.promptId).catch(function () { return 'unknown'; }) : Promise.resolve(rec.promptId ? (ready ? 'unknown' : 'lost') : 'not-started');
       return st.then(function (state) {
         return {
-          promptId: rec.promptId, job: rec.id, stage: rec.stage, state: state, startedAt: rec.startedAt, quality: rec.quality,
+          kind: 'video', promptId: rec.promptId, job: rec.id, stage: rec.stage, state: state, startedAt: rec.startedAt, quality: rec.quality,
           singing: !!rec.singing, lipSync: !!(rec.singing && rec.singing.lipSync), seed: rec.seed, stillReady: !!rec.done.still,
           made: made, delivered: !!rec.delivered,
           canAttach: !!rec.selfie,
@@ -1331,9 +1845,14 @@
     cancel: cancel,
     start: start,
     stop: stop,
+    openLogs: openLogs,
     waitReady: waitReady,
     estimate: estimate,
+    estimateStory: estimateStory,
     generate: generate,
+    generateStory: generateStory,
+    // story limits: 1–4 shots; clip lengths in seconds (a dance clip 5.03 s at 32 fps, a lip-sync clip 4.81 s at 16 fps)
+    story: { maxShots: MAX_SHOTS, clipSeconds: { video: I2V_SECONDS, lipSync: S2V_SECONDS }, lipSyncAudioSeconds: S2V_AUDIO_SECONDS },
     resume: resume,
     release: release,
     warmup: warmup,

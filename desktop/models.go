@@ -19,7 +19,7 @@
 package main
 
 const (
-	launcherVersion = "1.1.0"
+	launcherVersion = "1.2.0"
 	comfyVersion    = "0.44.0"
 	catalogVersion  = "2026-11-04"
 	portableDir     = "ComfyUI_windows_portable" // top folder inside the portable .7z

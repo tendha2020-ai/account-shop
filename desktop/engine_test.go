@@ -40,6 +40,10 @@ func TestMain(m *testing.M) {
 		runMockComfy()
 		return
 	}
+	if mode := os.Getenv("GLOW_TEST_PROCESS"); mode != "" {
+		runTestProcess(mode) // launcher_test.go: the real main(), a crash, …
+		return
+	}
 	os.Exit(m.Run())
 }
 
@@ -809,7 +813,7 @@ func (h *harness) start() {
 	mux := http.NewServeMux()
 	mux.Handle("/__glow/engine/", h.e.apiHandler())
 	mux.Handle("/__glow/comfy/", h.e.proxyHandler())
-	h.srv = httptest.NewUnstartedServer(mux)
+	h.srv = httptest.NewUnstartedServer(logRequests(mux)) // as in main.go (the proxy's WebSocket must pass through it)
 	h.srv.Listener.Close()
 	h.srv.Listener = ln
 	h.srv.Start()
@@ -919,7 +923,7 @@ func (h *harness) installCore() {
 func TestInstallFlow(t *testing.T) {
 	h := newHarness(t)
 	s := h.status()
-	if s.Launcher != "1.1.0" || s.OS != runtime.GOOS || s.Engine.State != "not-installed" || s.Job != nil || s.Packs["core"].Installed {
+	if s.Launcher != "1.2.0" || s.OS != runtime.GOOS || s.Engine.State != "not-installed" || s.Job != nil || s.Packs["core"].Installed {
 		t.Fatalf("initial status %+v", s)
 	}
 	if s.GPU == nil || s.GPU.VramMB != 8151 || s.GPU.DriverOk || s.GPU.MinDriver != "580.00" {

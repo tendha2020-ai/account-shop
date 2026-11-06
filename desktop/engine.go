@@ -9,6 +9,8 @@ package main
 //	POST /__glow/engine/start     -> 202 (ComfyUI headless, "starting" -> "ready")
 //	POST /__glow/engine/stop      -> 200
 //	POST /__glow/engine/cleanup   {"job":"<id>","prompts":[...]} -> 200 (deletes that video's selfie + raw outputs, see cleanup.go)
+//	POST /__glow/engine/hold      {"job":"<id>","release"?:true} -> 200 (a video/story is in flight: no idle exit)
+//	POST /__glow/engine/open-logs -> 200 {"ok","opened","dir"} (opens the log folder in Explorer on Windows)
 //	ANY  /__glow/comfy/<path>     -> reverse proxy to ComfyUI (see proxy.go)
 //
 // Test hooks (environment variables; see engine_test.go and test.sh):
@@ -90,6 +92,17 @@ type Engine struct {
 
 	port         int // the launcher's own port, for Origin/Host checks
 	shutdownOnce sync.Once
+
+	// Videos and stories a page is making (job id -> until when), see handleHold.
+	holds map[string]time.Time
+
+	// Manifest writes happen outside e.mu (status must never wait for the
+	// disk, which antivirus scans or rename retries can make slow): a snapshot
+	// is taken under e.mu and written under saveMu; an older snapshot never
+	// overwrites a newer one.
+	saveMu   sync.Mutex
+	saveSeq  uint64
+	savedSeq map[string]uint64
 }
 
 // Manifest is <installDir>\glow-engine.json.
@@ -141,9 +154,44 @@ func loadManifest(dir string) *Manifest {
 	return m
 }
 
-func (m *Manifest) save(dir string) error {
+func (m *Manifest) marshal() []byte {
 	m.Launcher, m.Catalog, m.Updated = launcherVersion, catalogVersion, time.Now().UTC().Format(time.RFC3339)
 	data, _ := json.MarshalIndent(m, "", "  ")
+	return data
+}
+
+// save writes the manifest at once (tests, and code that owns m alone).
+func (m *Manifest) save(dir string) error { return writeManifestFile(dir, m.marshal()) }
+
+// clone copies the manifest (for reading it without holding e.mu).
+func (m *Manifest) clone() *Manifest {
+	c := *m
+	c.Packs = make(map[string]PackRecord, len(m.Packs))
+	for k, v := range m.Packs {
+		c.Packs[k] = v
+	}
+	c.Files = make(map[string]FileRecord, len(m.Files))
+	for k, v := range m.Files {
+		c.Files[k] = v
+	}
+	if m.EngineKey != nil {
+		c.EngineKey = make(map[string]int64, len(m.EngineKey))
+		for k, v := range m.EngineKey {
+			c.EngineKey[k] = v
+		}
+	}
+	c.Pending = append([]string(nil), m.Pending...)
+	return &c
+}
+
+// manifestWriteHook, when set, runs before every manifest write (tests
+// simulate a disk that an antivirus holds up).
+var manifestWriteHook atomic.Pointer[func()]
+
+func writeManifestFile(dir string, data []byte) error {
+	if h := manifestWriteHook.Load(); h != nil {
+		(*h)()
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -155,6 +203,30 @@ func (m *Manifest) save(dir string) error {
 		return justWrittenError(err, filepath.Join(dir, manifestName))
 	}
 	return nil
+}
+
+// manifestWriterLocked (e.mu held) snapshots the manifest and returns the
+// function that writes that snapshot to dir. Call it after e.mu is unlocked.
+func (e *Engine) manifestWriterLocked(dir string) func() error {
+	data := e.man.marshal()
+	e.saveSeq++
+	seq := e.saveSeq
+	return func() error {
+		e.saveMu.Lock()
+		defer e.saveMu.Unlock()
+		if e.savedSeq == nil {
+			e.savedSeq = map[string]uint64{}
+		}
+		key := filepath.Clean(dir)
+		if seq <= e.savedSeq[key] {
+			return nil // a newer snapshot is on disk already
+		}
+		if err := writeManifestFile(dir, data); err != nil {
+			return err
+		}
+		e.savedSeq[key] = seq
+		return nil
+	}
 }
 
 // engineDefaultDir is the install folder used unless the user picks another.
@@ -289,20 +361,20 @@ func onDiskBytes(dest string, f FileSpec) int64 {
 	return partBytes(dest)
 }
 
-// remainingLocked is what is left to download for one pack.
-func (e *Engine) remainingLocked(id string) int64 {
-	p := e.cat.pack(id)
+// remainingIn is what is left to download for one pack.
+func remainingIn(cat *Catalog, dir string, m *Manifest, id string) int64 {
+	p := cat.pack(id)
 	if p == nil {
 		return 0
 	}
 	files := p.Files
-	if id == "core" && !extractedIn(e.installDir, e.man) {
-		files = append([]FileSpec{e.cat.Tool, e.cat.Engine}, files...)
+	if id == "core" && !extractedIn(dir, m) {
+		files = append([]FileSpec{cat.Tool, cat.Engine}, files...)
 	}
 	var need int64
 	for _, f := range files {
-		if !verifiedIn(e.installDir, e.man, f) {
-			if left := f.Size - onDiskBytes(fileDest(e.installDir, f), f); left > 0 {
+		if !verifiedIn(dir, m, f) {
+			if left := f.Size - onDiskBytes(fileDest(dir, f), f); left > 0 {
 				need += left
 			}
 		}
@@ -334,15 +406,19 @@ func extractedIn(dir string, m *Manifest) bool {
 }
 
 func (e *Engine) packInstalledLocked(id string) bool {
-	p := e.cat.pack(id)
+	return packInstalledIn(e.cat, e.installDir, e.man, id)
+}
+
+func packInstalledIn(cat *Catalog, dir string, m *Manifest, id string) bool {
+	p := cat.pack(id)
 	if p == nil {
 		return false
 	}
-	if id == "core" && !extractedIn(e.installDir, e.man) {
+	if id == "core" && !extractedIn(dir, m) {
 		return false
 	}
 	for _, f := range p.Files {
-		if !verifiedIn(e.installDir, e.man, f) {
+		if !verifiedIn(dir, m, f) {
 			return false
 		}
 	}
@@ -576,16 +652,28 @@ type gpuInfo struct {
 // most wait for a running check. pending is true while there is no result yet.
 func (e *Engine) gpuInfo(refresh bool, wait time.Duration) (g *gpuInfo, pending bool) {
 	e.gpuMu.Lock()
+	// only the very first answer and "Check again" wait; a background
+	// re-check of an older answer never holds up the status
+	if !refresh && !e.gpuAt.IsZero() {
+		wait = 0
+	}
 	if (refresh || e.gpuAt.IsZero() || time.Since(e.gpuAt) > 2*time.Minute) && e.gpuRun == nil {
 		run := make(chan struct{})
 		e.gpuRun = run
-		go func() {
+		goSafe("nvidia-smi", func() {
+			defer func() {
+				e.gpuMu.Lock()
+				if e.gpuRun == run { // only after a panic: let the next status try again
+					e.gpuRun = nil
+				}
+				e.gpuMu.Unlock()
+				close(run)
+			}()
 			found := detectGPU()
 			e.gpuMu.Lock()
 			e.gpu, e.gpuAt, e.gpuRun = found, time.Now(), nil
 			e.gpuMu.Unlock()
-			close(run)
-		}()
+		})
 	}
 	run := e.gpuRun
 	e.gpuMu.Unlock()
@@ -686,6 +774,15 @@ type statusJSON struct {
 	Packs        map[string]packJSON `json:"packs"`
 	Engine       engineJSON          `json:"engine"`
 	Job          *jobJSON            `json:"job"`
+	Logs         logsJSON            `json:"logs"`
+}
+
+// logsJSON says where the log files are (shown in the setup page's Details).
+type logsJSON struct {
+	Dir      string `json:"dir"`      // %LOCALAPPDATA%\GlowStudio\logs ("Open log folder")
+	Launcher string `json:"launcher"` // launcher.log
+	Crash    string `json:"crash"`    // crash.log
+	Engine   string `json:"engine"`   // <install folder>\logs\engine.log (ComfyUI's output)
 }
 
 func round1(x float64) float64 { return math.Round(x*10) / 10 }
@@ -695,75 +792,164 @@ func (e *Engine) status(refreshGPU bool) statusJSON {
 	// Never held up by nvidia-smi: "Check again" (refresh=1) waits a little for
 	// a fresh answer, the very first status waits up to 1 s (no flicker), the
 	// rest return the cached answer at once.
-	wait := time.Second
-	if refreshGPU {
-		wait = 6 * time.Second
-	}
-	gpu, pending := e.gpuInfo(refreshGPU, wait)
+	gpu, pending := e.gpuInfo(refreshGPU, gpuWait(refreshGPU))
 	e.ramOnce.Do(func() { e.ram = totalRAM() })
+
+	// Only a snapshot is taken under e.mu; the disk checks below (file sizes,
+	// free space) run without it, so an installer or engine busy with the disk
+	// never holds up the answer.
 	e.mu.Lock()
-	defer e.mu.Unlock()
+	dir, defDir := e.installDir, e.defaultDir
+	man := e.man.clone()
+	state, engErr, runVer, dyn := e.state, e.engErr, e.runningVersion, e.dynVRAM
+	job := e.job
+	e.mu.Unlock()
+
 	s := statusJSON{
-		Launcher: launcherVersion, OS: runtime.GOOS, InstallDir: e.installDir, DefaultDir: e.defaultDir,
+		Launcher: launcherVersion, OS: runtime.GOOS, InstallDir: dir, DefaultDir: defDir,
 		GPU: gpu, GPUPending: pending, DiskMarginGB: diskMarginBytes / 1e9, Packs: map[string]packJSON{},
 	}
 	if e.ram > 0 {
 		r := round1(float64(e.ram) / (1 << 30)) // RAM is sold in GiB ("32 GB")
 		s.RAMGB = &r
 	}
-	if free := e.freeBytes(e.installDir); free >= 0 {
+	if free := e.freeBytes(dir); free >= 0 {
 		s.DiskFreeGB = round1(float64(free) / 1e9)
 	}
 	for _, p := range e.cat.Packs {
-		pj := packJSON{Installed: e.packInstalledLocked(p.ID), SizeGB: round1(float64(e.cat.packBytes(p.ID)) / 1e9), Label: p.Label, Desc: p.Desc}
+		pj := packJSON{Installed: packInstalledIn(e.cat, dir, man, p.ID), SizeGB: round1(float64(e.cat.packBytes(p.ID)) / 1e9), Label: p.Label, Desc: p.Desc}
 		if !pj.Installed {
-			pj.RemainingGB = round2(float64(e.remainingLocked(p.ID)) / 1e9)
+			pj.RemainingGB = round2(float64(remainingIn(e.cat, dir, man, p.ID)) / 1e9)
 		}
 		s.Packs[p.ID] = pj
 	}
-	s.Engine = engineJSON{State: e.engineStateLocked(), Log: e.logs.last(40), DynamicVRAM: e.dynVRAM}
+	st := state
+	if st != "starting" && st != "ready" && st != "error" {
+		st = "stopped"
+		if !s.Packs["core"].Installed {
+			st = "not-installed"
+		}
+	}
+	s.Engine = engineJSON{State: st, Log: e.logs.last(40), DynamicVRAM: dyn}
 	switch {
-	case e.state == "ready" && e.runningVersion != "":
-		v := e.runningVersion
+	case state == "ready" && runVer != "":
+		v := runVer
 		s.Engine.ComfyVersion = &v
-	case extractedIn(e.installDir, e.man):
-		v := e.man.ComfyVersion
+	case extractedIn(dir, man):
+		v := man.ComfyVersion
 		if v == "" {
 			v = comfyVersion
 		}
 		s.Engine.ComfyVersion = &v
 	}
-	if e.state == "error" && e.engErr != "" {
-		msg := e.engErr
+	if state == "error" && engErr != "" {
+		msg := engErr
 		s.Engine.Error = &msg
 	}
-	if e.job != nil {
-		j := e.job.snapshot()
+	if job != nil {
+		j := job.snapshot()
 		s.Job = &j
 	}
+	ld := logsDir()
+	s.Logs = logsJSON{Dir: ld, Launcher: filepath.Join(ld, "launcher.log"), Crash: filepath.Join(ld, "crash.log"), Engine: filepath.Join(dir, "logs", "engine.log")}
 	return s
 }
 
-func (e *Engine) engineStateLocked() string {
-	switch e.state {
-	case "starting", "ready", "error":
-		return e.state
+// gpuWait: how long a status may wait for nvidia-smi.
+func gpuWait(refresh bool) time.Duration {
+	if refresh {
+		return 6 * time.Second
 	}
-	if !e.coreInstalledLocked() {
-		return "not-installed"
-	}
-	return "stopped"
+	return time.Second
 }
 
 // ---- lifecycle used by main.go ----
 
 // Busy is true while something must not be interrupted by the idle exit:
-// an install job, or ComfyUI prompts running or queued.
-func (e *Engine) Busy() bool {
+// an install job, ComfyUI prompts running or queued, or a video or story a
+// page is making (handleHold).
+func (e *Engine) Busy() bool { b, _ := e.BusyReason(); return b }
+
+// BusyReason is Busy with a few words for the log.
+func (e *Engine) BusyReason() (bool, string) {
 	e.mu.Lock()
 	installing := e.job != nil && e.job.state() == "running"
+	jobs := e.activeHoldsLocked()
 	e.mu.Unlock()
-	return installing || e.comfyBusy()
+	switch {
+	case installing:
+		return true, "the AI files are being downloaded or checked"
+	case e.comfyBusy():
+		return true, "the AI engine is making a video"
+	case len(jobs) > 0:
+		return true, "a video is being made (" + strings.Join(jobs, ", ") + ")"
+	}
+	return false, ""
+}
+
+// holdTTL: a hold lapses this long after its last renewal (a page that went
+// away for good must not keep the launcher up for ever). The page renews it at
+// every step of a video; no single step takes this long.
+var holdTTL = 2 * time.Hour
+
+func (e *Engine) activeHoldsLocked() []string {
+	var out []string
+	now := time.Now()
+	for id, until := range e.holds {
+		if now.After(until) {
+			delete(e.holds, id)
+			continue
+		}
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (e *Engine) releaseHold(job string) {
+	e.mu.Lock()
+	delete(e.holds, job)
+	e.mu.Unlock()
+}
+
+// handleHold: POST {"job":"<id>"} while a page makes a video or story (renewed
+// at every step), {"job":"<id>","release":true} when it is over. Cleanup of a
+// job releases it too.
+func (e *Engine) handleHold(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Job     string `json:"job"`
+		Release bool   `json:"release"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil || !cleanupJobRe.MatchString(req.Job) {
+		errJSON(w, http.StatusBadRequest, "The request was not understood.")
+		return
+	}
+	e.mu.Lock()
+	if e.holds == nil {
+		e.holds = map[string]time.Time{}
+	}
+	_, had := e.holds[req.Job]
+	if req.Release {
+		delete(e.holds, req.Job)
+	} else if had || len(e.holds) < 16 {
+		e.holds[req.Job] = time.Now().Add(holdTTL)
+	}
+	e.mu.Unlock()
+	if req.Release && had {
+		e.logs.addf("[launcher] video %s is no longer in progress", req.Job)
+	} else if !req.Release && !had {
+		e.logs.addf("[launcher] video %s is being made: Glow Studio stays open until it is done", req.Job)
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleOpenLogs opens the log folder in Explorer (Windows; elsewhere it only
+// says where the folder is).
+func (e *Engine) handleOpenLogs(w http.ResponseWriter, r *http.Request) {
+	dir := logsDir()
+	os.MkdirAll(dir, 0o755)
+	opened := openFolder(dir)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "opened": opened, "dir": dir})
 }
 
 // Shutdown pauses a running install (keeping partial files) and kills ComfyUI.
@@ -826,7 +1012,7 @@ func (e *Engine) apiHandler() http.Handler {
 		}
 		post := map[string]func(http.ResponseWriter, *http.Request){
 			"install": e.handleInstall, "cancel": e.handleCancel, "start": e.handleStart, "stop": e.handleStop,
-			"cleanup": e.handleCleanup,
+			"cleanup": e.handleCleanup, "hold": e.handleHold, "open-logs": e.handleOpenLogs,
 		}
 		h, ok := post[name]
 		if !ok {
@@ -930,10 +1116,9 @@ func (e *Engine) handleInstall(w http.ResponseWriter, r *http.Request) {
 		e.state, e.engErr = "stopped", ""
 	}
 	e.man.Pending, e.man.PendingRepair = packs, req.Repair
-	if err := e.man.save(dir); err != nil {
-		errJSON(w, http.StatusBadRequest, userMsg(dirError(err, dir)))
-		return
-	}
+	// Written by the job itself (outside e.mu): a slow disk must not hold up
+	// this answer or the status.
+	persist := e.manifestWriterLocked(dir)
 	ctx, cancel := context.WithCancel(context.Background())
 	j := newJob(packs, dir)
 	j.Repair = req.Repair
@@ -945,7 +1130,8 @@ func (e *Engine) handleInstall(w http.ResponseWriter, r *http.Request) {
 		verb = "checking and repairing"
 	}
 	e.logs.addf("[install] %s: %s in %s", verb, strings.Join(packs, ", "), dir)
-	go e.runInstall(ctx, j, e.jobDone)
+	done := e.jobDone
+	goSafe("install", func() { e.runInstall(ctx, j, done, persist) })
 	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
 }
 

@@ -1,9 +1,10 @@
 package main
 
-// Privacy: the files ComfyUI keeps for a video (the selfie it was given and the
-// unlabelled scene photo, song and clip it made) are removed once the page has
-// them, so the only copy left is the labelled video in Glow Studio's own
-// history. See glow/local-engine.js (cleanupJob).
+// Privacy: the files ComfyUI keeps for a video (the selfie it was given, the
+// part of the user's own song it was given for lip-sync, and the unlabelled
+// scene photos, song and clips it made) are removed once the page has them, so
+// the only copy left is the labelled video in Glow Studio's own history. See
+// glow/local-engine.js (cleanupJob).
 //
 //	POST /__glow/engine/cleanup {"job":"<id>","prompts":["<prompt id>",...]} -> 200 {"ok":true,"removed":N}
 //
@@ -39,12 +40,14 @@ func glowWorkDirs(installDir string) []string {
 	return []string{filepath.Join(root, "input", "glow"), filepath.Join(root, "output", "glow")}
 }
 
-// removeJobFiles deletes the selfie (input\glow\selfie_<job>.*) and every output
-// of the job (output\glow\<job>_*). It returns how many files were removed.
+// removeJobFiles deletes the selfie (input\glow\selfie_<job>.*), the song
+// segment for lip-sync (input\glow\audio_<job>.*) and every output of the job
+// (output\glow\<job>_*, including a story's <job>_s<N>_*). It returns how many
+// files were removed.
 func removeJobFiles(installDir, job string) int {
 	n := 0
 	dirs := glowWorkDirs(installDir)
-	prefixes := []string{"selfie_" + job + ".", job + "_"}
+	prefixes := [][]string{{"selfie_" + job + ".", "audio_" + job + "."}, {job + "_"}}
 	for i, d := range dirs {
 		ents, err := os.ReadDir(d)
 		if err != nil {
@@ -52,7 +55,7 @@ func removeJobFiles(installDir, job string) int {
 		}
 		for _, ent := range ents {
 			name := ent.Name()
-			if !ent.Type().IsRegular() || !strings.HasPrefix(name, prefixes[i]) {
+			if !ent.Type().IsRegular() || !hasAnyPrefix(name, prefixes[i]) {
 				continue
 			}
 			if removeRetry(filepath.Join(d, name)) == nil {
@@ -61,6 +64,15 @@ func removeJobFiles(installDir, job string) int {
 		}
 	}
 	return n
+}
+
+func hasAnyPrefix(s string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // sweepOldFiles deletes files in the glow subfolders that are older than age.
@@ -115,16 +127,17 @@ func (e *Engine) handleCleanup(w http.ResponseWriter, r *http.Request) {
 		Job     string   `json:"job"`
 		Prompts []string `json:"prompts"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil || !cleanupJobRe.MatchString(req.Job) {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil || !cleanupJobRe.MatchString(req.Job) {
 		errJSON(w, http.StatusBadRequest, "The request was not understood.")
 		return
 	}
 	var prompts []string
 	for _, p := range req.Prompts {
-		if cleanupPromptRe.MatchString(p) && len(prompts) < 16 {
+		if cleanupPromptRe.MatchString(p) && len(prompts) < 64 { // a story has up to 9 steps, plus retries
 			prompts = append(prompts, p)
 		}
 	}
+	e.releaseHold(req.Job)
 	e.mu.Lock()
 	dir := e.installDir
 	port := 0

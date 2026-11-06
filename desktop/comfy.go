@@ -25,12 +25,25 @@ const preferredComfyPort = 47822 // not 8188, so a user's own ComfyUI does not c
 const startTimeout = 15 * time.Minute
 
 // ringLog keeps the last lines of ComfyUI and installer output for "Details",
-// and mirrors them to <installDir>\logs\engine.log for support.
+// and mirrors them to <installDir>\logs\engine.log for support (the
+// launcher's own lines — [launcher], [install], [repair], [7-zip] — also go to
+// launcher.log). The file is written outside mu, so the status (which reads
+// the last lines) never waits for the disk.
 type ringLog struct {
-	mu    sync.Mutex
-	lines []string
-	max   int
-	file  *os.File
+	mu     sync.Mutex
+	lines  []string
+	max    int
+	fileMu sync.Mutex
+	file   *os.File
+}
+
+func launcherLine(line string) bool {
+	for _, p := range []string{"[launcher]", "[install]", "[repair]", "[7-zip]"} {
+		if strings.HasPrefix(line, p) {
+			return true
+		}
+	}
+	return false
 }
 
 var ansiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
@@ -45,18 +58,48 @@ func (r *ringLog) add(line string) {
 		line = string(rs[:400]) + "…"
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.file != nil {
-		fmt.Fprintf(r.file, "%s %s\n", time.Now().Format("15:04:05"), line)
-	}
 	// tqdm progress bars rewrite one line many times: keep only the latest.
 	if n := len(r.lines); n > 0 && progressRe.MatchString(line) && progressRe.MatchString(r.lines[n-1]) {
 		r.lines[n-1] = line
-		return
+	} else {
+		r.push(line)
 	}
+	r.mu.Unlock()
+	r.toFile(line)
+}
+
+// push appends a line (r.mu held).
+func (r *ringLog) push(line string) {
 	r.lines = append(r.lines, line)
 	if len(r.lines) > r.max {
 		r.lines = append([]string(nil), r.lines[len(r.lines)-r.max:]...)
+	}
+}
+
+func (r *ringLog) toFile(line string) {
+	r.fileMu.Lock()
+	if r.file != nil {
+		fmt.Fprintf(r.file, "%s %s\n", time.Now().Format("15:04:05"), line)
+	}
+	r.fileMu.Unlock()
+	if launcherLine(line) {
+		launcherLog.line(line)
+	}
+}
+
+// setProgress shows one line that is updated in place (e.g. "[7-zip]
+// unpacking… 45%"): it replaces the last line when that starts with prefix.
+// toFile: also write this update to the log files (not every percent).
+func (r *ringLog) setProgress(prefix, line string, toFile bool) {
+	r.mu.Lock()
+	if n := len(r.lines); n > 0 && strings.HasPrefix(r.lines[n-1], prefix) {
+		r.lines[n-1] = line
+	} else {
+		r.push(line)
+	}
+	r.mu.Unlock()
+	if toFile {
+		r.toFile(line)
 	}
 }
 
@@ -83,12 +126,12 @@ func (r *ringLog) openFile(dir string) {
 	if err != nil {
 		return
 	}
-	r.mu.Lock()
+	r.fileMu.Lock()
 	if r.file != nil {
 		r.file.Close()
 	}
 	r.file = f
-	r.mu.Unlock()
+	r.fileMu.Unlock()
 }
 
 // pump splits process output into lines on \n, \r (tqdm) and \b (7-Zip progress).
@@ -218,11 +261,12 @@ func (e *Engine) startEngine() error {
 	pw.Close() // the child has its own copy
 	afterStart(cmd)
 	// Privacy: selfies and unlabelled outputs a closed page could not clean up.
-	go func(dir string) {
-		if n := sweepOldFiles(dir, sweepAge); n > 0 {
+	sweepDir := e.installDir
+	goSafe("sweep", func() {
+		if n := sweepOldFiles(sweepDir, sweepAge); n > 0 {
 			e.logs.addf("[launcher] removed %d old AI copies of selfies and videos", n)
 		}
-	}(e.installDir)
+	})
 	p := &comfyProc{cmd: cmd, port: port, done: make(chan struct{})}
 	e.proc, e.state, e.engErr, e.comfyPort, e.runningVersion, e.dynVRAM = p, "starting", "", port, "", nil
 	e.startedAt, e.qBusy, e.qFailSince = time.Now(), false, time.Time{}
@@ -232,6 +276,7 @@ func (e *Engine) startEngine() error {
 	go func() {
 		defer close(pumped)
 		defer pr.Close()
+		defer recoverLog("engine output")
 		e.logs.pump(pr, func(line string) {
 			e.logs.add(line)
 			if strings.Contains(line, "DynamicVRAM support detected and enabled") {
@@ -252,6 +297,7 @@ func (e *Engine) startEngine() error {
 		case <-time.After(5 * time.Second):
 		}
 		lines := e.logs.last(60)
+		var persist func() error
 		e.mu.Lock()
 		close(p.done)
 		if e.proc == p {
@@ -270,13 +316,18 @@ func (e *Engine) startEngine() error {
 				if damaged && samePath(installDir, e.installDir) {
 					// "Check & repair files" will unpack the engine again.
 					e.man.EngineSuspect = true
-					e.man.save(installDir)
+					persist = e.manifestWriterLocked(installDir)
 				}
 			}
 		}
 		e.mu.Unlock()
+		if persist != nil {
+			if err := persist(); err != nil {
+				e.logs.addf("[launcher] could not save the install record: %v", err)
+			}
+		}
 	}()
-	go e.waitReady(p)
+	goSafe("engine start", func() { e.waitReady(p) })
 	return nil
 }
 
@@ -316,7 +367,7 @@ func (e *Engine) waitReady(p *comfyProc) {
 		}
 		e.mu.Unlock()
 		if ready {
-			go e.watchQueue(p)
+			goSafe("engine queue", func() { e.watchQueue(p) })
 		}
 		return
 	}

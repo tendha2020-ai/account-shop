@@ -22,3 +22,6 @@ func openApp(url string) {
 }
 
 func showError(msg string) { fmt.Fprintln(os.Stderr, msg) }
+
+// openFolder is a no-op outside Windows (the folder is shown on the page).
+func openFolder(dir string) bool { return false }

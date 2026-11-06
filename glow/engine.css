@@ -94,6 +94,9 @@ h2:focus, main:focus { outline: none; }
 .eg-steps li.now i { background: var(--grad); border-color: transparent; color: #fff; box-shadow: 0 6px 18px -6px rgba(164, 87, 255, .9); }
 
 /* ---------- banner ---------- */
+.eg-busy { display: flex; gap: 10px; align-items: center; margin: 0 0 12px; padding: 10px 14px; border-radius: var(--r-md); background: rgba(155, 92, 255, .1); border: 1px solid rgba(155, 92, 255, .3); color: #ddd0ff; font-size: 14px; }
+.eg-busy[hidden] { display: none; }
+.eg-busy .eg-spin { width: 16px; height: 16px; border-width: 2px; flex: none; }
 .eg-banner { display: flex; gap: 10px; align-items: flex-start; margin: 0 0 12px; padding: 12px 14px; border-radius: var(--r-md); background: rgba(251, 191, 36, .1); border: 1px solid rgba(251, 191, 36, .35); color: #ffe6a8; font-size: 14px; }
 
 /* ---------- cards ---------- */
@@ -271,6 +274,11 @@ h2:focus, main:focus { outline: none; }
 .eg-facts { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); gap: 6px 14px; margin: 0 0 12px; font-size: 13px; }
 .eg-facts dt { color: var(--faint); }
 .eg-facts dd { margin: 0; color: var(--text); overflow-wrap: anywhere; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12.5px; }
+.eg-logs { margin: 0 0 14px; padding: 12px 14px; border-radius: 12px; background: rgba(255,255,255,.03); border: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+.eg-logs p { margin: 0 0 10px; }
+.eg-logs code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12.5px; color: var(--text); overflow-wrap: anywhere; }
+.eg-logs .eg-btn { min-height: 44px; }
+.eg-logs .eg-logs-note { margin: 10px 0 0; color: var(--faint); }
 .eg-logh { margin: 0 0 6px; font-size: 12.5px; color: var(--faint); font-weight: 600; }
 .eg-log { margin: 0; max-height: 260px; overflow: auto; padding: 10px 12px; border-radius: 10px; background: #050409; border: 1px solid var(--line); color: #cfc8ea; font: 12px/1.55 ui-monospace, "Cascadia Mono", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 

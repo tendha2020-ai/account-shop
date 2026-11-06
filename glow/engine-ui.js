@@ -14,10 +14,14 @@
   var T = (window.__GLOW_ENGINE_UI_TEST__ && typeof window.__GLOW_ENGINE_UI_TEST__ === 'object') ? window.__GLOW_ENGINE_UI_TEST__ : {};
   var POLL_FAST = T.pollFastMs || 1000;
   var POLL_SLOW = T.pollSlowMs || 4000;
+  // While big files are written (or an antivirus scans them) the launcher can be slow for a moment: give it 15 s,
+  // say "still working on it" first, and call it "not answering" only after 3 misses in a row.
+  var STATUS_TIMEOUT = T.statusTimeoutMs || 15000;
+  var OFFLINE_AFTER = 3;
   var PREF_KEY = 'glow.engine.ui';
 
   var $ = function (s, r) { return (r || document).querySelector(s); };
-  var els = { view: $('#egView'), steps: $('#egSteps'), banner: $('#egBanner'), details: $('#egDetails'), facts: $('#egFacts'), log: $('#egLog'), live: $('#egLive') };
+  var els = { view: $('#egView'), steps: $('#egSteps'), banner: $('#egBanner'), busy: $('#egBusy'), details: $('#egDetails'), facts: $('#egFacts'), logs: $('#egLogs'), log: $('#egLog'), live: $('#egLive') };
   if (!L || !els.view) return;
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -555,9 +559,15 @@
     });
   }
   function renderBanner() {
-    var show = S && ui.offline >= 2;
-    els.banner.hidden = !show;
-    if (show) els.banner.textContent = 'Glow Studio isn’t answering. Make sure the Glow Studio app is still open — this page reconnects by itself.';
+    var gone = !!S && ui.offline >= OFFLINE_AFTER;
+    var slow = !!S && ui.offline > 0 && !gone;
+    els.banner.hidden = !gone;
+    if (gone) els.banner.textContent = 'Glow Studio isn’t answering. Make sure the Glow Studio app is still open — this page reconnects by itself.';
+    if (els.busy) {
+      els.busy.hidden = !slow;
+      var t = 'Still working on it… Glow Studio is busy for a moment (this can happen while big files are being saved).';
+      if (slow && els.busy.getAttribute('data-t') !== t) { els.busy.innerHTML = '<span class="eg-spin" aria-hidden="true"></span><span>' + esc(t) + '</span>'; els.busy.setAttribute('data-t', t); }
+    }
   }
   function renderDetails() {
     els.details.hidden = !S;
@@ -574,6 +584,7 @@
     if (j && j.error) facts.push([j.repair ? 'Repair error' : 'Download error', j.error]);
     if (e.error) facts.push(['Engine error', e.error]);
     els.facts.innerHTML = facts.map(function (f) { return '<dt>' + esc(f[0]) + '</dt><dd>' + esc(f[1]) + '</dd>'; }).join('');
+    renderLogFiles();
     var log = (e.log || []).join('\n') || 'No messages yet.';
     if (els.log.textContent !== log) {
       var atEnd = els.log.scrollTop + els.log.clientHeight >= els.log.scrollHeight - 8;
@@ -582,13 +593,36 @@
     }
   }
 
+  // Where the log files are, for support ("Open log folder" opens File Explorer there).
+  function renderLogFiles() {
+    if (!els.logs) return;
+    var lg = S && S.logs;
+    if (!lg || !lg.dir) { els.logs.hidden = true; return; }
+    var note = ui.logsNote ? '<p class="eg-logs-note" role="status">' + esc(ui.logsNote) + '</p>' : '';
+    var h = '<p>If you ask for help, the log files are in <code>' + esc(lg.dir) + '</code> (<code>launcher.log</code>' + (lg.crash ? ', <code>crash.log</code>' : '') + ')' +
+      (lg.engine ? ' and the AI engine’s messages in <code>' + esc(lg.engine) + '</code>' : '') + '.</p>' +
+      '<button type="button" class="eg-btn glass" data-logs' + (ui.logsBusy ? ' disabled' : '') + '>Open log folder</button>' + note;
+    if (els.logs.getAttribute('data-h') !== h) { els.logs.innerHTML = h; els.logs.setAttribute('data-h', h); }
+    els.logs.hidden = false;
+  }
+  function openLogs() {
+    if (ui.logsBusy) return;
+    ui.logsBusy = true; ui.logsNote = null; renderLogFiles();
+    L.openLogs().then(function (r) {
+      ui.logsNote = r && r.opened ? 'The log folder is open in File Explorer.' : 'Open this folder yourself: ' + ((r && r.dir) || (S && S.logs && S.logs.dir) || '');
+    }, function () {
+      ui.logsNote = 'The folder couldn’t be opened. You’ll find it at ' + ((S && S.logs && S.logs.dir) || '') + '.';
+    }).then(function () { ui.logsBusy = false; renderLogFiles(); announce(ui.logsNote); });
+  }
+  if (els.logs) els.logs.addEventListener('click', function (ev) { if (ev.target.closest('[data-logs]')) { ev.preventDefault(); openLogs(); } });
+
   /* ---------------- polling ---------------- */
   var pollTimer = null, inflight = false;
   function needFast() { return !!(S && ((S.job && S.job.state === 'running') || S.engine.state === 'starting' || S.gpuPending || ui.warm.state === 'running' || ui.offline)); }
   function refresh() {
     if (inflight) return Promise.resolve();
     inflight = true;
-    return L.status().then(function (s) {
+    return L.status({ timeout: STATUS_TIMEOUT }).then(function (s) {
       var wasReady = S && S.engine.state === 'ready';
       var prevJob = S && S.job;
       S = s; ui.offline = 0;

@@ -32,6 +32,15 @@ func openApp(url string) {
 	exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
 }
 
+// openFolder opens dir in File Explorer.
+func openFolder(dir string) bool {
+	exe := filepath.Join(os.Getenv("SystemRoot"), "explorer.exe")
+	if _, err := os.Stat(exe); err != nil {
+		exe = "explorer.exe"
+	}
+	return exec.Command(exe, dir).Start() == nil
+}
+
 func showError(msg string) {
 	user32 := syscall.NewLazyDLL("user32.dll")
 	box := user32.NewProc("MessageBoxW")

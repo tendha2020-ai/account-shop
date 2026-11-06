@@ -75,7 +75,8 @@
   MODEL_NAME[EP.ai] = 'Happy Horse 1.1';
   // USD. still: per image (2K costs the same as 1K); std: per second with audio off; ai: per second at 720p.
   var PRICE = { still: 0.15, stillAlt: 0.063, std: 0.084, ai: 0.14 };
-  var LENGTHS = [5, 10];
+  var LENGTHS = [5, 10];        // fal.ai cloud, one scene = one clip (Kling 3.0 / Happy Horse make 5 or 10 s)
+  var ALL_LENGTHS = [5, 10, 20]; // stories (and every scene on this PC): 1, 2 or 4 shots of about 5 s
 
   var QUEUE = 'https://queue.fal.run/';
   var UPLOAD_INIT = 'https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3';
@@ -139,6 +140,68 @@
       soundPrompt: 'Audio: upbeat dance-pop music filling the hall, guests cheering and laughing, the warm buzz of a big party, no dialogue.',
       // On this PC (Qwen-Image-Edit-2511 + Wan 2.2): the scene part of the photo prompt, a short motion + camera line
       local: { still: 'dancing toward the camera with a big joyful smile in the middle of an elegant party hall at night: round tables with white cloths, glowing fairy-light trees, warm string lights, pastel balloons and a shiny dance floor, other guests dancing around them slightly out of focus, warm pink, violet and golden party lighting', motion: 'The person dances happily toward the camera, smiling, shoulders, arms and hips moving to the beat, hair swaying; guests dance and clap around them; fairy lights twinkle; the handheld smartphone camera slowly moves backward; realistic natural motion.' }
+    },
+    /* Story scenes: a few ~5 s shots made from the SAME selfie, cut together on the beat with one soundtrack.
+     * shots[].still/motion/motionStd/lyric = the cloud prompts (Nano Banana Pro still, Kling or Happy Horse video);
+     * shots[].local = this PC's wording (Qwen-Image-Edit still, Wan 2.2 motion, Wan2.2-S2V lip-sync line);
+     * pick = which shots make a 5, 10 or 20 s video; lipSync = the shot sung in sync with the song (this PC). */
+    {
+      id: 'famous-street', name: 'Famous on the Street', line: 'Fans, flashes & high-fives on the way out', badges: ['Trending'],
+      audio: 'optional', defaultTrack: 'hype', length: 20, story: true, transition: 'flash',
+      soundPrompt: 'Audio: an excited, friendly crowd cheering and whooping, phone camera shutter sounds, upbeat club music spilling from the doorway, no dialogue.',
+      shots: [
+        { id: 'stairs', title: 'Down the red stairs',
+          still: 'Place this person walking down a wide staircase outside a nightclub at night, smiling in happy surprise. The stairs and walls glow in deep red neon light. A friendly crowd of fans lines both sides of the stairs, holding up their phones to film them, cheering and smiling. Three-quarter shot from a phone at chest height a few steps below, the person centered and sharp. Glowing phone screens, light haze, vivid red and magenta light with warm highlights on their face.',
+          motion: 'Handheld smartphone video. The person walks down the red-lit stairs toward the camera, smiling in happy disbelief, while the crowd on both sides cheers and films them with their phones. The camera moves slowly backward down the stairs.',
+          local: { still: 'walking down wide nightclub stairs at night, smiling in happy surprise: deep red neon light on the stairs and walls, a friendly crowd of fans on both sides holding up glowing phones to film them, light haze, warm highlights on their face', motion: 'The person walks down the red-lit stairs toward the camera, smiling; fans on both sides cheer and film with their phones; the handheld camera moves slowly backward; realistic natural motion.' } },
+        { id: 'highfive', title: 'High-fives & selfies',
+          still: 'Place this person at the bottom of red-lit nightclub stairs at night, laughing as friendly fans reach out to give them high-fives and take selfies with them. Medium shot from a phone at chest height, the person centered, one hand raised for a high-five. Fans hold up glowing phones, a few camera flashes, deep red neon light and light haze.',
+          motion: 'Handheld smartphone video. The person laughs and gives high-fives to the fans reaching toward them, leans in for a quick selfie with one fan, and keeps smiling while phone screens glow all around.',
+          local: { still: 'laughing with one hand raised for a high-five at the bottom of red-lit nightclub stairs at night: friendly fans reaching out for high-fives and selfies, glowing phone screens, a few camera flashes, deep red light and haze', motion: 'The person laughs and gives high-fives to the fans reaching toward them; phone screens glow; camera flashes twinkle; the handheld camera sways gently; realistic natural motion.' } },
+        { id: 'wave', title: 'Smile & wave',
+          still: 'Place this person in a close-up outside a nightclub at night, smiling warmly and waving at the camera, with red neon lights and a blurred, cheering crowd holding up phones behind them. Head-and-shoulders shot from a phone at face height, the face large, sharp and well lit.',
+          motion: 'Handheld smartphone video, close-up. The person smiles warmly, waves at the camera and laughs, while the cheering crowd behind them films with their phones and camera flashes twinkle.',
+          local: { still: 'in a close-up, smiling warmly and waving at the camera outside a nightclub at night: red neon lights and a blurred cheering crowd with phone screens behind them', motion: 'Close-up: the person smiles, waves at the camera and laughs; the blurred crowd behind cheers and films; camera flashes twinkle; slow handheld push-in; realistic natural motion.', framing: 'Head-and-shoulders close-up, the face large and centered' } },
+        { id: 'escort', title: 'Through the crowd',
+          still: 'Place this person walking along a city sidewalk at night outside a club, smiling and waving, while a friendly security guard in a black suit walks beside them and gently clears the way through a cheering crowd of fans holding up phones. Camera flashes, red and white city lights, wet street reflections. Three-quarter shot from a phone at chest height, the person centered.',
+          motion: 'Handheld smartphone video. The person walks forward along the sidewalk, waving to the cheering fans, while a friendly security guard walks beside them and gently guides the way. Camera flashes pop all around. The camera tracks slowly backward.',
+          local: { still: 'walking along a city sidewalk at night outside a club, smiling and waving, a friendly security guard in a black suit beside them clearing the way through a cheering crowd of fans holding up phones, camera flashes, red city lights, wet street reflections', motion: 'The person walks forward waving to cheering fans while a friendly security guard walks beside them; camera flashes pop; the handheld camera tracks slowly backward; realistic natural motion.' } }
+      ],
+      pick: { 5: ['stairs'], 10: ['stairs', 'wave'], 20: ['stairs', 'highfive', 'wave', 'escort'] }
+    },
+    {
+      id: 'club-exit-sing', name: 'Leaving the Club', alt: 'Sing in Spanish', line: 'Sing out the door with your friends', badges: ['With singing', 'New'],
+      audio: 'required', defaultTrack: 'sun', length: 20, story: true, transition: 'whip',
+      soundPrompt: 'Audio: an upbeat Spanish rumba-pop song sung by the person and their friends, acoustic guitar strumming, handclaps and happy cheering on a city street at night, no other music.',
+      shots: [
+        { id: 'door', title: 'Out the club door',
+          still: 'Place this person walking out of a nightclub door at night with their arms around two friends, all laughing. Behind them a glowing pink and blue neon sign above the door and a friendly bouncer in a black jacket holding the door open. Three-quarter shot from a phone at chest height on the sidewalk, the person centered and sharp. Night city street, warm streetlights, neon reflections on the pavement.',
+          motion: 'Handheld smartphone video outside a nightclub at night. The person walks out of the club door arm in arm with their friends, laughing and starting to sing, while the bouncer smiles and holds the door. Neon lights glow above them.',
+          motionStd: 'Handheld smartphone video outside a nightclub at night. The person walks out of the club door arm in arm with their friends, laughing and cheering with big smiles, while the bouncer smiles and holds the door. Neon lights glow above them.',
+          lyric: { who: 'The person and their friends laugh and start singing in Spanish', line: '¡Se cierra la puerta, se enciende la calle!' },
+          local: { still: 'walking out of a nightclub door at night with their arms around two friends, all laughing: a glowing pink and blue neon sign above the door, a friendly bouncer holding the door, a night street with warm streetlights and neon reflections', motion: 'The person walks out of the club door toward the camera arm in arm with laughing friends; the bouncer smiles; neon lights glow; the handheld camera moves slowly backward; realistic natural motion.' } },
+        { id: 'street', title: 'Arm in arm, singing',
+          still: 'Place this person on a lively city street at night just outside a nightclub, arm in arm with a group of friends, everyone singing loudly together with happy faces, one friend clapping. Three-quarter shot from a phone at chest height, the person centered. Neon signs, warm streetlights, a few passers-by smiling.',
+          motion: 'Handheld smartphone video on a city street at night. The person and their friends walk arm in arm, singing loudly together and swaying to the rhythm, one friend clapping along.',
+          motionStd: 'Handheld smartphone video on a city street at night. The person and their friends walk arm in arm, laughing, swaying to the rhythm and clapping along with big smiles.',
+          lyric: { who: 'Everyone sings together in Spanish', line: '¡Salimos cantando, que nadie se calle!' },
+          local: { still: 'arm in arm with a group of friends on a lively city street at night outside a nightclub, everyone singing together with happy faces: neon signs, warm streetlights, a friend clapping', motion: 'The person and friends walk arm in arm, swaying to the rhythm and clapping, friends singing along; neon lights glow; the handheld camera moves slowly backward; realistic natural motion.' } },
+        { id: 'chorus', title: 'The chorus', lipSync: true,
+          still: 'Place this person in a close-up on a city street at night, singing joyfully with the mouth open mid-song, friends around them singing along with their arms raised. Head-and-shoulders shot from a phone at face height, the face large and sharp, neon pink and blue light with warm streetlight.',
+          motion: 'Handheld smartphone video, close-up. The person sings the chorus with joy, eyes bright, while the friends around them sing along and raise their arms.',
+          motionStd: 'Handheld smartphone video, close-up. The person laughs and cheers with a big smile, swaying to the rhythm, while the friends around them raise their arms.',
+          lyric: { who: 'The person sings the chorus in Spanish', line: '¡Oé, oé, oé, cantamos hasta el sol!' },
+          local: { still: 'in a close-up, singing joyfully with the mouth open mid-song on a city street at night: friends around them singing along with raised arms, neon pink and blue light', motion: 'Close-up: the person smiles widely and sways to the music while friends raise their arms; neon lights glow; slow handheld push-in; realistic natural motion.', sing: 'The person sings the chorus joyfully in Spanish to the camera on a city street at night, friends singing along with raised arms around them, neon lights, realistic.', framing: 'Head-and-shoulders close-up, the face large and centered' } },
+        { id: 'jump', title: 'Everyone jumps',
+          still: 'Place this person in the middle of a group of friends jumping and cheering on a city street at night outside a nightclub, arms in the air, huge smiles, phone flashes from people filming. Full-body to three-quarter shot from a phone at chest height, the person centered. Neon lights and warm streetlights.',
+          motion: 'Handheld smartphone video. The person and their friends jump and cheer together with arms in the air, singing the last line, while phone flashes go off around them.',
+          motionStd: 'Handheld smartphone video. The person and their friends jump and cheer together with arms in the air, laughing, while phone flashes go off around them.',
+          lyric: { who: 'Everyone sings and cheers in Spanish', line: '¡Oé, oé, oé, la calle es de todos!' },
+          local: { still: 'jumping and cheering with arms in the air in the middle of a group of friends on a city street at night outside a nightclub: huge smiles, phone flashes from people filming, neon lights', motion: 'The person and friends jump and cheer with arms in the air; phone flashes go off; neon lights glow; the handheld camera bobs with the crowd; realistic natural motion.' } }
+      ],
+      pick: { 5: ['chorus'], 10: ['street', 'chorus'], 20: ['door', 'street', 'chorus', 'jump'] },
+      // Original Spanish rumba-pop song (written for Glow Studio) for the free Singing add-on: a short verse, then the chorus
+      song: { style: 'rumba pop, flamenco rumba guitar strumming, handclaps, cajon, festive group chorus, male and female vocals, upbeat, Spanish', lyrics: "[Verse]\nSe cierra la puerta, se enciende la calle,\nsalimos cantando, ¡que nadie se calle!\n\n[Chorus]\n¡Oé, oé, oé, cantamos hasta el sol!\n¡Oé, oé, oé, con palmas y con voz!\nQue suene la guitarra, que baile el corazón,\n¡oé, oé, oé, la calle es de todos!" }
     },
     {
       id: 'club', name: 'Club Night', line: 'Center of a packed dance floor', badges: ['Trending'],
@@ -263,13 +326,22 @@
       local: { still: 'posing confidently with a warm smile on a red carpet at a glamorous premiere at night: velvet ropes, a softly lit backdrop, a row of photographers with bright camera flashes, glamorous warm lighting', motion: 'The person walks forward along the red carpet with confident style, stops, turns to pose and waves at the photographers; camera flashes pop all around; the handheld camera tracks slowly backward; realistic natural motion.' }
     }
   ];
-  function sceneById(id) { for (var i = 0; i < SCENES.length; i++) if (SCENES[i].id === id) return SCENES[i]; return SCENES[0]; }
+  // The two story scenes lead the grid (the trend people come for); Party Hall stays the default scene.
+  ['club-exit-sing', 'famous-street'].forEach(function (id) {
+    for (var i = 0; i < SCENES.length; i++) if (SCENES[i].id === id) { SCENES.unshift(SCENES.splice(i, 1)[0]); return; }
+  });
+  var DEFAULT_SCENE = 'party-hall';
+  function sceneById(id) {
+    for (var i = 0; i < SCENES.length; i++) if (SCENES[i].id === id) return SCENES[i];
+    for (var j = 0; j < SCENES.length; j++) if (SCENES[j].id === DEFAULT_SCENE) return SCENES[j];
+    return SCENES[0];
+  }
 
   function stillPrompt(sc) { return sc.stillPrompt + STILL_RULES; }
   // tier: 'std' (silent Kling) or 'ai' (Happy Horse with native sound). Spoken/sung lines go in double quotes with
   // timecodes, which is how Happy Horse 1.1 voices and lip-syncs them.
-  function motionPrompt(sc, tier, dur) {
-    var p = tier === 'ai' ? sc.motion : (sc.motionStd || sc.motion);
+  function motionPrompt(sc, tier, dur, hint) {
+    var p = tier === 'ai' ? sc.motion : (sc.motionStd || sc.motion) + (hint || '');
     if (tier === 'ai') {
       if (sc.lyrics) {
         var lines = sc.lyrics.filter(function (l) { return l.to <= dur; });
@@ -285,11 +357,11 @@
   function stillInput(sc, imageUrl) {
     return { prompt: stillPrompt(sc), image_urls: [imageUrl], aspect_ratio: '9:16', resolution: '2K', output_format: 'jpeg', num_images: 1 };
   }
-  function videoInput(sc, tier, dur, stillUrl) {
+  function videoInput(sc, tier, dur, stillUrl, hint) {
     if (tier === 'ai') {
       return { image_url: stillUrl, prompt: motionPrompt(sc, 'ai', dur), duration: dur, resolution: '720p', enable_safety_checker: true };
     }
-    return { start_image_url: stillUrl, prompt: motionPrompt(sc, 'std', dur), duration: String(dur), generate_audio: false, negative_prompt: NEGATIVE, enable_safety_checker: true };
+    return { start_image_url: stillUrl, prompt: motionPrompt(sc, 'std', dur, hint), duration: String(dur), generate_audio: false, negative_prompt: NEGATIVE, enable_safety_checker: true };
   }
 
   /* Free AI on this PC (window.GlowLocalAI, local-engine.js). The local models need their own wording:
@@ -303,19 +375,82 @@
     ' everyone is fully and appropriately dressed. Candid vertical smartphone photo, natural skin texture, realistic hands, no text, no logos, no watermark.';
   var LOCAL_NEGATIVE = 'blurry, distorted face, face morphing, different person, identity change, extra limbs, extra fingers, deformed hands, flicker, static frame, text, subtitles, watermark, logo';
   var SONG_SECONDS = 20, SONG_OFFSET = 5; // a 20 s song; the 5 s lip-sync chunk starts 5 s in (the chorus)
-  function localStillPrompt(sc, model) {
+  function localStillText(model, text, framing) {
     var who = model === 'klein' ? 'image 1 is a selfie. Create a realistic vertical photo of the exact same person from image 1, '
       : 'Create a realistic vertical smartphone photo of the exact same person from Picture 1, ';
-    return who + sc.local.still + '.' + LOCAL_RULES;
+    var rules = framing ? LOCAL_RULES.replace('Knees-up framing, the person centered', framing) : LOCAL_RULES;
+    return who + text + '.' + rules;
   }
+  function localStillPrompt(sc, model) { return localStillText(model, sc.local.still); }
   // The request for GlowLocalAI.generate() (without photo and signal). sound 'ai' locally = the Singing add-on's song.
-  function localRequest(sc, sound, quality, fastPack) {
+  // shot: one shot of a story scene (a 5 s story video made the single-clip way); hint: the tempo line ("Dance to the beat").
+  function localRequest(sc, sound, quality, fastPack, shot, hint) {
+    var loc = shot ? shot.local : sc.local;
     var r = {
-      stillPrompt: localStillPrompt(sc, quality === 'fast' && fastPack ? 'klein' : 'qwen'),
-      motionPrompt: sc.local.motion, negativePrompt: LOCAL_NEGATIVE, quality: quality === 'fast' ? 'fast' : 'best', singing: null
+      stillPrompt: localStillText(quality === 'fast' && fastPack ? 'klein' : 'qwen', loc.still, loc.framing),
+      motionPrompt: loc.motion + (hint || ''), negativePrompt: LOCAL_NEGATIVE, quality: quality === 'fast' ? 'fast' : 'best', singing: null
     };
-    if (sound === 'ai' && sc.song) r.singing = { lyrics: sc.song.lyrics, style: sc.song.style, language: 'es', seconds: SONG_SECONDS, offset: SONG_OFFSET, prompt: sc.local.sing || sc.local.motion };
+    if (sound === 'ai' && sc.song) r.singing = { lyrics: sc.song.lyrics, style: sc.song.style, language: 'es', seconds: SONG_SECONDS, offset: SONG_OFFSET, prompt: loc.sing || singLine(sc, shot) };
     return r;
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Stories: 1–4 shots of about 5 s, each made from the same selfie, cut together on the beat under one soundtrack
+   * ------------------------------------------------------------------ */
+  var SHOT_SEC = 5;
+  var LIP_SEC = 77 / 16;   // Wan2.2-S2V on this PC: one verified 77-frame chunk at 16 fps per lip-synced shot (4.8 s)
+  // A scene that is not a story gets the same scene in a few framings when it is longer than one shot.
+  var VARIANTS = [
+    { id: 'main', title: 'The scene', still: '', motion: '' },
+    { id: 'closer', title: 'Closer', still: ' Closer framing, from the waist up.', lstill: ', closer, from the waist up', motion: ' The camera moves in a little closer.', framing: 'Waist-up framing, the person centered' },
+    { id: 'angle', title: 'Another angle', still: ' Seen from a slightly different angle, a little to the side.', lstill: ', seen from a slightly different angle', motion: ' The camera slowly circles around them.' },
+    { id: 'closeup', title: 'Close-up', still: ' A head-and-shoulders close-up, the face large and sharp.', lstill: ', in a head-and-shoulders close-up', motion: ' Close-up, they smile right into the camera.', framing: 'Head-and-shoulders close-up, the face large and centered' }
+  ];
+  function shotCount(dur) { return dur >= 20 ? 4 : dur >= 10 ? 2 : 1; }
+  function shotById(sc, id) { for (var i = 0; i < sc.shots.length; i++) if (sc.shots[i].id === id) return sc.shots[i]; return sc.shots[0]; }
+  function variantShot(sc, v, i) {
+    var lyr = sc.lyrics && sc.lyrics.length ? sc.lyrics[i % sc.lyrics.length] : null;
+    return {
+      id: v.id, title: v.title, still: sc.stillPrompt + v.still, motion: sc.motion + v.motion, motionStd: (sc.motionStd || sc.motion) + v.motion,
+      lyric: lyr ? { who: lyr.who, line: lyr.line } : null, lipSync: !!sc.song,
+      local: { still: sc.local.still + (v.lstill || ''), motion: sc.local.motion.replace(/; realistic natural motion\.$/, '') + (v.motion ? ';' + v.motion.replace(/\.$/, '').replace(/^ The/, ' the') : '') + '; realistic natural motion.', sing: sc.local.sing, framing: v.framing }
+    };
+  }
+  // The shots of a video of this length (story scenes: their own shots; others: the scene in different framings).
+  function shotsFor(sc, dur) {
+    var n = shotCount(dur);
+    if (sc.story) {
+      var ids = (sc.pick && sc.pick[n * SHOT_SEC]) || sc.shots.slice(0, n).map(function (s) { return s.id; });
+      return ids.map(function (id) { return shotById(sc, id); });
+    }
+    return VARIANTS.slice(0, n).map(function (v, i) { return variantShot(sc, v, i); });
+  }
+  // The shot a story scene shows when it is made as one 5 s clip
+  function keyShot(sc) { return sc.story ? shotsFor(sc, 5)[0] : null; }
+  function singLine(sc, shot) {
+    var where = (shot && shot.local ? shot.local.still : sc.local.still).split(':')[0].replace(/^(dancing|singing|walking|laughing|posing|performing|jumping|in a close-up,?)\b[^,]*,?\s*/i, '');
+    return 'The person sings the song with feeling right to the camera, ' + (where ? where.replace(/\s+$/, '') + ', ' : '') + 'moving to the music, realistic.';
+  }
+  // "Dance to the beat": one line about the tempo for the motion prompts.
+  function beatHint(t) {
+    if (!t) return '';
+    if (!(t.bpm > 0)) return t.feel ? ' Everyone moves in time with ' + t.feel + '.' : '';
+    var b = Math.round(t.bpm);
+    if (t.bpm >= 118 || (t.energy || 0) > 0.85) return ' Everyone moves in time with a fast ' + b + ' BPM beat, big energetic moves right on the beat.';
+    if (t.bpm < 96 || (t.energy || 1) < 0.45) return ' Everyone moves in time with a slow ' + b + ' BPM groove, smooth and relaxed.';
+    return ' Everyone moves in time with an upbeat ' + b + ' BPM beat, bouncy moves on the beat.';
+  }
+  // fal: the scene photo and the clip of one shot (cloud)
+  function shotStillInput(shot, imageUrl) {
+    return { prompt: shot.still + STILL_RULES, image_urls: [imageUrl], aspect_ratio: '9:16', resolution: '2K', output_format: 'jpeg', num_images: 1 };
+  }
+  function shotVideoInput(sc, shot, tier, stillUrl, hint) {
+    if (tier === 'ai') {
+      var p = shot.motion;
+      if (shot.lyric) p += ' 0-5s: ' + shot.lyric.who + ': "' + shot.lyric.line + '" Lips matched to the words, natural happy expressions.';
+      return { image_url: stillUrl, prompt: p + MOTION_RULES + ' ' + sc.soundPrompt, duration: SHOT_SEC, resolution: '720p', enable_safety_checker: true };
+    }
+    return { start_image_url: stillUrl, prompt: (shot.motionStd || shot.motion) + (hint || '') + MOTION_RULES, duration: String(SHOT_SEC), generate_audio: false, negative_prompt: NEGATIVE, enable_safety_checker: true };
   }
 
   /* ------------------------------------------------------------------ *
@@ -327,9 +462,11 @@
   var prefs = lsJSON(LS.prefs) || {};
   var S = {
     sceneId: sceneById(prefs.sceneId).id,
-    sound: prefs.sound === 'ai' ? 'ai' : 'music',
+    sound: prefs.sound === 'ai' || prefs.sound === 'own' ? prefs.sound : 'music', // 'music' (built-in), 'ai' (AI sound / AI song) or 'own' (my song)
     userSound: prefs.userSound || null,     // the sound mode the user picked themselves (kept across scenes)
-    userLen: LENGTHS.indexOf(prefs.userLen) >= 0 ? prefs.userLen : null, // likewise the length
+    userLen: ALL_LENGTHS.indexOf(prefs.userLen) >= 0 ? prefs.userLen : null, // likewise the length
+    sync: prefs.sync === 'lips' ? 'lips' : 'beat', // "Sync to the song": dance to the beat, or lip-sync every shot (this PC)
+    own: null,                               // my song: { id, name, size, blob, buffer, duration, start, beat, peaks } (see "My song")
     trackId: '', duration: 5,
     retryJob: null,                          // { resume: job } (paid request to pick up again) or a "reuse the scene photo" stub
     photo: null,                             // { blob, url, thumb (data URL), small (data URL), w, h, seq, uploaded: {url, at} }
@@ -365,7 +502,16 @@
     engCard: $('#aiEngineCard'), engSeg: $('#aiEngSeg'), engSt: $('#aiEngSt'), engNote: $('#aiEngNote'), engLocalS: $('#aiEngLocalS'), engWeb: $('#aiEngWeb'), engCmp: $('#aiEngCmp'),
     engResume: $('#aiEngResume'), engResT: $('#aiEngResT'), engResS: $('#aiEngResS'), engContinue: $('#aiEngContinue'), engDiscard: $('#aiEngDiscard'),
     lenGroup: $('#aiLenGroup'), qualGroup: $('#aiQualGroup'), qual: $('#aiQual'), qualBest: $('#aiQualBest'), qualFast: $('#aiQualFast'), qualNote: $('#aiQualNote'),
-    footNote: $('#aiFootNote'), errDet: $('#aiErrDet'), errDetP: $('#aiErrDetP'), videoName: $('#aiVideoName')
+    footNote: $('#aiFootNote'), errDet: $('#aiErrDet'), errDetP: $('#aiErrDetP'), videoName: $('#aiVideoName'), stillName: $('#aiStillName'),
+    soundCard: $('#aiSoundCard'), sceneHint: $('#aiSceneHint'), shots: $('#aiShots'),
+    own: $('#aiOwn'), ownEmpty: $('#aiOwnEmpty'), ownBox: $('#aiOwnBox'), ownName: $('#aiOwnName'), ownMeta: $('#aiOwnMeta'), ownChange: $('#aiOwnChange'),
+    ownRemove: $('#aiOwnRemove'), wave: $('#aiWave'), waveCv: $('#aiWaveCv'), ownPlay: $('#aiOwnPlay'), ownStart: $('#aiOwnStart'), ownShort: $('#aiOwnShort'),
+    ownSt: $('#aiOwnSt'), ownFile: $('#aiOwnFile'),
+    syncGroup: $('#aiSyncGroup'), syncSeg: $('#aiSync'), syncNote: $('#aiSyncNote'),
+    pvSheet: $('#aiPreview'), pvsT: $('#aiPvsT'), pvsClose: $('#aiPvsClose'), pvsCanvas: $('#aiPvsCanvas'), pvsVideo: $('#aiPvsVideo'), pvsChip: $('#aiPvsChip'),
+    pvsMute: $('#aiPvsMute'), pvsCap: $('#aiPvsCap'), pvsLine: $('#aiPvsLine'), pvsInfo: $('#aiPvsInfo'), pvsShots: $('#aiPvsShots'), pvsNote: $('#aiPvsNote'),
+    pvsUse: $('#aiPvsUse'), pvsBack: $('#aiPvsBack'),
+    see: $('#aiSee'), seeList: $('#aiSeeList'), seeTime: $('#aiSeeTime'), seeGo: $('#aiSeeGo'), seeStop: $('#aiSeeStop'), seeClear: $('#aiSeeClear'), seeSt: $('#aiSeeSt')
   };
   if (!el.ai) return; // page without the AI section
 
@@ -407,7 +553,7 @@
     });
     lsSet(LS.mode, m);
     if (location.hash === '#ai' || location.hash === '#photo') { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* ignore */ } }
-    if (m !== 'ai') stopTrackPreview();
+    if (m !== 'ai') { stopTrackPreview(); stopOwnPreview(); }
     if (changed) {
       document.dispatchEvent(new CustomEvent('glow:mode', { detail: { mode: m } }));
       if (opts && opts.user && window.scrollY > 120) { try { window.scrollTo({ top: 0, behavior: REDUCED ? 'auto' : 'smooth' }); } catch (e) { window.scrollTo(0, 0); } }
@@ -936,6 +1082,67 @@
       p.x.save(); p.x.translate(W * 0.64, 0); crowd(p, 3, 0.74, 0.26, 0.3, '#160509', '#ffffff', ['mic', 'pose'], { spread: 0.36 }); p.x.restore();
       [[0.08, 0.5], [0.22, 0.44], [0.8, 0.46], [0.93, 0.52], [0.15, 0.62], [0.86, 0.6], [0.3, 0.38], [0.7, 0.4]].forEach(function (f) { flash(p, W * f[0], H * f[1], W * (0.012 + p.R() * 0.01)); });
       hero(p, W * 0.5, H * 1.0, H * 0.6, 'wave', ['#fffaf0', '#ffd28a', '#e0466b'], '#ffd28a');
+    },
+    'famous-street': function (p) {
+      var W = p.W, H = p.H, x = p.x, i;
+      vgrad(p, [[0, '#1a0206'], [0.45, '#4a0710'], [0.8, '#22030a'], [1, '#0e0104']]);
+      // red-lit stairs coming down toward the camera
+      for (i = 0; i < 11; i++) {
+        var t = i / 10, y = H * (0.3 + t * t * 0.62), hw = W * (0.16 + t * 0.42), th = H * (0.012 + t * 0.03);
+        var g = x.createLinearGradient(0, y, 0, y + th);
+        g.addColorStop(0, hexA('#ff3a4f', 0.55 + t * 0.35)); g.addColorStop(1, hexA('#5a0612', 0.9));
+        x.fillStyle = g; x.fillRect(W * 0.5 - hw, y, hw * 2, th);
+      }
+      // red neon light bars on the walls
+      [[0.06, 0.12], [0.94, 0.12], [0.18, 0.2], [0.82, 0.2]].forEach(function (b, k) {
+        lighter(p, function () { beam(p, W * b[0], H * b[1], W * b[0], H * 0.95, W * 0.018, W * 0.05, '#ff2a40', 0.5 - k * 0.06); glow(p, W * b[0], H * b[1], W * 0.08, '#ff4057', 0.6); });
+      });
+      glow(p, W * 0.5, H * 0.22, W * 0.55, '#ff2f55', 0.3);
+      bokeh(p, 14, ['#ff5a6e', '#ff9aa8'], 0.01, 0.03, 0.05, 0.4, 0.45);
+      // fans on both sides, phones up
+      for (var sd = 0; sd < 2; sd++) {
+        x.save();
+        if (sd) { x.translate(W, 0); x.scale(-1, 1); }
+        crowd(p, 4, 0.86, 0.34, 0.42, '#1c0207', '#ff5068', ['up', 'cheer', 'wave', 'up'], { spread: 0.5 });
+        for (i = 0; i < 5; i++) {
+          var px = W * (0.04 + i * 0.075), py = H * (0.42 + (i % 2) * 0.06 + p.R() * 0.04);
+          x.save(); x.fillStyle = '#f2f6ff'; x.shadowColor = '#bfe0ff'; x.shadowBlur = W * 0.05;
+          rr(x, px, py, W * 0.034, W * 0.058, W * 0.007); x.fill(); x.restore();
+        }
+        x.restore();
+      }
+      [[0.12, 0.36], [0.86, 0.4], [0.25, 0.48], [0.76, 0.52], [0.09, 0.58]].forEach(function (f) { flash(p, W * f[0], H * f[1], W * (0.01 + p.R() * 0.01)); });
+      floorGlow(p, '#ff2f55', 0.3);
+      hero(p, W * 0.5, H * 1.0, H * 0.6, 'wave', ['#ffffff', '#ffe3ea', '#ff6b8a'], '#ff5a78');
+    },
+    'club-exit-sing': function (p) {
+      var W = p.W, H = p.H, x = p.x, i;
+      vgrad(p, [[0, '#060818'], [0.5, '#151a3e'], [0.75, '#1c1230'], [1, '#09060f']]);
+      // the club front: a lit doorway under a neon sign
+      x.fillStyle = '#0c0b1c'; x.fillRect(W * 0.18, H * 0.12, W * 0.64, H * 0.5);
+      var dg = x.createLinearGradient(0, H * 0.24, 0, H * 0.6);
+      dg.addColorStop(0, '#ffcf7a'); dg.addColorStop(1, '#ff7a45');
+      x.fillStyle = dg; x.fillRect(W * 0.38, H * 0.25, W * 0.24, H * 0.36);
+      lighter(p, function () { glow(p, W * 0.5, H * 0.45, W * 0.38, '#ffb04a', 0.45); });
+      x.save(); x.lineCap = 'round'; x.lineWidth = W * 0.016; x.shadowBlur = W * 0.06;
+      x.strokeStyle = '#ff5ccf'; x.shadowColor = '#ff5ccf';
+      x.beginPath(); x.moveTo(W * 0.3, H * 0.17); x.lineTo(W * 0.46, H * 0.17); x.stroke();
+      x.strokeStyle = '#4fd8ff'; x.shadowColor = '#4fd8ff';
+      x.beginPath(); x.moveTo(W * 0.54, H * 0.17); x.lineTo(W * 0.7, H * 0.17); x.stroke();
+      x.beginPath(); x.arc(W * 0.5, H * 0.17, W * 0.035, 0, TAU); x.stroke();
+      x.restore();
+      // bouncer by the door
+      person(p, W * 0.3, H * 0.63, H * 0.36, { fill: '#05050c', glow: '#ffb04a', glowR: 0.05, pose: 'down', step: 0.01 });
+      // wet street with neon reflections
+      x.fillStyle = 'rgba(10,10,26,.92)'; x.fillRect(0, H * 0.62, W, H * 0.4);
+      lighter(p, function () {
+        for (i = 0; i < 9; i++) { var ry = H * (0.66 + i * 0.035), c = i % 2 ? '#ff5ccf' : '#4fd8ff'; x.fillStyle = hexA(c, 0.16 - i * 0.012); x.fillRect(W * (0.25 + (i % 3) * 0.05), ry, W * (0.5 - (i % 3) * 0.08), Math.max(1, H * 0.006)); }
+        glow(p, W * 0.08, H * 0.1, W * 0.12, '#ffe0a0', 0.5); glow(p, W * 0.92, H * 0.1, W * 0.12, '#ffe0a0', 0.5);
+      });
+      // friends arm in arm, singing
+      crowd(p, 5, 0.97, 0.4, 0.47, '#140f24', '#ff8fd0', ['cheer', 'sway', 'up', 'sway', 'cheer'], { skip: 0.11 });
+      hero(p, W * 0.5, H * 1.02, H * 0.62, 'cheer', HERO_WARM, '#ff9a3d');
+      note(p, W * 0.74, H * 0.42, W * 0.07, '#ffe1a0'); note(p, W * 0.86, H * 0.32, W * 0.05, '#ffd0e6'); note(p, W * 0.24, H * 0.38, W * 0.055, '#c9e2ff');
     }
   };
   function paintScene(canvas, id) {
@@ -953,9 +1160,11 @@
    * ------------------------------------------------------------------ */
   var sceneBtns = {};
   var DPR = Math.min(2, window.devicePixelRatio || 1);
+  var ICON_PV = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.6v12.8c0 .8.9 1.3 1.5.8l10-6.4c.6-.4.6-1.2 0-1.6l-10-6.4C8.9 4.3 8 4.8 8 5.6z"/></svg>';
   function renderScenes() {
     el.scenes.textContent = '';
     SCENES.forEach(function (sc, i) {
+      var wrap = document.createElement('div'); wrap.className = 'ai-scene-w';
       var b = document.createElement('button');
       b.type = 'button'; b.className = 'ai-scene'; b.setAttribute('role', 'radio'); b.dataset.scene = sc.id;
       var art = document.createElement('span'); art.className = 'ai-scene-art';
@@ -973,6 +1182,7 @@
       var ck = document.createElement('span'); ck.className = 'ai-check'; ck.setAttribute('aria-hidden', 'true');
       ck.innerHTML = '<svg viewBox="0 0 24 24"><path d="M5.5 12.5l4 4 9-9"/></svg>';
       art.appendChild(ck);
+      var you = document.createElement('span'); you.className = 'ai-you'; you.hidden = true; you.setAttribute('aria-hidden', 'true'); art.appendChild(you);
       var txt = document.createElement('span'); txt.className = 'ai-scene-txt';
       var nm = document.createElement('b'); nm.textContent = sc.name; txt.appendChild(nm);
       if (sc.alt) { var al = document.createElement('i'); al.textContent = sc.alt; txt.appendChild(al); }
@@ -980,16 +1190,337 @@
       art.appendChild(txt);
       var ring = document.createElement('span'); ring.className = 'ai-ring'; ring.setAttribute('aria-hidden', 'true'); art.appendChild(ring);
       b.appendChild(art);
-      var label = sc.name + (sc.alt ? ' (' + sc.alt + ')' : '') + '. ' + sc.line + '.' + (sc.badges && sc.badges.length ? ' ' + sc.badges.join(', ') + '.' : '') +
-        (sc.audio === 'required' ? ' Uses AI sound.' : '');
+      var label = sc.name + (sc.alt ? ' (' + sc.alt + ')' : '') + '. ' + sc.line + '.' + (sc.story ? ' A story of up to 4 shots.' : '') + (sc.badges && sc.badges.length ? ' ' + sc.badges.join(', ') + '.' : '') +
+        (sc.audio === 'required' ? ' Uses AI sound or your own song.' : '');
       b.setAttribute('aria-label', label);
       b.addEventListener('click', function () { selectScene(sc.id, { user: true }); });
       b.addEventListener('keydown', function (e) { sceneKeys(e, i); });
-      el.scenes.appendChild(b);
-      sceneBtns[sc.id] = { btn: b, canvas: cv };
+      // "▶ Preview": a bigger example with the scene's sound, before picking it
+      var pv = document.createElement('button');
+      pv.type = 'button'; pv.className = 'ai-scene-pv'; pv.dataset.preview = sc.id; pv.tabIndex = -1;
+      pv.innerHTML = ICON_PV + '<span>Preview</span>';
+      pv.setAttribute('aria-label', 'Preview ' + sc.name + ' with sound');
+      pv.addEventListener('click', function (e) { e.stopPropagation(); openScenePreview(sc.id, pv); });
+      wrap.appendChild(b); wrap.appendChild(pv);
+      el.scenes.appendChild(wrap);
+      sceneBtns[sc.id] = { btn: b, canvas: cv, art: art, pv: pv, you: you, wrap: wrap };
     });
-    var paintAll = function () { SCENES.forEach(function (sc, k) { setTimeout(function () { paintScene(sceneBtns[sc.id].canvas, sc.id); sceneBtns[sc.id].btn.classList.add('ready'); }, k * 16); }); };
+    var paintAll = function () {
+      SCENES.forEach(function (sc, k) {
+        setTimeout(function () { cardInit(sc.id); sceneBtns[sc.id].btn.classList.add('ready'); if (k === SCENES.length - 1) { cardsWatch(); updateCardPreviews(); } }, k * 16);
+      });
+    };
     if ('requestIdleCallback' in window) requestIdleCallback(paintAll, { timeout: 500 }); else setTimeout(paintAll, 60);
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Scene cards in motion: each card's poster is painted once, then a light layer moves on top of it to the scene's
+   * beat (crowd bobbing, phone flashes, sweeping lights, confetti, notes). Only cards on screen move, at 15–24 fps,
+   * never while the page is hidden or in Photo Video, and not at all with reduced motion. A scene the user has made
+   * a video in shows the first seconds of their latest one instead (muted loop, with its burned-in AI label).
+   * ------------------------------------------------------------------ */
+  var CARD_FX = {
+    'party-hall': ['bob', 'bokeh', 'crowd'], 'famous-street': ['bob', 'phones', 'flashes', 'crowd'], 'club-exit-sing': ['bob', 'neon', 'notes', 'crowd'],
+    club: ['bob', 'lasers', 'crowd'], spanish: ['bob', 'notes', 'bokeh', 'crowd'], karaoke: ['bob', 'beams', 'notes'], concert: ['bob', 'beams', 'phones', 'crowd'],
+    wedding: ['bob', 'bokeh', 'crowd'], birthday: ['bob', 'confetti'], beach: ['bob', 'bokeh', 'crowd'], rooftop: ['bob', 'bokeh', 'crowd'],
+    street: ['bob', 'crowd'], festival: ['bob', 'confetti', 'crowd'], redcarpet: ['bob', 'flashes']
+  };
+  var CARD_COL = {
+    'party-hall': '#ff8fd0', 'famous-street': '#ff5068', 'club-exit-sing': '#ff8fd0', club: '#22d3ee', spanish: '#ffb347', karaoke: '#ff5cc8', concert: '#7f9bff',
+    wedding: '#ffd6b0', birthday: '#ffb36b', beach: '#ff9a5a', rooftop: '#7fb2ff', street: '#ffb36b', festival: '#ffd6a0', redcarpet: '#ffd28a'
+  };
+  var CARD = { list: {}, vis: {}, raf: 0, last: 0, draws: {}, io: null, fps: 24, t0: performance.now() };
+  function sceneBpm(sc) { var t = trackById(sc.defaultTrack); return t ? t.bpm : 110; }
+  function cardInit(id) {
+    var c = sceneBtns[id];
+    if (!c) return;
+    var base = document.createElement('canvas'); base.width = c.canvas.width; base.height = c.canvas.height;
+    paintScene(base, id);
+    CARD.list[id] = { id: id, cv: c.canvas, base: base, fx: CARD_FX[id] || ['bob'], col: CARD_COL[id] || '#ff8fd0', bpm: sceneBpm(sceneById(id)), seed: seedOf(id) };
+    drawCard(CARD.list[id], 0);
+  }
+  function cardsWatch() {
+    CARD.fps = COARSE() ? 15 : 24;
+    if (CARD.io || !('IntersectionObserver' in window)) { Object.keys(CARD.list).forEach(function (id) { CARD.vis[id] = true; }); cardsLoop(); return; }
+    CARD.io = new IntersectionObserver(function (ents) {
+      ents.forEach(function (e) {
+        var id = e.target.getAttribute('data-card');
+        CARD.vis[id] = e.isIntersecting;
+        cardVideoPlay(id);
+      });
+      cardsLoop();
+    }, { rootMargin: '40px 0px', threshold: 0.01 });
+    Object.keys(sceneBtns).forEach(function (id) { sceneBtns[id].art.setAttribute('data-card', id); CARD.io.observe(sceneBtns[id].art); });
+  }
+  function cardsActive() { return !REDUCED && !document.hidden && mode() === 'ai' && !document.documentElement.classList.contains('glow-rec'); }
+  function cardsLoop() {
+    if (CARD.raf || !cardsActive()) return;
+    var tickC = function (now) {
+      CARD.raf = 0;
+      if (!cardsActive()) return;
+      var any = false;
+      if (now - CARD.last >= 1000 / CARD.fps - 2) {
+        CARD.last = now;
+        var t = (now - CARD.t0) / 1000;
+        Object.keys(CARD.list).forEach(function (id) {
+          if (!CARD.vis[id]) return;
+          any = true;
+          if (sceneBtns[id].vid && !sceneBtns[id].vid.paused) return; // their own video plays instead
+          drawCard(CARD.list[id], t);
+          CARD.draws[id] = (CARD.draws[id] || 0) + 1;
+        });
+      } else any = Object.keys(CARD.vis).some(function (id) { return CARD.vis[id]; });
+      if (any) CARD.raf = requestAnimationFrame(tickC);
+    };
+    CARD.raf = requestAnimationFrame(tickC);
+  }
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) cardsLoop(); Object.keys(sceneBtns).forEach(cardVideoPlay); });
+  document.addEventListener('glow:mode', function () { cardsLoop(); Object.keys(sceneBtns).forEach(cardVideoPlay); });
+  // the moving layer: t in seconds; everything is a pure function of t (and the card's seed)
+  function drawCard(c, t, target) {
+    var cv = target || c.cv, x = cv.getContext('2d');
+    if (!x) return;
+    var W = cv.width, H = cv.height, beat = 60 / c.bpm, ph = (t / beat) % 1, pulse = Math.exp(-ph * 5), bar = Math.floor(t / beat);
+    var bob = c.fx.indexOf('bob') >= 0 && !REDUCED ? pulse : 0;
+    x.save();
+    x.fillStyle = '#000'; x.fillRect(0, 0, W, H);
+    var s = 1 + 0.014 * bob;
+    x.translate(W / 2, H / 2); x.scale(s, s); x.translate(-W / 2, -H / 2 - H * 0.004 * bob);
+    x.drawImage(c.base, 0, 0, W, H);
+    x.restore();
+    var p = { x: x, W: W, H: H, R: rng(c.seed) };
+    c.fx.forEach(function (fx) { if (FXL[fx]) FXL[fx](p, t, c, beat, pulse, bar); });
+  }
+  function hash01(a, b) { var h = Math.imul((a | 0) ^ 0x9e3779b9, 0x85ebca6b) ^ Math.imul((b | 0) + 0x632be5ab, 0xc2b2ae35); h ^= h >>> 15; h = Math.imul(h, 0x2c1b3c6d); h ^= h >>> 13; return (h >>> 0) / 4294967296; }
+  var FXL = {
+    bokeh: function (p, t, c) {
+      lighter(p, function () {
+        for (var i = 0; i < 7; i++) {
+          var a = 0.5 + 0.5 * Math.sin(t * (0.8 + hash01(i, c.seed) * 1.4) + i * 2.1);
+          glow(p, p.W * hash01(i, c.seed + 1), p.H * (0.12 + 0.5 * hash01(i, c.seed + 2)), p.W * (0.02 + 0.03 * hash01(i, 7)), c.col, 0.35 * a);
+        }
+      });
+    },
+    crowd: function (p, t, c, beat) {
+      // a front row of silhouettes (heads, shoulders, raised arms) bobbing to the beat, partly out of frame
+      var x = p.x, n = 6, W = p.W, H = p.H;
+      x.save();
+      x.fillStyle = '#07040d'; x.strokeStyle = '#07040d'; x.lineCap = 'round';
+      x.shadowColor = c.col; x.shadowBlur = W * 0.025;
+      for (var i = 0; i < n; i++) {
+        if (i === 2 || i === 3) continue; // leave the middle (the hero) free
+        var off = hash01(i, c.seed) * 0.5, b = Math.abs(Math.sin(Math.PI * ((t / beat) + off)));
+        var cx = W * (i + 0.5) / n + W * 0.03 * Math.sin(t * 0.7 + i), by = H * (1.06 - 0.025 * b), r = W * 0.05;
+        x.beginPath(); x.ellipse(cx, by - r * 3.1, r * 0.82, r, 0, 0, TAU); x.fill();
+        x.beginPath(); x.ellipse(cx, by, r * 2.1, r * 1.7, 0, Math.PI, 0); x.fill();
+        if (hash01(i, c.seed + 9) > 0.45) {
+          var up = 0.6 + 0.4 * b, side = i < n / 2 ? -1 : 1;
+          x.lineWidth = r * 0.55;
+          x.beginPath(); x.moveTo(cx + side * r * 1.3, by - r * 1.1); x.lineTo(cx + side * r * 1.9, by - r * (2.6 + 1.6 * up)); x.lineTo(cx + side * r * 1.5, by - r * (3.8 + 2 * up)); x.stroke();
+        }
+      }
+      x.restore();
+    },
+    phones: function (p, t, c, beat) {
+      var x = p.x;
+      for (var i = 0; i < 6; i++) {
+        var px = p.W * (0.06 + 0.88 * hash01(i, c.seed + 3)), py = p.H * (0.5 + 0.3 * hash01(i, c.seed + 4)) + p.H * 0.008 * Math.sin(t * 3 + i);
+        if (Math.abs(px - p.W / 2) < p.W * 0.16) px += px < p.W / 2 ? -p.W * 0.18 : p.W * 0.18;
+        x.save(); x.fillStyle = 'rgba(235,244,255,.95)'; x.shadowColor = '#bfe0ff'; x.shadowBlur = p.W * 0.04;
+        rr(x, px, py, p.W * 0.03, p.W * 0.052, p.W * 0.006); x.fill(); x.restore();
+      }
+    },
+    flashes: function (p, t, c) {
+      // camera flashes: each spot fires for a tenth of a second at its own random moments
+      for (var i = 0; i < 9; i++) {
+        var per = 0.9 + hash01(i, c.seed + 5) * 1.8, k = Math.floor(t / per + hash01(i, 11)), f = (t / per + hash01(i, 11)) - k;
+        if (f > 0.09) continue;
+        var px = p.W * (0.05 + 0.9 * hash01(i * 31 + k, c.seed)), py = p.H * (0.25 + 0.45 * hash01(i * 17 + k, c.seed + 1));
+        flash(p, px, py, p.W * (0.016 + 0.012 * hash01(i, 3)) * (1 - f * 8));
+      }
+    },
+    lasers: function (p, t, c) {
+      var a = Math.sin(t * 0.9) * 40;
+      p.x.save(); p.x.translate(p.W / 2, -p.H * 0.02); p.x.rotate(a * Math.PI / 180); p.x.translate(-p.W / 2, p.H * 0.02);
+      lasers(p, p.W * 0.5, -p.H * 0.02, 5, ['#22d3ee', '#ff3fd0', '#a457ff'], 70, p.H * 1.2);
+      p.x.restore();
+    },
+    beams: function (p, t, c) {
+      var sw = Math.sin(t * 0.8) * p.W * 0.25;
+      beam(p, p.W * 0.15, 0, p.W * 0.4 + sw, p.H * 0.95, p.W * 0.04, p.W * 0.45, c.col, 0.22);
+      beam(p, p.W * 0.85, 0, p.W * 0.6 - sw, p.H * 0.95, p.W * 0.04, p.W * 0.45, '#9fb7ff', 0.2);
+    },
+    confetti: function (p, t, c) {
+      var x = p.x, cols = ['#ff4fa3', '#ffd23f', '#22d3ee', '#a457ff', '#7ff0c0', '#ffffff'];
+      for (var i = 0; i < 22; i++) {
+        var sp = 0.12 + 0.14 * hash01(i, c.seed + 6), y = ((hash01(i, c.seed + 7) + t * sp) % 1.1) - 0.05;
+        var px = p.W * (hash01(i, c.seed + 8) + 0.03 * Math.sin(t * 2 + i));
+        x.save(); x.translate(px, y * p.H); x.rotate(t * (1 + hash01(i, 2) * 3) + i);
+        x.fillStyle = cols[i % cols.length]; x.globalAlpha = 0.85;
+        var s = p.W * (0.008 + 0.008 * hash01(i, 4)); x.fillRect(-s, -s * 0.42, s * 2, s * 0.84); x.restore();
+      }
+    },
+    notes: function (p, t, c) {
+      for (var i = 0; i < 3; i++) {
+        var k = (t * 0.25 + i / 3) % 1, px = p.W * (0.2 + 0.6 * hash01(i, c.seed + Math.floor(t * 0.25 + i / 3))), py = p.H * (0.6 - 0.4 * k);
+        p.x.save(); p.x.globalAlpha = Math.sin(Math.PI * k); note(p, px, py, p.W * 0.055, i % 2 ? '#ffd0e6' : '#ffe1a0'); p.x.restore();
+      }
+    },
+    neon: function (p, t, c) {
+      var on = (Math.sin(t * 7) > -0.85 || Math.sin(t * 2.3) > 0.2) ? 1 : 0.35;
+      lighter(p, function () { glow(p, p.W * 0.5, p.H * 0.17, p.W * 0.32, '#ff5ccf', 0.18 * on); });
+    }
+  };
+  // The first seconds of the user's latest video in this scene (or their quick "See yourself" preview) on the card.
+  var CARDV = { src: {} };
+  function cardMedia(id) {
+    for (var i = 0; i < H.list.length; i++) { var it = H.list[i]; if (it.sceneId === id && isLabelled(it)) return { kind: 'video', blob: it.blob, key: 'h' + it.id }; }
+    var pv = SEE.saved[id];
+    if (pv && pv.labelled && pv.blob instanceof Blob) return { kind: 'preview', blob: pv.blob, key: 'p' + pv.at };
+    return null;
+  }
+  function updateCardPreviews() {
+    Object.keys(sceneBtns).forEach(function (id) {
+      var c = sceneBtns[id], m = cardMedia(id), key = m ? m.key : '';
+      if (CARDV.src[id] && CARDV.src[id].key === key) return;
+      if (c.vid) { try { c.vid.pause(); } catch (e) { /* ignore */ } c.vid.removeAttribute('src'); try { c.vid.load(); } catch (e) { /* ignore */ } c.vid.remove(); c.vid = null; }
+      if (CARDV.src[id]) { URL.revokeObjectURL(CARDV.src[id].url); delete CARDV.src[id]; }
+      c.you.hidden = !m;
+      c.btn.classList.toggle('has-you', !!m);
+      if (!m) return;
+      var url = URL.createObjectURL(m.blob), v = document.createElement('video');
+      v.className = 'ai-scene-vid'; v.muted = true; v.loop = true; v.playsInline = true; v.setAttribute('playsinline', ''); v.preload = 'metadata'; v.setAttribute('aria-hidden', 'true');
+      v.addEventListener('timeupdate', function () { if (v.currentTime > 3.2) { try { v.currentTime = 0.05; } catch (e) { /* ignore */ } } });
+      v.src = url;
+      c.art.insertBefore(v, c.art.children[1]);
+      c.vid = v;
+      c.you.textContent = m.kind === 'video' ? 'Your video' : 'You · preview';
+      CARDV.src[id] = { key: key, url: url };
+      cardVideoPlay(id);
+    });
+  }
+  function cardVideoPlay(id) {
+    var c = sceneBtns[id]; if (!c || !c.vid) return;
+    var want = !REDUCED && CARD.vis[id] && !document.hidden && mode() === 'ai';
+    if (want && c.vid.paused) { var pr = c.vid.play(); if (pr && pr.catch) pr.catch(function () { /* autoplay blocked: the poster stays */ }); }
+    else if (!want && !c.vid.paused) { try { c.vid.pause(); } catch (e) { /* ignore */ } }
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Preview sheet: a bigger example of a scene with its sound (built-in track via GlowMusic), before picking it.
+   * Story scenes show their shots one after another on the beat. With the user's own video in that scene, the
+   * sheet plays that instead (with its own sound).
+   * ------------------------------------------------------------------ */
+  var PV = { id: null, raf: 0, src: null, gain: null, startAt: 0, muted: false, base: null, video: null, url: null, opener: null, token: 0 };
+  function openScenePreview(id, opener) {
+    var sc = sceneById(id);
+    if (!el.pvSheet) return;
+    stopTrackPreview(); stopOwnPreview(); stopScenePreview();
+    PV.id = sc.id; PV.opener = opener || null;
+    var tok = ++PV.token;
+    var m = cardMedia(sc.id);
+    el.pvsT.textContent = sc.name + (sc.alt ? ' · ' + sc.alt : '');
+    el.pvsLine.textContent = sc.line;
+    var tr = trackById(sc.defaultTrack), n = shotCount(sc.length || 5);
+    var bits = [];
+    if (sc.story) bits.push((sc.length || 20) + ' s · ' + n + ' shots');
+    bits.push(sc.audio === 'required' ? (isLocal() ? 'AI song or your own song' : 'AI sound or your own song') : 'Built-in music: ' + (tr ? tr.name + ' (' + tr.bpm + ' BPM)' : 'original'));
+    el.pvsInfo.textContent = bits.join(' · ');
+    el.pvsChip.textContent = m ? (m.kind === 'video' ? 'Your latest video' : 'Quick preview of you') : 'Example';
+    el.pvsChip.classList.toggle('you', !!m);
+    el.pvsNote.textContent = m ? (m.kind === 'video' ? 'This is the last video you made in this scene.' : 'A quick 5-second preview made on this PC — the real video is sharper.') : 'An illustrated example of the scene. Your video shows you, made from your selfie.';
+    // shot list (story scenes)
+    el.pvsShots.textContent = '';
+    var shots = sc.story ? shotsFor(sc, sc.length || 20) : [];
+    el.pvsShots.hidden = !shots.length;
+    shots.forEach(function (sh, i) {
+      var li = document.createElement('li'); li.textContent = sh.title; li.dataset.i = i;
+      if (sh.lipSync) { var b = document.createElement('b'); b.textContent = 'sings'; li.appendChild(b); }
+      el.pvsShots.appendChild(li);
+    });
+    PV.muted = false; syncPvMute();
+    el.pvsUse.textContent = S.sceneId === sc.id ? 'Use this scene ✓' : 'Use this scene';
+    openSheet(el.pvSheet, el.pvsUse);
+    if (m) {
+      el.pvsCanvas.hidden = true;
+      var v = el.pvsVideo; v.hidden = false;
+      PV.url = URL.createObjectURL(m.blob); v.src = PV.url; v.muted = m.kind !== 'video' || PV.muted; v.loop = true;
+      var pr = v.play(); if (pr && pr.catch) pr.catch(function () { /* the user can press play */ });
+      PV.video = v;
+      if (m.kind !== 'video' && tr) playPvMusic(tr.id, tok); // a silent quick preview: with the scene's track
+    } else {
+      el.pvsVideo.hidden = true; el.pvsCanvas.hidden = false;
+      var cv = el.pvsCanvas, w = Math.round(cv.clientWidth * DPR) || Math.round(300 * DPR), h = Math.round(w * 16 / 9);
+      cv.width = w; cv.height = h;
+      var base = document.createElement('canvas'); base.width = w; base.height = h; paintScene(base, sc.id);
+      PV.base = { id: sc.id, cv: cv, base: base, fx: CARD_FX[sc.id] || ['bob'], col: CARD_COL[sc.id] || '#ff8fd0', bpm: tr ? tr.bpm : 110, seed: seedOf(sc.id) };
+      PV.startAt = performance.now();
+      if (tr) playPvMusic(tr.id, tok);
+      pvLoop(shots);
+    }
+  }
+  function playPvMusic(trackId, tok) {
+    var ctx = ensureAudio(); if (!ctx) return;
+    getMusic(trackId, 16).then(function (buf) {
+      if (tok !== PV.token || el.pvSheet.hidden) return;
+      var src = ctx.createBufferSource(), g = ctx.createGain();
+      src.buffer = buf; src.loop = true; src.connect(g); g.connect(master);
+      g.gain.value = PV.muted ? 0 : 0.9;
+      var at = ctx.currentTime + 0.05;
+      src.start(at);
+      PV.src = src; PV.gain = g; PV.audioAt = at;
+    }, function () { /* silent example */ });
+  }
+  function pvClock() {
+    // in time with the music when it plays (the shot changes land on its bars), else the page clock
+    if (PV.src && actx) return Math.max(0, actx.currentTime - PV.audioAt);
+    return (performance.now() - PV.startAt) / 1000;
+  }
+  function pvLoop(shots) {
+    cancelAnimationFrame(PV.raf);
+    var c = PV.base, last = -1;
+    // story scenes: a different framing of the poster per shot, 2 bars each, with the scene's transition
+    var frames = [[1, 0.5, 0.5], [1.28, 0.36, 0.62], [1.55, 0.5, 0.52], [1.2, 0.62, 0.6]];
+    var frame = function () {
+      if (!PV.base || el.pvSheet.hidden) return;
+      var t = REDUCED ? 0 : pvClock(), beat = 60 / c.bpm, x = c.cv.getContext('2d'), W = c.cv.width, H = c.cv.height;
+      if (shots.length) {
+        var per = beat * 8, k = Math.floor(t / per) % shots.length, lt = t - Math.floor(t / per) * per, f = frames[k % frames.length];
+        var tmp = PV.tmp || (PV.tmp = document.createElement('canvas'));
+        if (tmp.width !== W) { tmp.width = W; tmp.height = H; }
+        drawCard(c, t, tmp);
+        x.fillStyle = '#000'; x.fillRect(0, 0, W, H);
+        var z = f[0] * (1 + 0.04 * lt / per), sw = W / z, sh = H / z;
+        x.drawImage(tmp, clamp(f[1] * W - sw / 2, 0, W - sw), clamp(f[2] * H - sh / 2, 0, H - sh), sw, sh, 0, 0, W, H);
+        if (lt < 0.22 && !REDUCED) { x.save(); x.globalCompositeOperation = 'lighter'; x.fillStyle = 'rgba(255,255,255,' + (0.7 * Math.pow(1 - lt / 0.22, 2)) + ')'; x.fillRect(0, 0, W, H); x.restore(); }
+        if (k !== last) {
+          last = k;
+          Array.prototype.forEach.call(el.pvsShots.children, function (li, i) { li.classList.toggle('on', i === k); });
+          el.pvsCap.textContent = (k + 1) + ' / ' + shots.length + ' · ' + shots[k].title;
+        }
+      } else { drawCard(c, t); el.pvsCap.textContent = ''; }
+      el.pvsCap.hidden = !shots.length;
+      if (!REDUCED) PV.raf = requestAnimationFrame(frame);
+    };
+    frame();
+  }
+  function syncPvMute() {
+    el.pvsMute.setAttribute('aria-pressed', PV.muted ? 'true' : 'false');
+    el.pvsMute.setAttribute('aria-label', PV.muted ? 'Turn the sound on' : 'Mute');
+    if (PV.gain && actx) { try { PV.gain.gain.setTargetAtTime(PV.muted ? 0 : 0.9, actx.currentTime, 0.02); } catch (e) { PV.gain.gain.value = PV.muted ? 0 : 0.9; } }
+    if (PV.video && !PV.src) PV.video.muted = PV.muted;
+  }
+  function stopScenePreview() {
+    cancelAnimationFrame(PV.raf); PV.raf = 0;
+    if (PV.src) { try { PV.src.stop(); } catch (e) { /* ignore */ } try { PV.src.disconnect(); } catch (e) { /* ignore */ } }
+    PV.src = null; PV.gain = null; PV.base = null;
+    if (PV.video) { try { PV.video.pause(); } catch (e) { /* ignore */ } PV.video.removeAttribute('src'); try { PV.video.load(); } catch (e) { /* ignore */ } PV.video = null; }
+    if (PV.url) { URL.revokeObjectURL(PV.url); PV.url = null; }
+  }
+  function closeScenePreview() {
+    PV.token++;
+    stopScenePreview();
+    if (el.pvSheet && !el.pvSheet.hidden) closeSheet(el.pvSheet);
   }
   function sceneCols() {
     var a = el.scenes.children[0], b = el.scenes.children[1];
@@ -1015,8 +1546,9 @@
     var sc = sceneById(id);
     S.sceneId = sc.id;
     if (trackById(sc.defaultTrack)) S.trackId = sc.defaultTrack;
-    S.duration = S.userLen || sc.length || 5; // a length the user picked stays picked
-    if (sc.audio === 'required') S.sound = 'ai';
+    S.duration = fitLen(sc); // a length the user picked stays picked (where this scene and engine have it)
+    if (S.userSound === 'own') S.sound = 'own'; // my song works for every scene
+    else if (sc.audio === 'required') S.sound = 'ai';
     else if (S.userSound) S.sound = S.userSound;
     else S.sound = sc.audio === 'recommended' ? 'ai' : 'music';
     if (opts && opts.user) stopTrackPreview();
@@ -1031,6 +1563,7 @@
       var on = sc.id === S.sceneId, b = sceneBtns[sc.id].btn;
       b.setAttribute('aria-checked', on ? 'true' : 'false');
       b.tabIndex = on ? 0 : -1;
+      sceneBtns[sc.id].pv.tabIndex = on ? 0 : -1; // Tab goes from the chosen scene to its Preview
     });
     var sc = sceneById(S.sceneId);
     el.targetName.textContent = sc.name;
@@ -1112,7 +1645,7 @@
 
   function renderLengths() {
     el.len.textContent = '';
-    LENGTHS.forEach(function (d) {
+    ALL_LENGTHS.forEach(function (d) {
       var b = document.createElement('button');
       b.type = 'button'; b.className = 'opt'; b.dataset.len = d;
       var bb = document.createElement('b'); bb.textContent = d + ' s';
@@ -1122,19 +1655,108 @@
       el.len.appendChild(b);
     });
   }
+  /* Lengths. fal.ai cloud: one scene = one clip of 5 or 10 s; a story scene = 1, 2 or 4 shots (5, 10 or 20 s), one
+   * scene photo + one clip each. This PC: every scene can be 1, 2 or 4 shots once the engine can make stories. */
+  function storyOk() { return !!(LOC.api && typeof LOC.api.generateStory === 'function'); }
+  function lengthsFor(sc, engine) {
+    if ((engine || S.engine) === 'local') return storyOk() ? ALL_LENGTHS : [5];
+    return sc.story ? ALL_LENGTHS : LENGTHS;
+  }
+  function fitLen(sc, want) {
+    var L = lengthsFor(sc), w = want || S.userLen || sc.length || 5;
+    if (L.indexOf(w) >= 0) return w;
+    if (!want && !S.userLen && L.indexOf(sc.length) >= 0) return sc.length;
+    var best = L[0];
+    L.forEach(function (d) { if (Math.abs(d - w) < Math.abs(best - w)) best = d; });
+    return best;
+  }
+  // Lip-sync to the chosen song: this PC with the Singing add-on (Wan2.2-S2V), the AI song or the user's own song.
+  // fal.ai cloud has no verified audio-driven lip-sync model in this app, so it never offers it.
+  function lipsAvailable(sc, sound, engine) {
+    if ((engine || S.engine) !== 'local' || !singingOk() || !storyOk()) return false;
+    return (sound === 'own' && !!S.own) || (sound === 'ai' && !!sc.song);
+  }
+  function effSync(sc, sound, engine) { return S.sync === 'lips' && lipsAvailable(sc, sound, engine) ? 'lips' : 'beat'; }
+  /* What the next video is, in one place: engine, sound, length, the shots (each with lip-sync or not) and, on this
+   * PC, whether it is one clip made the single-clip way (GlowLocalAI.generate) or a story (generateStory). */
+  function planFor(sc, o) {
+    o = o || {};
+    var engine = o.engine || S.engine, sound = o.sound || effSound(sc), dur = o.duration || S.duration;
+    var sync = o.sync || effSync(sc, sound, engine), n = shotCount(dur);
+    var plan = { sc: sc, engine: engine, sound: sound, duration: dur, sync: sync, n: n, shots: null, lips: 0, local: '' };
+    var many = engine === 'local' ? (sc.story || n > 1 || sync === 'lips') : sc.story;
+    if (many) {
+      var src = engine === 'local' && singingOk() && ((sound === 'ai' && !!sc.song) || (sound === 'own' && !!S.own));
+      plan.shots = shotsFor(sc, dur).map(function (sh) {
+        var lip = !!src && (sync === 'lips' || (!!sh.lipSync && (sc.story || sound === 'ai')));
+        if (lip) plan.lips++;
+        return { shot: sh, lip: lip };
+      });
+    }
+    if (engine === 'local' && plan.shots && !storyOk()) {
+      // an engine without stories: one shot, made the single-clip way (the AI song can still be lip-synced there)
+      plan.shots = plan.shots.slice(0, 1);
+      if (plan.shots[0].lip && sound !== 'ai') { plan.shots[0] = { shot: plan.shots[0].shot, lip: false }; }
+      plan.lips = plan.shots[0].lip ? 1 : 0;
+    }
+    if (engine === 'local') {
+      // one clip without the user's song under its lips is made the proven single-clip way (works without stories)
+      var one = !plan.shots || (plan.shots.length === 1 && !(plan.shots[0].lip && sound === 'own'));
+      plan.local = one ? 'single' : 'story';
+      if (one && plan.shots) plan.single = plan.shots[0];
+    }
+    plan.quality = engine === 'local' && (sound === 'ai' || plan.lips) ? 'best' : S.quality;
+    return plan;
+  }
+  // Minutes on this PC for a plan: the engine's own estimate (stories: estimateStory), else the spec's numbers.
+  function localRange(plan) {
+    var m = null;
+    if (plan.local === 'story') {
+      var shots = plan.shots.map(function (x) { return { id: x.shot.id, lipSync: x.lip }; });
+      var o = { shots: shots, quality: plan.quality, song: plan.sound === 'ai', lipSync: plan.lips };
+      try { m = LOC.api.estimateStory(o).minutes; } catch (e) { m = null; }
+      if (!validRange(m)) { try { m = LOC.api.estimateStory({ shots: shots.length, quality: plan.quality, song: plan.sound === 'ai', lipSync: plan.lips }).minutes; } catch (e) { m = null; } }
+      if (!validRange(m)) {
+        // still + clip: Best about 6–9½ min, Fast 3–5; a lip-synced shot 6–9; the song 1–2 (RTX 5060, from the spec)
+        var lo = 0, hi = 0;
+        plan.shots.forEach(function (x) { var r = x.lip ? [6, 9] : plan.quality === 'fast' ? [3, 5] : [6, 9.5]; lo += r[0]; hi += r[1]; });
+        if (plan.sound === 'ai') { lo += 1; hi += 2; }
+        m = [Math.round(lo), Math.round(hi)];
+      }
+      return m;
+    }
+    m = [5, 8];
+    try { m = LOC.api.estimate({ quality: plan.quality, singing: plan.sound === 'ai' && !!plan.sc.song }).minutes; } catch (e) { /* defaults */ }
+    return m;
+  }
+  function validRange(m) { return Array.isArray(m) && m.length === 2 && m[0] > 0 && m[1] >= m[0] && m[1] < 600; }
+  function rangeText(m) { return 'about ' + half(m[0]) + '–' + half(m[1]) + ' min'; }
+  function falCost(sc, sound, dur) {
+    if (sc.story) return shotCount(dur) * (PRICE.still + (sound === 'ai' ? PRICE.ai : PRICE.std) * SHOT_SEC);
+    return estimate(sound, dur);
+  }
   function setSound(s, user) {
     var sc = sceneById(S.sceneId);
+    if (s === 'own') {
+      S.sound = 'own';
+      if (user) S.userSound = 'own';
+      stopTrackPreview();
+      savePrefs(); updateAll();
+      if (!S.own && user) openOwnPicker();
+      return;
+    }
     if (sc.audio === 'required' && s !== 'ai') {
-      toast(sc.name + ' needs AI sound for the singing.', 'warn');
+      toast(sc.name + ' needs AI sound for the singing (or your own song).', 'warn');
       return;
     }
     if (isLocal() && s === 'ai' && !sc.song) {
-      toast('On this PC, AI sound is the Singing add-on’s song, so it’s only for the singing scenes. This scene uses built-in music.', 'info', 5500);
+      toast('On this PC, AI sound is the Singing add-on’s song, so it’s only for the singing scenes. This scene uses built-in music or your own song.', 'info', 5500);
       return;
     }
     S.sound = s === 'ai' ? 'ai' : 'music';
     if (user) S.userSound = S.sound;
     if (S.sound === 'ai') stopTrackPreview();
+    stopOwnPreview();
     savePrefs();
     updateAll();
   }
@@ -1145,7 +1767,7 @@
     var aiOff = local && !sc.song;
     Array.prototype.forEach.call(el.sound.querySelectorAll('.ai-snd'), function (b) {
       var kind = b.getAttribute('data-sound'), on = kind === sound;
-      var off = kind === 'music' ? req : aiOff;
+      var off = kind === 'music' ? req : kind === 'ai' ? aiOff : false;
       b.setAttribute('aria-checked', on ? 'true' : 'false');
       b.tabIndex = on ? 0 : -1;
       b.classList.toggle('locked', off);
@@ -1155,25 +1777,30 @@
         if (t) t.textContent = local ? 'AI song' : 'AI sound';
         if (sm) sm.textContent = local ? (sc.song ? 'You sing in Spanish' : 'Singing scenes only') : 'Crowd & singing';
         if (tag) tag.textContent = local ? (singingOk() ? 'Free' : 'Add-on') : 'Premium';
+      } else if (kind === 'own') {
+        var sm2 = b.querySelector('.ai-snd-t small');
+        if (sm2) sm2.textContent = S.own ? S.own.name : 'Upload a song';
       }
     });
-    el.soundLock.hidden = !aiOff;
+    el.soundLock.hidden = !aiOff || sound === 'own';
     el.soundLock.className = 'ai-lock soft';
-    if (aiOff) el.soundLock.textContent = 'On this PC, AI sound means an AI-made song, so it’s only for the singing scenes. Built-in music works for every scene.';
+    if (aiOff) el.soundLock.textContent = 'On this PC, AI sound means an AI-made song, so it’s only for the singing scenes. Built-in music and your own song work for every scene.';
     var music = sound === 'music';
     el.music.hidden = !music;
-    el.aiNote.hidden = music;
+    el.aiNote.hidden = sound !== 'ai';
+    if (el.own) el.own.hidden = sound !== 'own';
+    if (sound === 'own') renderOwn();
     el.aiNote.classList.toggle('req', req || (local && !singingOk()));
     // (rebuilt only when it changes, so a button in it keeps its focus while the engine status refreshes)
-    var noteKey = [local, singingOk(), sc.id, sound, req].join('|');
-    if (!music && el.aiNote.dataset.k !== noteKey) {
+    var noteKey = [local, singingOk(), sc.id, sound, req, S.duration].join('|');
+    if (sound === 'ai' && el.aiNote.dataset.k !== noteKey) {
       el.aiNote.dataset.k = noteKey;
       el.aiNote.innerHTML = '';
       var b = document.createElement('b');
       if (local && !singingOk()) {
         b.textContent = 'Needs the Singing add-on (free).';
         el.aiNote.appendChild(b);
-        el.aiNote.appendChild(document.createTextNode(' It writes a short Spanish party song and makes you sing it, all on this PC: a one-time download of ' + singingSize() + ', then ' + localMinutes('ai', 'best') + ' per singing video. Or use fal.ai cloud for this scene.'));
+        el.aiNote.appendChild(document.createTextNode(' It writes a short Spanish party song and makes you sing it, all on this PC: a one-time download of ' + singingSize() + ', then ' + localMinutes('ai', 'best') + ' per singing video. Or use your own song, or fal.ai cloud for this scene.'));
         var acts = document.createElement('span'); acts.className = 'ai-note-acts';
         var go = document.createElement('a'); go.className = 'btn glass ai-note-btn'; go.href = SETUP_URL.singing; go.textContent = 'Set up the Singing add-on';
         var alt = document.createElement('button'); alt.type = 'button'; alt.className = 'btn text ai-note-btn'; alt.textContent = 'Use fal.ai cloud';
@@ -1183,56 +1810,69 @@
       } else if (local) {
         b.textContent = 'AI song, made on this PC.';
         el.aiNote.appendChild(b);
-        el.aiNote.appendChild(document.createTextNode(' The free AI writes a short Spanish party song and makes you sing a few seconds of it. Lip-sync is approximate (one singer), and it takes a few minutes longer.'));
+        el.aiNote.appendChild(document.createTextNode(sc.story
+          ? ' The free AI writes an original Spanish song for this scene; you sing the chorus in sync, and the song plays under the whole video. It takes a few minutes longer.'
+          : ' The free AI writes a short Spanish party song and makes you sing it. Lip-sync is approximate (one singer), and it takes a few minutes longer.'));
       } else {
-        var what = sc.lyrics ? 'singing' + (sc.id === 'spanish' ? ' in Spanish' : '') + ', friends and the room' : 'music, the crowd and the room';
+        var what = sc.lyrics || (sc.shots && sc.shots.some(function (x) { return x.lyric; })) ? 'singing' + (sc.id === 'spanish' || sc.id === 'club-exit-sing' ? ' in Spanish' : '') + ', friends and the room' : 'music, the crowd and the room';
+        var spanish = sc.id === 'spanish' || sc.id === 'club-exit-sing';
         b.textContent = req ? (sc.alt || sc.name) + ' needs AI sound.' : 'Real sound, made with the video.';
         el.aiNote.appendChild(b);
-        el.aiNote.appendChild(document.createTextNode((req ? ' So the video can really sing' + (sc.id === 'spanish' ? ' in Spanish' : '') + ', the' : ' The') +
-          ' video model creates the ' + what + ' together with the picture' + (sc.lyrics ? ', with lips matched to the song.' : '.')));
+        el.aiNote.appendChild(document.createTextNode((req ? ' So the video can really sing' + (spanish ? ' in Spanish' : '') + ', the' : ' The') +
+          ' video model creates the ' + what + ' together with the picture' + (/singing/.test(what) ? ', with lips matched to the song.' : '.') +
+          (req ? ' Or pick “My song” to use your own music.' : '')));
       }
     }
-    if (music) el.aiNote.dataset.k = '';
-    if (local) el.soundHint.textContent = music ? 'Music is free' : (singingOk() ? 'Free on this PC' : 'Needs a free add-on');
-    else el.soundHint.textContent = music ? 'Music is free' : (sc.audio === 'required' ? 'Required for this scene' : (sc.audio === 'recommended' ? 'Recommended' : 'Premium'));
+    if (sound !== 'ai') el.aiNote.dataset.k = '';
+    if (local) el.soundHint.textContent = sound === 'own' ? 'Your own song' : music ? 'Music is free' : (singingOk() ? 'Free on this PC' : 'Needs a free add-on');
+    else el.soundHint.textContent = sound === 'own' ? 'Your own song' : music ? 'Music is free' : (sc.audio === 'required' ? 'Required for this scene' : (sc.audio === 'recommended' ? 'Recommended' : 'Premium'));
     Object.keys(trackCards).forEach(function (id) {
       var c = trackCards[id], sel = id === S.trackId;
       c.wrap.classList.toggle('sel', sel);
       c.pick.setAttribute('aria-pressed', sel ? 'true' : 'false');
       c.best.hidden = id !== sc.defaultTrack;
     });
-    // Length (cloud) or quality (this PC: the clip is always about 5 s)
-    if (el.lenGroup) el.lenGroup.hidden = local;
-    // (a singing video has one speed: the lip-sync step decides, so Best/Fast would read the same)
-    if (el.qualGroup) el.qualGroup.hidden = !local || sound === 'ai';
+    renderSync(sc, sound);
+    // Length (1, 2 or 4 shots) with the price (cloud) or the time (this PC) under each choice
+    var L = lengthsFor(sc);
+    if (L.indexOf(S.duration) < 0) S.duration = fitLen(sc);
+    if (el.lenGroup) el.lenGroup.hidden = L.length < 2;
+    Array.prototype.forEach.call(el.len.children, function (b) {
+      var d = +b.dataset.len, avail = L.indexOf(d) >= 0;
+      b.hidden = !avail;
+      b.setAttribute('aria-pressed', d === S.duration ? 'true' : 'false');
+      if (!avail) return;
+      var n = shotCount(d), multi = local ? n > 1 || sc.story : sc.story;
+      var t = local ? rangeText(localRange(planFor(sc, { duration: d, sound: sound }))) : 'about ' + money(falCost(sc, sound, d));
+      b.querySelector('.ai-len-cost').textContent = t;
+      b.setAttribute('aria-label', d + ' seconds' + (multi && n > 1 ? ', ' + n + ' shots' : '') + ', ' + t + (local ? ' on this PC' : ''));
+    });
+    el.len.className = 'seg ' + (L.length === 3 ? 'seg-3' : 'seg-2');
+    // Quality (this PC). A singing or lip-synced video has one speed: the lip-sync step decides, so Best/Fast would read the same.
+    var plan = planFor(sc, { sound: sound });
+    if (el.qualGroup) el.qualGroup.hidden = !local || sound === 'ai' || plan.lips > 0;
     if (local) {
       var fastPack = localPack('fast');
       Array.prototype.forEach.call(el.qual.querySelectorAll('.opt'), function (b) {
-        var q = b.getAttribute('data-quality'), m = localMinutes(sound, q, true);
+        var q = b.getAttribute('data-quality'), saved = S.quality;
+        S.quality = q; var m = rangeText(localRange(planFor(sc, { sound: sound }))); S.quality = saved;
         b.setAttribute('aria-pressed', q === S.quality ? 'true' : 'false');
         b.querySelector('.ai-len-cost').textContent = m;
         b.setAttribute('aria-label', (q === 'fast' ? 'Fast' : 'Best') + ' quality, ' + m);
       });
       el.qualNote.textContent = S.quality === 'fast'
         ? (fastPack ? 'Fast uses a lighter photo step and a smaller video. Your face can look a little less like you.' : 'Fast makes a smaller video. Add “Fast mode” (free) in Free AI on this PC for a quicker photo step too.')
-        : 'Best keeps your face most like you. Every video is about 5 seconds.';
-    } else {
-      Array.prototype.forEach.call(el.len.children, function (b) {
-        var d = +b.dataset.len;
-        b.setAttribute('aria-pressed', d === S.duration ? 'true' : 'false');
-        b.querySelector('.ai-len-cost').textContent = 'about ' + money(estimate(sound, d));
-        b.setAttribute('aria-label', d + ' seconds, about ' + money(estimate(sound, d)));
-      });
+        : 'Best keeps your face most like you. Every shot is about 5 seconds.';
     }
-    var k1, k2, k3;
+    var k1, k2, k3, n2 = plan.shots ? plan.shots.length : 1, shotsTxt = n2 > 1 ? n2 + ' shots, each from your selfie · ' : '';
     if (local) {
       k1 = 'Made on this PC';
-      k2 = sound === 'ai' ? 'Free · song by ACE-Step, singing by Wan 2.2' : 'Free · video by Wan 2.2 + your music';
-      k3 = 'Scene photo by ' + (effQuality(sound) === 'fast' && localPack('fast') ? 'FLUX.2 klein' : 'Qwen Image Edit') + ' · about 5 s, finished at 720×1248';
+      k2 = sound === 'ai' ? 'Free · song by ACE-Step, singing by Wan 2.2' : plan.lips ? 'Free · video & lip-sync by Wan 2.2 + your song' : 'Free · video by Wan 2.2 + ' + (sound === 'own' ? 'your song' : 'your music');
+      k3 = shotsTxt + 'Scene photo by ' + (plan.quality === 'fast' && localPack('fast') ? 'FLUX.2 klein' : 'Qwen Image Edit') + ' · finished at 720×1248';
     } else {
       k1 = 'Video model';
-      k2 = sound === 'ai' ? 'Premium · ' + MODEL_NAME[EP.ai] + ' with native sound' : 'Standard · ' + MODEL_NAME[EP.std] + ' (silent) + your music';
-      k3 = 'Scene photo by ' + MODEL_NAME[EP.still];
+      k2 = sound === 'ai' ? 'Premium · ' + MODEL_NAME[EP.ai] + ' with native sound' : 'Standard · ' + MODEL_NAME[EP.std] + ' (silent) + ' + (sound === 'own' ? 'your song' : 'your music');
+      k3 = shotsTxt + 'Scene photo by ' + MODEL_NAME[EP.still];
     }
     el.tier.innerHTML = '';
     var t1 = document.createElement('span'); t1.className = 'ai-tier-k'; t1.textContent = k1;
@@ -1240,26 +1880,292 @@
     var t3 = document.createElement('span'); t3.className = 'ai-tier-s'; t3.textContent = k3;
     el.tier.appendChild(t1); el.tier.appendChild(t2); el.tier.appendChild(t3);
   }
-  function soundName(sound) { return sound === 'ai' ? 'AI sound' : 'Built-in music'; }
-  // "10 s · AI sound · about $1.55": what the next run makes and what it costs.
-  function costLine(sound, dur) { return dur + ' s · ' + soundName(sound) + ' · about ' + money(estimate(sound, dur)); }
+  function soundName(sound) { return sound === 'ai' ? (isLocal() ? 'AI song' : 'AI sound') : sound === 'own' ? 'Your song' : 'Built-in music'; }
+  // "10 s · AI sound · about $1.55" / "20 s · 4 shots · Built-in music · about $2.28": what the next run makes and costs.
+  function costLine(sound, dur, sc) {
+    sc = sc || sceneById(S.sceneId);
+    var n = sc.story ? shotCount(dur) : 1;
+    return dur + ' s · ' + (n > 1 ? n + ' shots · ' : '') + soundName(sound) + ' · about ' + money(falCost(sc, sound, dur));
+  }
   function pausedJob() { return S.retryJob && S.retryJob.resume ? S.retryJob.resume : null; }
   function updateCost() {
     var sc = sceneById(S.sceneId), sound = effSound(sc);
     var main = 'Make my video', sub;
     if (running()) { main = 'See progress'; sub = 'Making your video · ' + (UI.pct || 0) + '%'; }
     else if (isLocal()) { var c = localCta(sound); main = c.main; sub = c.sub; }
-    else if (pausedJob()) { main = 'Finish my video'; sub = 'Already paid for — no extra cost'; }
-    else sub = costLine(sound, S.duration) + ' from your fal.ai credit';
+    else if (pausedJob()) { main = 'Finish my video'; sub = pausedJob().story ? storyRetryLine(pausedJob()) : 'Already paid for — no extra cost'; }
+    else sub = costLine(sound, S.duration, sc) + ' from your fal.ai credit';
+    if (sound === 'own' && !S.own && !running() && !pausedJob() && !(isLocal() && (LOC.retry || LOC.resume))) { main = 'Choose your song'; sub = 'Pick a song file first — or another sound'; }
     if (el.makeT) el.makeT.textContent = main;
     el.cost.textContent = sub;
     el.make.classList.toggle('idle', !S.photo && !running() && !pausedJob() && !(isLocal() && (LOC.retry || LOC.resume)));
     el.make.setAttribute('aria-describedby', 'aiCost');
     if (el.connRange) el.connRange.textContent = money(estimate('music', LENGTHS[0])) + '–' + money(estimate('ai', LENGTHS[LENGTHS.length - 1]));
-    if (el.conn && !el.conn.hidden && connectThen === 'make') el.keySave.textContent = 'Save & make my video · ' + money(estimate(sound, S.duration));
+    if (el.conn && !el.conn.hidden && connectThen === 'make') el.keySave.textContent = 'Save & make my video · ' + money(falCost(sc, sound, S.duration));
   }
-  function updateAll() { updateSceneUI(); updateSoundUI(); updateCost(); }
-  function savePrefs() { lsSet(LS.prefs, JSON.stringify({ sceneId: S.sceneId, sound: S.sound, userSound: S.userSound, userLen: S.userLen, trackId: S.trackId, duration: S.duration, quality: S.quality })); }
+  function updateAll() { updateSceneUI(); updateSoundUI(); updateCost(); renderSee(); }
+  function savePrefs() { lsSet(LS.prefs, JSON.stringify({ sceneId: S.sceneId, sound: S.sound, userSound: S.userSound, userLen: S.userLen, trackId: S.trackId, duration: S.duration, quality: S.quality, sync: S.sync })); }
+
+  /* ------------------------------------------------------------------ *
+   * My song: the user's own audio file as the soundtrack (both engines, every scene)
+   *
+   * MP3, M4A, WAV or OGG up to 20 MB, decoded with decodeAudioData and analysed with GlowBeat. A waveform shows the
+   * part that plays (as long as the video); drag it or use the arrow keys to choose where it starts (it snaps to a
+   * downbeat). The file stays on this device (IndexedDB, so a video finishing after a reload still has it) and is only
+   * ever sent to this PC's own AI engine when a shot is lip-synced to it. Only music the user has the rights to.
+   * ------------------------------------------------------------------ */
+  var OWN_MAX = 20 * 1024 * 1024, OWN_TYPES = /^audio\/(mpeg|mp3|mp4|x-m4a|m4a|aac|wav|x-wav|wave|vnd\.wave|ogg|webm|flac|x-flac)$/i, OWN_EXT = /\.(mp3|m4a|aac|mp4|wav|wave|ogg|oga|opus|webm|flac)$/i;
+  var OWN = { loading: false, src: null, raf: 0, playAt: 0, playFrom: 0, drag: null, seq: 0 };
+  var xdbP = null;
+  // a second, small database for the user's song and the scene previews (separate from "My AI videos")
+  function xdb() {
+    if (xdbP) return xdbP;
+    xdbP = new Promise(function (res, rej) {
+      if (!window.indexedDB) { rej(new Error('no indexedDB')); return; }
+      var r;
+      try { r = window.indexedDB.open('glow-ai-extra', 1); } catch (e) { rej(e); return; }
+      r.onupgradeneeded = function () { var d = r.result; ['sounds', 'previews'].forEach(function (n) { if (!d.objectStoreNames.contains(n)) d.createObjectStore(n, { keyPath: 'id' }); }); };
+      r.onsuccess = function () { var d = r.result; d.onversionchange = function () { try { d.close(); } catch (e) { /* ignore */ } xdbP = null; }; res(d); };
+      r.onerror = function () { rej(r.error || new Error('indexedDB error')); };
+      r.onblocked = function () { rej(new Error('indexedDB blocked')); };
+    });
+    xdbP.catch(function () { xdbP = null; });
+    return xdbP;
+  }
+  function xidb(store, mode, fn) {
+    return xdb().then(function (d) {
+      return new Promise(function (res, rej) {
+        var tx, out;
+        try { tx = d.transaction(store, mode); } catch (e) { rej(e); return; }
+        var req = fn(tx.objectStore(store));
+        if (req) req.onsuccess = function () { out = req.result; };
+        tx.oncomplete = function () { res(out); };
+        tx.onerror = function () { rej(tx.error || new Error('tx error')); };
+        tx.onabort = function () { rej(tx.error || new Error('tx aborted')); };
+      });
+    });
+  }
+  function openOwnPicker() { if (!el.ownFile) return; try { el.ownFile.value = ''; } catch (e) { /* ignore */ } el.ownFile.click(); }
+  function ownId(f) { return [f.name || 'song', f.size || 0, f.lastModified || 0].join('|'); }
+  function looksLikeAudio(f) { return OWN_TYPES.test(f.type || '') || OWN_EXT.test(f.name || ''); }
+  async function loadOwnFile(file, restore) {
+    if (!file) return;
+    if (!restore) {
+      if (!looksLikeAudio(file)) { toast('That file doesn’t look like a song. Use an MP3, M4A, WAV or OGG file.', 'warn', 5000); return; }
+      if (file.size > OWN_MAX) { toast('That song file is ' + fmtBytes(file.size) + ' — please use one up to 20 MB (an MP3 or M4A is much smaller than a WAV).', 'warn', 6500); return; }
+      if (running() && RUN.job && RUN.job.sound === 'own') { toast('Your video is being made with the current song — change it when it’s done.', 'warn'); return; }
+    }
+    var ctx = ensureAudio();
+    if (!ctx) { toast('Audio isn’t supported in this browser.', 'error'); return; }
+    var seq = ++OWN.seq;
+    OWN.loading = true; stopOwnPreview();
+    if (!restore) setOwnStatus('Opening your song…');
+    renderOwn();
+    try {
+      var buf = await decodeAudio(ctx, file);
+      if (seq !== OWN.seq) return;
+      if (!(buf.duration > 1.5)) throw new Error('too short');
+      var id = restore ? restore.id : ownId(file);
+      var own = { id: id, name: restore ? restore.name : (file.name || 'My song').replace(/\.[a-z0-9]+$/i, ''), size: file.size, type: file.type, blob: file, buffer: buf, duration: buf.duration, start: 0, beat: null, peaks: peaksOf(buf, 720) };
+      if (!restore) setOwnStatus('Finding the beat…');
+      try { own.beat = window.GlowBeat ? await window.GlowBeat.analyze(buf) : null; } catch (e) { own.beat = null; }
+      if (seq !== OWN.seq) return;
+      own.start = restore && restore.start != null ? clamp(restore.start, 0, Math.max(0, buf.duration - 1)) : liveliest(own, S.duration);
+      S.own = own;
+      OWN.loading = false;
+      if (!restore) {
+        S.sound = 'own'; S.userSound = 'own'; savePrefs();
+        setOwnStatus('');
+        announce('Your song is ready' + (own.beat && own.beat.bpm ? ', about ' + Math.round(own.beat.bpm) + ' beats per minute' : ''));
+        var rec = { id: 'own', key: own.id, name: own.name, size: own.size, type: own.type, start: own.start, blob: file, at: Date.now() };
+        xidb('sounds', 'readwrite', function (st) { return st.put(rec); }).catch(function (e) { console.warn('[glow-ai] song not kept on this device', e); });
+      }
+      updateAll();
+    } catch (e) {
+      if (seq !== OWN.seq) return;
+      console.warn('[glow-ai] song decode failed', e);
+      OWN.loading = false;
+      setOwnStatus('');
+      if (!restore) toast('That song couldn’t be opened in this browser. Try an MP3 or M4A file.', 'warn', 6000);
+      renderOwn();
+    }
+  }
+  function saveOwnStart() {
+    if (!S.own) return;
+    xidb('sounds', 'readwrite', function (st) {
+      var g = st.get('own');
+      g.onsuccess = function () { var r = g.result; if (r && r.key === S.own.id) { r.start = S.own.start; st.put(r); } };
+      return null;
+    }).catch(function () { /* in memory only */ });
+  }
+  function removeOwn() {
+    stopOwnPreview();
+    S.own = null; OWN.seq++;
+    if (S.sound === 'own') { S.sound = 'music'; S.userSound = null; }
+    savePrefs();
+    xidb('sounds', 'readwrite', function (st) { return st.delete('own'); }).catch(function () { /* ignore */ });
+    updateAll();
+    toast('Your song was removed from this device.', 'ok', 2500);
+  }
+  // Restore the song kept on this device (for "My song" as the chosen sound, or a video still to be finished with it)
+  function restoreOwn() {
+    return xidb('sounds', 'readonly', function (st) { return st.get('own'); }).then(function (r) {
+      if (!r || !(r.blob instanceof Blob) || S.own) return;
+      return loadOwnFile(r.blob, { id: r.key, name: r.name, start: r.start });
+    }).catch(function () { /* nothing kept */ });
+  }
+  function peaksOf(buf, n) {
+    var chs = buf.numberOfChannels, len = buf.length, step = Math.max(1, Math.floor(len / n)), out = new Float32Array(n), data = [];
+    for (var c = 0; c < chs; c++) data.push(buf.getChannelData(c));
+    var mx = 0;
+    for (var i = 0; i < n; i++) {
+      var a = i * step, b = Math.min(len, a + step), p = 0;
+      for (var k = 0; k < data.length; k++) { var d = data[k]; for (var j = a; j < b; j += 4) { var v = d[j] < 0 ? -d[j] : d[j]; if (v > p) p = v; } }
+      out[i] = p; if (p > mx) mx = p;
+    }
+    if (mx > 0) for (var q = 0; q < n; q++) out[q] /= mx;
+    return out;
+  }
+  // The liveliest part of the song as long as the video (where its beats are loudest), starting on a downbeat.
+  function liveliest(own, len) {
+    var b = own.beat, dur = own.duration;
+    if (dur <= len + 0.5) return 0;
+    if (!b || !b.downbeats || !b.downbeats.length) return 0;
+    var best = b.downbeats[0], bs = -1;
+    b.downbeats.forEach(function (d) {
+      if (d + len > dur) return;
+      var e = 0, c = 0;
+      b.beats.forEach(function (t, k) { if (t >= d && t < d + len) { e += b.energy[k] || 0; c++; } });
+      var sc = c ? e / c : 0;
+      if (sc > bs + 0.02) { bs = sc; best = d; }
+    });
+    return best;
+  }
+  function snapStart(t) {
+    var own = S.own; if (!own) return t;
+    var maxStart = Math.max(0, own.duration - Math.min(S.duration, own.duration));
+    t = clamp(t, 0, maxStart);
+    var b = own.beat;
+    if (b && b.downbeats && b.downbeats.length) {
+      var best = null;
+      b.downbeats.concat(b.beats).forEach(function (d, i) { if (d <= maxStart + 1e-6 && (best === null || Math.abs(d - t) < Math.abs(best - t) - (i < b.downbeats.length ? 0.12 : 0))) best = d; });
+      if (best !== null && Math.abs(best - t) < 1.2) t = best;
+    }
+    return Math.round(t * 1000) / 1000;
+  }
+  function setOwnStart(t, snap) {
+    if (!S.own) return;
+    S.own.start = snap ? snapStart(t) : clamp(t, 0, Math.max(0, S.own.duration - Math.min(S.duration, S.own.duration)));
+    drawWave(); renderOwnText();
+    if (OWN.src) playOwnPart(); // keep hearing it from the new start
+  }
+  function setOwnStatus(t) { if (el.ownSt) el.ownSt.textContent = t || ''; }
+  function renderOwn() {
+    if (!el.own) return;
+    var has = !!S.own;
+    el.ownEmpty.hidden = has || OWN.loading;
+    el.ownBox.hidden = !has;
+    if (OWN.loading && !has) setOwnStatus('Opening your song…');
+    if (!has) return;
+    el.ownName.textContent = S.own.name;
+    renderOwnText();
+    drawWave();
+  }
+  function renderOwnText() {
+    var own = S.own; if (!own) return;
+    var len = Math.min(S.duration, own.duration), b = own.beat;
+    el.ownMeta.textContent = fmt(own.duration) + (b && b.bpm ? ' · about ' + Math.round(b.bpm) + ' BPM' : '');
+    el.ownStart.textContent = 'Plays ' + fmtP(own.start) + '–' + fmtP(own.start + len);
+    el.wave.setAttribute('aria-valuemin', '0');
+    el.wave.setAttribute('aria-valuemax', String(Math.round(Math.max(0, own.duration - len))));
+    el.wave.setAttribute('aria-valuenow', String(Math.round(own.start)));
+    el.wave.setAttribute('aria-valuetext', 'Starts at ' + fmtP(own.start) + ', plays ' + Math.round(len) + ' seconds');
+    el.ownShort.hidden = own.duration >= S.duration - 0.2;
+  }
+  function fmtP(t) { t = Math.max(0, t || 0); var m = Math.floor(t / 60), s2 = t - m * 60; return m + ':' + (s2 < 10 ? '0' : '') + s2.toFixed(1); }
+  function drawWave(playT) {
+    var own = S.own, cv = el.waveCv;
+    if (!own || !cv || el.own.hidden) return;
+    var w = Math.max(10, Math.round(cv.clientWidth * DPR)), h = Math.max(10, Math.round(cv.clientHeight * DPR));
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    var x = cv.getContext('2d'); if (!x) return;
+    x.clearRect(0, 0, w, h);
+    var dur = own.duration, len = Math.min(S.duration, dur), x0 = own.start / dur * w, x1 = (own.start + len) / dur * w;
+    // the chosen part
+    var g = x.createLinearGradient(x0, 0, x1, 0);
+    g.addColorStop(0, 'rgba(255,79,163,.28)'); g.addColorStop(0.55, 'rgba(164,87,255,.28)'); g.addColorStop(1, 'rgba(34,211,238,.24)');
+    x.fillStyle = g; rr(x, x0, 0, Math.max(2, x1 - x0), h, Math.min(10 * DPR, (x1 - x0) / 2)); x.fill();
+    // waveform bars
+    var n = own.peaks.length, bw = w / n, mid = h / 2;
+    for (var i = 0; i < n; i++) {
+      var px = i * bw, inSel = px >= x0 && px <= x1, v = Math.max(0.04, own.peaks[i]) * (h * 0.42);
+      x.fillStyle = inSel ? 'rgba(255,255,255,.92)' : 'rgba(255,255,255,.3)';
+      x.fillRect(px, mid - v, Math.max(1, bw - (bw > 2 ? 0.6 : 0)), v * 2);
+    }
+    // bars (downbeats) inside the chosen part
+    if (own.beat && own.beat.downbeats) {
+      x.fillStyle = 'rgba(255,214,107,.85)';
+      own.beat.downbeats.forEach(function (d) { if (d >= own.start - 0.01 && d <= own.start + len) { var bx = d / dur * w; x.fillRect(bx - DPR * 0.75, h - 5 * DPR, 1.5 * DPR, 5 * DPR); } });
+    }
+    // edges + playhead
+    x.fillStyle = '#fff';
+    x.fillRect(x0, 0, 2 * DPR, h); x.fillRect(x1 - 2 * DPR, 0, 2 * DPR, h);
+    if (playT != null) { var pxh = playT / dur * w; x.fillStyle = '#ffd66b'; x.fillRect(pxh - DPR, 0, 2 * DPR, h); }
+  }
+  function waveTime(ev) {
+    var r = el.waveCv.getBoundingClientRect();
+    return clamp((ev.clientX - r.left) / Math.max(1, r.width), 0, 1) * (S.own ? S.own.duration : 0);
+  }
+  function stopOwnPreview() {
+    cancelAnimationFrame(OWN.raf);
+    if (OWN.src) { try { OWN.src.onended = null; OWN.src.stop(); } catch (e) { /* ignore */ } try { OWN.src.disconnect(); } catch (e) { /* ignore */ } }
+    OWN.src = null;
+    if (el.ownPlay) { el.ownPlay.classList.remove('on'); el.ownPlay.setAttribute('aria-label', 'Play the part of your song that the video uses'); var t = el.ownPlay.querySelector('span'); if (t) t.textContent = 'Play this part'; }
+    drawWave();
+  }
+  function playOwnPart() {
+    var own = S.own, ctx = ensureAudio();
+    if (!own || !ctx) return;
+    if (OWN.src) { try { OWN.src.onended = null; OWN.src.stop(); } catch (e) { /* ignore */ } try { OWN.src.disconnect(); } catch (e) { /* ignore */ } }
+    stopTrackPreview(); stopScenePreview();
+    var len = Math.min(S.duration, own.duration - own.start), src = ctx.createBufferSource(), g = ctx.createGain(), now = ctx.currentTime;
+    src.buffer = own.buffer; src.connect(g); g.connect(master);
+    g.gain.setValueAtTime(0, now); g.gain.linearRampToValueAtTime(1, now + 0.02);
+    g.gain.setValueAtTime(1, now + Math.max(0.05, len - 0.8)); g.gain.linearRampToValueAtTime(0, now + len);
+    src.start(now, own.start, len + 0.05);
+    src.onended = function () { if (OWN.src === src) stopOwnPreview(); };
+    OWN.src = src; OWN.playAt = now; OWN.playFrom = own.start;
+    el.ownPlay.classList.add('on'); el.ownPlay.setAttribute('aria-label', 'Stop playing your song'); var t = el.ownPlay.querySelector('span'); if (t) t.textContent = 'Stop';
+    cancelAnimationFrame(OWN.raf);
+    (function frame() { if (OWN.src !== src) return; drawWave(OWN.playFrom + (ctx.currentTime - OWN.playAt)); OWN.raf = requestAnimationFrame(frame); })();
+  }
+  /* "Sync to the song": Dance to the beat (every scene, both engines) | Lip-sync to the song (this PC + Singing add-on) */
+  function renderSync(sc, sound) {
+    if (!el.syncGroup) return;
+    var local = isLocal();
+    if (sound === 'ai' && !local) { el.syncGroup.hidden = true; return; }
+    el.syncGroup.hidden = false;
+    var lipsOk = lipsAvailable(sc, sound), allLip = local && sound === 'ai' && !!sc.song && !sc.story;
+    var sync = effSync(sc, sound);
+    el.syncSeg.hidden = !lipsOk || allLip;
+    Array.prototype.forEach.call(el.syncSeg.querySelectorAll('.opt'), function (b) {
+      var k = b.getAttribute('data-sync');
+      b.setAttribute('aria-pressed', k === sync ? 'true' : 'false');
+      var sm = b.querySelector('small');
+      if (sm && k === 'lips' && lipsOk) sm.textContent = rangeText(localRange(planFor(sc, { sound: sound, sync: 'lips' })));
+      if (sm && k === 'beat' && lipsOk) sm.textContent = rangeText(localRange(planFor(sc, { sound: sound, sync: 'beat' })));
+    });
+    var t = '', tr = trackById(S.trackId), b2 = S.own && S.own.beat;
+    if (sync === 'lips') t = 'Every shot is lip-synced to the song, one after another from ' + (sound === 'own' && S.own ? fmtP(S.own.start) : 'its start') + ' — slow but fun: each 5 s shot takes about 6–9 min on this PC.';
+    else if (allLip) t = 'Every shot sings the song in sync (lip-sync), and the cuts follow its beat.';
+    else if (sound === 'music') t = tr ? 'Moves and cuts follow the beat of ' + tr.name + ' (' + tr.bpm + ' BPM).' : 'Moves and cuts follow the beat.';
+    else if (sound === 'own') t = !S.own ? 'Moves and cuts will follow your song’s beat.' : b2 && b2.bpm ? 'Moves and cuts follow your song’s beat (about ' + Math.round(b2.bpm) + ' BPM).' : 'No steady beat found in your song — the shots are simply cut one after another.';
+    else if (sound === 'ai') t = sc.story ? 'Cuts follow the song’s beat, and you sing the chorus in sync.' : 'Cuts follow the song’s beat.';
+    if (local && sync !== 'lips' && !allLip && (sound === 'own' || (sound === 'ai' && sc.song)) && !lipsOk) {
+      t += !singingOk() ? ' Lip-sync to the song needs the free Singing add-on.' : !storyOk() ? ' Lip-sync to your song needs the latest Glow Studio app.' : '';
+    }
+    el.syncNote.textContent = t;
+  }
 
   /* ------------------------------------------------------------------ *
    * AI engine: free on this PC (GlowLocalAI, only inside the Glow Studio app) or fal.ai cloud
@@ -1284,6 +2190,7 @@
   // The sound the next video really gets with the chosen engine.
   function effSound(sc) {
     sc = sc || sceneById(S.sceneId);
+    if (S.sound === 'own') return 'own'; // the user's own song works for every scene, with both engines
     if (sc.audio === 'required') return 'ai';
     if (!isLocal()) return S.sound;
     if (!sc.song) return 'music';
@@ -1370,7 +2277,8 @@
     if (st === 'nogpu') return { main: 'Use fal.ai cloud', sub: 'Free AI can’t run on this PC' };
     if (st === 'offline') return { main: 'Make my video', sub: 'Free AI on this PC isn’t answering' };
     if (sound === 'ai' && !singingOk()) return { main: 'Get the Singing add-on', sub: 'Free · ' + singingSize() + ' one-time download, then sing' };
-    return { main: 'Make my video', sub: 'Free · ' + localMinutes(sound) + ' on this PC' + startExtra() };
+    var sc = sceneById(S.sceneId), plan = planFor(sc, { sound: sound });
+    return { main: 'Make my video', sub: S.duration + ' s · Free · ' + rangeText(localRange(plan)) + ' on this PC' + startExtra() };
   }
   function decideEngine() {
     if (!LOC.inApp || !LOC.api) return 'fal';
@@ -1382,6 +2290,7 @@
   function chooseEngine(e, user) {
     S.engine = e === 'local' && LOC.inApp && LOC.api ? 'local' : 'fal';
     if (user) lsSet(LS.engine, S.engine);
+    S.duration = fitLen(sceneById(S.sceneId)); // each engine has its own lengths; the user's pick comes back where it can
     if (S.engine === 'fal') stopTrackPreview();
     renderEngine(); updateAll();
   }
@@ -1495,6 +2404,13 @@
         if (running() || RUN.starting) return;
         if (!r) { clearLocalMeta(); dropResume(); return; }  // no window is making a video: old notes are stale
         if (!r.canAttach) { r.discard(); clearLocalMeta(); dropResume(); return; } // the photo never reached the engine: nothing to continue
+        var mm = metaFor(r);
+        if (mm && mm.kind === 'preview') {
+          // a quick "See yourself" preview that was cut off: it is made again from the queue (Resume), never offered as a video
+          try { if (r.made || r.state === 'done') r.discard(); else r.cancel(); } catch (e) { /* ignore */ }
+          clearLocalMeta(); dropResume(); seeInterrupted();
+          return;
+        }
         if (LOC.retry && LOC.retry.engineJob === r.job) { dropResume(); return; } // already offered as "Finish my video"
         LOC.resume = r;
         renderEngine(); updateCost();
@@ -1504,7 +2420,8 @@
   function dropResume() { if (LOC.resume) { LOC.resume = null; } renderEngine(); updateCost(); }
   function localMeta() { var m = lsJSON(LS.localJob); return m && m.v === 1 ? m : null; }
   function saveLocalMeta(job) {
-    lsSet(LS.localJob, JSON.stringify({ v: 1, sceneId: job.sceneId, sound: job.sound, trackId: job.trackId, quality: job.quality, thumb: job.thumb || '', createdAt: job.createdAt, offset: job.offset, engineJob: job.engineJob || null, at: Date.now() }));
+    lsSet(LS.localJob, JSON.stringify({ v: 1, kind: job.kind || 'video', sceneId: job.sceneId, sound: job.sound, trackId: job.trackId, quality: job.quality, thumb: job.thumb || '', createdAt: job.createdAt, offset: job.offset, engineJob: job.engineJob || null, at: Date.now(),
+      duration: job.duration, story: !!job.story, shots: job.shots || null, sync: job.sync || 'beat', own: job.own || null, songStart: job.songStart || 0, songSeconds: job.songSeconds || null, shotId: job.shotId || null, hint: job.hint || '', minutes: job.minutes || null }));
   }
   function clearLocalMeta() { lsDel(LS.localJob); }
   // The notes kept for this engine job (never another job's: they could name another scene or track).
@@ -1527,7 +2444,7 @@
   function compareLine() {
     var m = [5, 8];
     try { m = LOC.api.estimate({ quality: 'best' }).minutes; } catch (e) { /* defaults */ }
-    return '<b>Free:</b> about ' + half(m[0]) + '–' + half(m[1]) + ' min per video on your PC, 5-second clips, a little softer. ' +
+    return '<b>Free:</b> about ' + half(m[0]) + '–' + half(m[1]) + ' min per 5-second shot on your PC, a little softer. ' +
       '<b>Cloud:</b> usually 1–3 min, sharper, 5 or 10 s, about ' + money(estimate('music', LENGTHS[0])) + '+ each.';
   }
   function setNote(html, cls) {
@@ -1632,6 +2549,159 @@
   }
 
   /* ------------------------------------------------------------------ *
+   * See yourself in every scene (free AI on this PC): quick 5 s Fast previews of the ticked scenes, one at a time,
+   * made from the selfie after the consent box is ticked. Each one gets the burned-in "AI-generated" label before it
+   * is kept (IndexedDB, "previews") and shown on its scene card. A real video always comes first: making one pauses
+   * the queue (Resume continues it). A preview cut off by closing the window is made again, never offered as a video.
+   * ------------------------------------------------------------------ */
+  var SEE_DEFAULT = ['party-hall', 'famous-street', 'club', 'club-exit-sing'];
+  var SEE = { running: false, queue: [], done: [], failed: [], cur: null, pct: 0, ctl: null, photoSeq: 0, saved: {}, ticked: null, open: false, wait: 0 };
+  (function () { var t = lsJSON('glow.ai.see'); SEE.ticked = t && Array.isArray(t.ticked) ? t.ticked : SEE_DEFAULT.slice(); if (t && Array.isArray(t.queue)) SEE.queue = t.queue; })();
+  function seeSave() { lsSet('glow.ai.see', JSON.stringify({ ticked: SEE.ticked, queue: SEE.queue })); }
+  function seeAvailable() { return isLocal() && !!LOC.api && localState() === 'ready'; }
+  function seeMinutes(n) {
+    var m = [2.5, 4];
+    try { m = LOC.api.estimate({ quality: 'fast' }).minutes; } catch (e) { /* defaults */ }
+    return [Math.round(m[0] * n * 10) / 10, Math.round(m[1] * n * 10) / 10];
+  }
+  function renderSee() {
+    if (!el.see) return;
+    var show = seeAvailable() && !!S.photo && S.consent;
+    el.see.hidden = !show && !SEE.running;
+    if (el.see.hidden) return;
+    // the scene chips (rebuilt only when needed, so focus stays put)
+    if (!el.seeList.children.length) {
+      SCENES.forEach(function (sc) {
+        var lab = document.createElement('label'); lab.className = 'ai-see-chip'; lab.dataset.scene = sc.id;
+        var cb = document.createElement('input'); cb.type = 'checkbox'; cb.value = sc.id;
+        cb.addEventListener('change', function () {
+          var i = SEE.ticked.indexOf(sc.id);
+          if (cb.checked && i < 0) SEE.ticked.push(sc.id); else if (!cb.checked && i >= 0) SEE.ticked.splice(i, 1);
+          seeSave(); renderSee();
+        });
+        var sp = document.createElement('span'); sp.textContent = sc.name;
+        var st = document.createElement('i'); st.className = 'ai-see-st'; st.setAttribute('aria-hidden', 'true');
+        lab.appendChild(cb); lab.appendChild(sp); lab.appendChild(st);
+        el.seeList.appendChild(lab);
+      });
+    }
+    // a short list first (the ticked scenes stay visible); "+ more" shows every scene
+    if (!el.seeMore) {
+      el.seeMore = document.createElement('button'); el.seeMore.type = 'button'; el.seeMore.className = 'ai-see-more';
+      el.seeMore.addEventListener('click', function () { SEE.open = !SEE.open; renderSee(); if (SEE.open) { var f = el.seeList.querySelector('.ai-see-chip:nth-child(7) input'); if (f) try { f.focus(); } catch (e) { /* ignore */ } } });
+      el.seeList.appendChild(el.seeMore);
+    }
+    var shown = 0, extra = 0;
+    Array.prototype.forEach.call(el.seeList.querySelectorAll('.ai-see-chip'), function (lab, i) {
+      var vis = SEE.open || i < 6 || SEE.ticked.indexOf(lab.dataset.scene) >= 0;
+      lab.hidden = !vis; if (vis) shown++; else extra++;
+    });
+    el.seeMore.hidden = !SEE.open && !extra;
+    el.seeMore.textContent = SEE.open ? 'Fewer' : '+ ' + extra + ' more';
+    el.seeMore.setAttribute('aria-expanded', SEE.open ? 'true' : 'false');
+    Array.prototype.forEach.call(el.seeList.querySelectorAll('.ai-see-chip'), function (lab) {
+      var id = lab.dataset.scene, cb = lab.querySelector('input');
+      cb.checked = SEE.ticked.indexOf(id) >= 0;
+      cb.disabled = SEE.running;
+      var state = SEE.cur === id ? 'making' : SEE.saved[id] ? 'done' : SEE.queue.indexOf(id) >= 0 ? 'queued' : SEE.failed.indexOf(id) >= 0 ? 'failed' : '';
+      lab.dataset.state = state;
+      lab.querySelector('.ai-see-st').textContent = state === 'making' ? Math.round(SEE.pct * 100) + '%' : state === 'done' ? '✓' : state === 'queued' ? '·' : '';
+    });
+    var todo = SEE.running || SEE.queue.length ? SEE.queue.length : SEE.ticked.length;
+    var m = seeMinutes(Math.max(1, todo));
+    el.seeTime.textContent = todo ? todo + ' preview' + (todo > 1 ? 's' : '') + ' · ' + rangeText(m) + ' in all on this PC' + (SEE.running ? '' : ' · 5 s each, Fast quality') : 'Tick the scenes you want to see yourself in.';
+    el.seeGo.hidden = SEE.running;
+    el.seeGo.disabled = !todo;
+    el.seeGo.textContent = !SEE.running && SEE.queue.length ? 'Resume previews (' + SEE.queue.length + ' left)' : 'Make my previews';
+    el.seeStop.hidden = !SEE.running;
+    el.seeClear.hidden = SEE.running || !SEE.queue.length;
+    var cur = SEE.cur ? sceneById(SEE.cur).name : '';
+    el.seeSt.textContent = SEE.running ? (cur ? 'Making ' + cur + ' · ' + Math.round(SEE.pct * 100) + '% · ' + (SEE.done.length + 1) + ' of ' + (SEE.done.length + SEE.queue.length) : 'Waiting for the free AI…') : '';
+  }
+  function seeStart() {
+    if (SEE.running) return;
+    if (!photoReady()) return;
+    if (!canRecord()) { refuseUnsupported(); return; }
+    if (running() || RUN.starting) { toast('Your video is being made — the previews can start when it’s done.', 'info', 4000); return; }
+    ensureAudio();
+    if (!SEE.queue.length || SEE.photoSeq !== S.photo.seq) SEE.queue = SCENES.map(function (sc) { return sc.id; }).filter(function (id) { return SEE.ticked.indexOf(id) >= 0; });
+    if (!SEE.queue.length) return;
+    SEE.photoSeq = S.photo.seq; SEE.running = true; SEE.done = []; SEE.failed = [];
+    seeSave(); renderSee();
+    announce('Making ' + SEE.queue.length + ' previews');
+    seeNext();
+  }
+  function seePause(msg) {
+    if (!SEE.running) return;
+    SEE.running = false;
+    try { if (SEE.ctl) SEE.ctl.abort(); } catch (e) { /* ignore */ }
+    SEE.cur = null; clearTimeout(SEE.wait);
+    seeSave(); renderSee();
+    if (msg) toast(msg, 'info', 4500);
+  }
+  function seeInterrupted() { SEE.running = false; SEE.cur = null; renderSee(); }
+  async function seeNext() {
+    if (!SEE.running) return;
+    clearTimeout(SEE.wait);
+    var id = SEE.queue[0];
+    if (!id) { SEE.running = false; SEE.cur = null; seeSave(); renderSee(); toast('Your previews are ready — see them on the scene cards.', 'ok', 4500); announce('Your previews are ready'); return; }
+    // a real video, another window, the setup, or a hidden window: wait a moment and look again
+    if (running() || RUN.starting || LOC.api.isBusy() || document.hidden || !seeAvailable()) { SEE.wait = setTimeout(seeNext, 2500); return; }
+    if (!S.photo || S.photo.seq !== SEE.photoSeq || !S.consent) { seePause(); return; }
+    if (!(await acquireLocalLock())) { SEE.wait = setTimeout(seeNext, 4000); return; }
+    var sc = sceneById(id), photoSeq = SEE.photoSeq;
+    SEE.cur = id; SEE.pct = 0; renderSee();
+    var ctl = SEE.ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    var pjob = { kind: 'preview', engine: 'local', sceneId: id, sound: 'none', createdAt: Date.now(), engineJob: null };
+    saveLocalMeta(pjob);
+    var alive = function () { if (!SEE.running || SEE.cur !== id || SEE.photoSeq !== photoSeq) throw CANCELLED; };
+    try {
+      var shot = sc.story ? keyShot(sc) : null;
+      var req = localRequest(sc, 'music', 'fast', localPack('fast'), shot, '');
+      req.photo = S.photo.blob;
+      if (ctl) req.signal = ctl.signal;
+      var res = await LOC.api.generate(req, function (p) {
+        if (SEE.cur !== id) return;
+        if (p.job && !pjob.engineJob) { pjob.engineJob = p.job; saveLocalMeta(pjob); }
+        SEE.pct = clamp(+p.overall || 0, 0, 1) * 0.9; renderSee();
+      });
+      alive();
+      // the label is burned in before the preview is kept anywhere
+      while (document.hidden) { await wait(500); alive(); }
+      var fin = await finishClips({ engine: 'local', sound: 'none', sceneId: id }, [{ blob: res.video, id: 'p', lipSync: false }], sc,
+        { silent: true, size: { w: 360, h: 624 }, canvas: document.createElement('canvas'), host: seeHost(), check: alive, transitions: false, punches: false,
+          onFrac: function (f) { SEE.pct = 0.9 + 0.1 * f; renderSee(); } });
+      alive();
+      var rec = { id: id, sceneId: id, blob: fin.blob, type: fin.type, at: Date.now(), labelled: true };
+      SEE.saved[id] = rec;
+      xidb('previews', 'readwrite', function (st) { return st.put(rec); }).catch(function (e) { console.warn('[glow-ai] preview not kept', e); });
+      SEE.queue.shift(); SEE.done.push(id);
+      updateCardPreviews();
+    } catch (e) {
+      if (e === CANCELLED || (e && e.name === 'AbortError') || !SEE.running) { /* paused or cancelled */ }
+      else {
+        console.warn('[glow-ai] preview failed', id, e);
+        if (e && (e.code === 'busy')) { /* try again in a moment */ }
+        else { SEE.queue.shift(); SEE.failed.push(id); if (SEE.failed.length === 1) toast('The preview of ' + sc.name + ' didn’t work — going on with the next one.', 'warn', 4500); }
+        if (e && /not-installed|missing-model|driver|vcredist|oom/.test(e.code || '')) { seePause(); toast((e && e.message) || 'Free AI on this PC stopped.', 'warn', 6000); }
+      }
+    } finally {
+      var m = localMeta(); if (m && m.kind === 'preview') clearLocalMeta();
+      if (!running() && !RUN.starting) releaseLocalLock(); // (a video that started meanwhile holds the lock now)
+      if (SEE.cur === id) SEE.cur = null;
+      seeSave(); renderSee();
+    }
+    if (SEE.running) SEE.wait = setTimeout(seeNext, 300);
+  }
+  function seeHost() { var h = document.getElementById('aiSeeHost'); if (!h) { h = document.createElement('div'); h.id = 'aiSeeHost'; h.className = 'ai-see-host'; h.setAttribute('aria-hidden', 'true'); document.body.appendChild(h); } return h; }
+  function loadSeePreviews() {
+    return xidb('previews', 'readonly', function (st) { return st.getAll(); }).then(function (all) {
+      (all || []).forEach(function (r) { if (r && r.labelled && r.blob instanceof Blob) SEE.saved[r.sceneId] = r; });
+      updateCardPreviews(); renderSee();
+    }).catch(function () { /* none kept */ });
+  }
+
+  /* ------------------------------------------------------------------ *
    * Selfie
    * ------------------------------------------------------------------ */
   var photoSeq = 0, decoding = false;
@@ -1690,7 +2760,9 @@
         if (S.photo && S.photo.url) URL.revokeObjectURL(S.photo.url);
         S.photo = { blob: blob, url: URL.createObjectURL(blob), small: small, thumb: thumb, w: d.w, h: d.h, seq: ++photoSeq, uploaded: null };
         S.consent = false; // consent is per photo
-        renderPhoto();
+        if (SEE.running) seePause('Previews stopped — they were for your previous photo.');
+        SEE.queue = []; seeSave();
+        renderPhoto(); renderSee();
         el.photoStatus.textContent = 'Photo ready — tick the box above to continue.';
         setTimeout(function () { if (el.photoStatus.textContent.indexOf('Photo ready') === 0) el.photoStatus.textContent = ''; }, 4000);
       } finally { d.close(); }
@@ -2121,7 +3193,7 @@
   var STEP_NAME = { still: 'Placing you in the scene', video: 'Bringing it to life', finish: 'Finishing your video' };
   // what the step list on screen says for this job (a singing video's step 2 is "Making your song & video")
   function stepName(stage) {
-    var n = stage === 'video' ? el.videoName : stage === 'finish' ? el.finishName : null;
+    var n = stage === 'video' ? el.videoName : stage === 'finish' ? el.finishName : stage === 'still' ? el.stillName : null;
     return (n && n.textContent.trim()) || STEP_NAME[stage];
   }
   // Screen readers hear real changes (step, place in line, done) from a separate live region, not the rotating fun text.
@@ -2178,6 +3250,7 @@
     el.elapsed.textContent = fmt(el2) + ' elapsed';
     var order = ['still', 'video', 'finish'], W = { still: 0.18, video: 0.7, finish: 0.12 }, k = order.indexOf(UI.stage), f = 0;
     if (job.engine === 'local') f = UI.stage === 'finish' ? 0.9 + 0.1 * (UI.finishFrac || 0) : 0.9 * (UI.localOverall || 0);
+    else if (job.story) f = UI.stage === 'finish' ? 0.88 + 0.12 * (UI.finishFrac || 0) : 0.88 * storyFrac(job);
     else order.forEach(function (s, i) { f += W[s] * (i < k ? 1 : i === k ? (s === 'finish' && UI.finishFrac != null ? UI.finishFrac : stageFrac(s, job)) : 0); });
     var pct = Math.floor(clamp(f, 0, 0.99) * 100);
     UI.pct = pct;
@@ -2185,13 +3258,25 @@
     el.cost.textContent = 'Making your video · ' + pct + '%';
     el.ringBar.style.strokeDashoffset = String(100 - pct);
     var h = UI.stage === 'still' ? job.still : job.video;
+    if (job.story && job.shots) h = { at: Math.min.apply(null, job.shots.map(function (x) { var y = x.video || x.still; return y && y.at && !x.videoUrl ? y.at : Date.now(); })) };
     var slow = h && h.at && Date.now() - h.at > CFG.slowAfterMs;
     if (UI.stage === 'finish') el.eta.textContent = '';
-    else if (job.engine === 'local') el.eta.textContent = ' · ' + localMinutes(job.sound, job.quality, true) + ' in all on this PC';
+    else if (job.engine === 'local') el.eta.textContent = ' · ' + (job.minutes ? rangeText(job.minutes) : localMinutes(job.sound, job.quality, true)) + ' in all on this PC';
     else if (slow) el.eta.textContent = ' · taking longer than usual';
+    else if (job.story) el.eta.textContent = ' · usually ' + (job.sound === 'ai' ? '3–7' : '2–5') + ' min for all ' + job.shots.length + ' shots';
     else el.eta.textContent = UI.stage === 'still' ? ' · usually under a minute' : (job.sound === 'ai' ? ' · usually 2–5 min' : ' · usually 1–3 min');
     if (slow && !UI.slowSaid) { UI.slowSaid = true; holdMsg('Still working — fal.ai is busier than usual. We’ll keep checking.', 20000); }
     if (UI.pill === 'run') el.pillT.textContent = (UI.stage === 'finish' ? 'Finishing your video' : 'Making your video') + ' · ' + pct + '%';
+  }
+  // fal story: how far the shots are (they run side by side), time-based inside each request like stageFrac()
+  function storyFrac(job) {
+    var n = job.shots.length, sum = 0, now = Date.now();
+    job.shots.forEach(function (x) {
+      var st = x.stillUrl || x.videoUrl ? 1 : x.still && x.still.at ? Math.min(0.95, 1 - Math.exp(-(now - x.still.at) / 1000 / EXPECT.still)) : 0;
+      var vd = x.videoUrl ? 1 : x.video && x.video.at ? Math.min(0.95, 1 - Math.exp(-(now - x.video.at) / 1000 / (job.sound === 'ai' ? EXPECT.videoAi : EXPECT.video))) : 0;
+      sum += 0.22 * st + 0.78 * vd;
+    });
+    return n ? sum / n : 0;
   }
   function statusSub(stage, s) {
     var t;
@@ -2242,8 +3327,12 @@
     el.progTt.textContent = 'Making your video';
     var local = job.engine === 'local';
     UI.localOverall = 0;
-    el.finishName.textContent = job.sound === 'ai' ? (local ? 'Adding your song & the label' : 'Adding the label & finishing') : 'Adding music & finishing';
-    if (el.videoName) el.videoName.textContent = local && job.sound === 'ai' ? 'Making your song & video' : 'Bringing it to life';
+    var nShots = job.story && job.shots ? job.shots.length : 1;
+    el.finishName.textContent = nShots > 1 ? 'Cutting it to the beat & finishing' : job.sound === 'ai' ? (local ? 'Adding your song & the label' : 'Adding the label & finishing') : job.sound === 'own' ? 'Adding your song & finishing' : 'Adding music & finishing';
+    if (el.videoName) el.videoName.textContent = nShots > 1 ? (local && job.sound === 'ai' ? 'Making your song & ' + nShots + ' clips' : 'Bringing ' + nShots + ' shots to life') : local && job.sound === 'ai' ? 'Making your song & video' : 'Bringing it to life';
+    if (el.stillName) el.stillName.textContent = nShots > 1 ? 'Placing you in ' + nShots + ' shots' : 'Placing you in the scene';
+    UI.shotQ = {}; UI.shotAt = {}; UI.shotSeen = {};
+    renderShots(job);
     if (local) el.keepOpen.textContent = 'Keep Glow Studio open until it’s done. It’s made on this PC, so it’s free. If the window closes, open Glow Studio again: your video waits there (“Continue your video” or “Finish my video”).';
     else el.keepOpen.innerHTML = KEEP_OPEN_FAL;
     ['still', 'video', 'finish'].forEach(function (s) { setStep(s, 'todo', ''); });
@@ -2271,13 +3360,33 @@
    * ------------------------------------------------------------------ */
   function newJob() {
     var sc = sceneById(S.sceneId);
-    var sound = sc.audio === 'required' ? 'ai' : S.sound;
-    return {
+    var sound = effSound(sc);
+    var job = {
       v: 1, id: 'j' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), createdAt: Date.now(),
       sceneId: sc.id, sound: sound, trackId: S.trackId, duration: S.duration,
       stage: 'upload', thumb: S.photo ? S.photo.thumb : '', photoSeq: S.photo ? S.photo.seq : 0,
       still: null, stillUrl: null, video: null, videoUrl: null, tries: {}
     };
+    if (sound === 'own' && S.own) job.own = { id: S.own.id, name: S.own.name, start: S.own.start };
+    job.hint = sound === 'ai' ? '' : beatHint(tempoOf(sound, S.trackId));
+    if (sc.story) {
+      // a story: one scene photo + one 5 s clip per shot, all from the same selfie
+      job.story = true;
+      job.shots = shotsFor(sc, S.duration).map(function (sh) { return { id: sh.id, still: null, stillUrl: null, video: null, videoUrl: null, tries: {} }; });
+    }
+    return job;
+  }
+  // The tempo the clips should move to ("Dance to the beat"): the built-in track's, or the analysed part of my song.
+  function tempoOf(sound, trackId) {
+    if (sound === 'own') {
+      var b = S.own && S.own.beat;
+      if (!b || !(b.bpm > 0)) return null;
+      var st = S.own.start, en = st + S.duration, e = 0, c = 0;
+      b.beats.forEach(function (t, k) { if (t >= st && t <= en) { e += b.energy[k] || 0; c++; } });
+      return { bpm: b.bpm, energy: c ? e / c : 0.7 };
+    }
+    if (sound === 'music') { var tr = trackById(trackId); return tr ? { bpm: tr.bpm, energy: /lo-fi|dream/i.test(tr.genre || '') ? 0.4 : 0.75 } : null; }
+    return null;
   }
   // Resolves true when the job now runs in this page, false when another Glow Studio page is running one.
   function startRun(job, opts) {
@@ -2305,6 +3414,7 @@
   }
   function endRun() { RUN.job = null; RUN.persisted = false; releaseLock(); releaseLocalLock(); clearInterval(UI.beatTimer); }
   async function runJob(job) {
+    if (job.story) return runStory(job);
     var sc = sceneById(job.sceneId);
     try {
       var haveVideo = !!(job.videoUrl || job.localBlob);
@@ -2358,7 +3468,7 @@
         var ep = job.sound === 'ai' ? EP.ai : EP.std;
         if (!job.video) {
           setStep('video', null, 'Sending to ' + MODEL_NAME[ep] + '…');
-          var vh = await submit(job, ep, videoInput(sc, job.sound === 'ai' ? 'ai' : 'std', job.duration, job.stillUrl));
+          var vh = await submit(job, ep, videoInput(sc, job.sound === 'ai' ? 'ai' : 'std', job.duration, job.stillUrl, job.hint));
           if (RUN.cancelled || RUN.job !== job) { cancelRemote(vh); throw CANCELLED; }
           job.video = vh;
           saveJob(job);
@@ -2403,18 +3513,308 @@
     return runJob(job);
   }
 
+  /* fal.ai cloud stories: one scene photo + one 5 s clip per shot, all from the same uploaded selfie. The shots run
+   * side by side. Every paid request is saved the moment fal accepts it and every finished result the moment it is
+   * read, so a reload, "Try again" or a lost connection picks each shot up where it was: a finished shot is never made
+   * (or paid for) again, and only a shot that failed on fal's side (not charged) is sent again. */
+  async function runStory(job) {
+    var sc = sceneById(job.sceneId), tier = job.sound === 'ai' ? 'ai' : 'std';
+    try {
+      renderShots(job);
+      if (!job.shots.every(function (s) { return s.videoUrl; })) {
+        var needStill = job.shots.some(function (s) { return !s.stillUrl && !s.still && !s.videoUrl; });
+        enterStage(job.shots.every(function (s) { return s.stillUrl || s.videoUrl; }) ? 'video' : 'still', job.createdAt);
+        if (needStill && !job.ref && !job.inlineRef) {
+          setStep('still', null, 'Uploading your photo…');
+          try { job.ref = await uploadSelfie(job); }
+          catch (e) {
+            var unreachable = (e.kind === 'upload' && e.network) || (e.kind === 'network' && navigator.onLine !== false);
+            if (e === CANCELLED || !unreachable || !S.photo) throw e;
+            console.warn('[glow-ai] CDN upload failed, sending a small inline copy instead');
+            job.inlineRef = S.photo.small;
+          }
+          check(job);
+          job.stage = 'still'; saveJob(job);
+        }
+        storySubs(job);
+        await Promise.all(job.shots.map(function (s, i) { return runShot(job, sc, s, i, tier); }));
+        check(job);
+      }
+      job.stage = 'finish'; saveJob(job);
+      setStep('still', 'done', 'Done'); setStep('video', 'done', 'Done');
+      await finishStage(job);
+    } catch (e) {
+      if (e === CANCELLED || RUN.job !== job) return;
+      failStory(job, e);
+    }
+  }
+  async function runShot(job, sc, s, i, tier) {
+    var shot = shotById(sc, s.id);
+    s.tries = s.tries || {};
+    try {
+      if (!s.stillUrl && !s.videoUrl) {
+        if (!s.still) {
+          var ref = job.ref || job.inlineRef;
+          if (!ref) throw FalErr('nophoto', 'Your photo is no longer here');
+          var eps = [EP.still, EP.stillAlt], k = s.tries.stillEp || 0;
+          setShot(i, 'active');
+          var sh = await submit(job, eps[k], shotStillInput(shot, ref));
+          if (RUN.cancelled || RUN.job !== job) { cancelRemote(sh); throw CANCELLED; }
+          s.still = sh; saveJob(job);
+        }
+        setShot(i, 'active');
+        var out;
+        try { out = await poll(job, s.still, function (st) { shotStatus(job, i, 'still', st); }); }
+        catch (e) {
+          if (e !== CANCELLED && retryable(e) && (s.tries.still || 0) < 2) {
+            console.warn('[glow-ai] shot still failed on fal’s side, retrying', e);
+            s.tries.still = (s.tries.still || 0) + 1;
+            if (s.tries.still >= 2) s.tries.stillEp = 1;
+            s.still = null; saveJob(job);
+            holdMsg('fal.ai had a hiccup — trying that shot again (you’re only charged for results).', 8000);
+            return runShot(job, sc, s, i, tier);
+          }
+          throw e;
+        }
+        var img = out && Array.isArray(out.images) ? out.images[0] : null;
+        if (!img || typeof img.url !== 'string') {
+          var why = out && typeof out.description === 'string' ? out.description : '';
+          throw FalErr(/safety|policy|cannot|can't|unable|not able/i.test(why) ? 'moderation' : 'nomedia', why || 'No image came back');
+        }
+        s.stillUrl = img.url; saveJob(job);
+        shotStill(job, i, img.url);
+        storySubs(job);
+      }
+      if (!s.videoUrl) {
+        var ep = tier === 'ai' ? EP.ai : EP.std;
+        if (!s.video) {
+          var vh = await submit(job, ep, shotVideoInput(sc, shot, tier, s.stillUrl, job.hint));
+          if (RUN.cancelled || RUN.job !== job) { cancelRemote(vh); throw CANCELLED; }
+          s.video = vh; saveJob(job);
+        }
+        if (job.shots.every(function (x) { return x.stillUrl || x.videoUrl; })) enterStage('video');
+        var vout;
+        try { vout = await poll(job, s.video, function (st) { shotStatus(job, i, 'video', st); }); }
+        catch (e) {
+          if (e !== CANCELLED && retryable(e) && (s.tries.video || 0) < 1) {
+            console.warn('[glow-ai] shot video failed on fal’s side, retrying', e);
+            s.tries.video = (s.tries.video || 0) + 1;
+            s.video = null; saveJob(job);
+            holdMsg('fal.ai had a hiccup — trying that shot again (you’re only charged for results).', 8000);
+            return runShot(job, sc, s, i, tier);
+          }
+          throw e;
+        }
+        var v = vout && vout.video;
+        if (!v || typeof v.url !== 'string') throw FalErr('nomedia', 'No video came back');
+        s.videoUrl = v.url; s.videoMeta = { w: v.width || null, h: v.height || null };
+        saveJob(job);
+        setShot(i, 'done');
+        storySubs(job);
+      } else setShot(i, 'done');
+    } catch (e) {
+      if (e && e !== CANCELLED && typeof e === 'object' && e.shot == null) e.shot = i;
+      throw e;
+    }
+  }
+  // "2 of 4 ready" lines under the steps, and the place in line at fal.ai when there is one
+  function storySubs(job) {
+    var n = job.shots.length, st = 0, vd = 0;
+    job.shots.forEach(function (s) { if (s.stillUrl || s.videoUrl) st++; if (s.videoUrl) vd++; });
+    var q = UI.shotQ || {}, ahead = 0;
+    Object.keys(q).forEach(function (k) { if (q[k] > ahead) ahead = q[k]; });
+    setStep('still', st === n ? 'done' : null, st === n ? 'Done' : st + ' of ' + n + ' ready' + (UI.stage === 'still' && ahead ? ' · in line at fal.ai' : ''));
+    if (UI.stage === 'video') setStep('video', null, vd + ' of ' + n + ' ready' + (ahead ? ' · ' + ahead + ' ahead at fal.ai' : ''));
+  }
+  function shotStatus(job, i, kind, st) {
+    UI.shotQ = UI.shotQ || {};
+    UI.shotQ[kind + i] = st.status === 'IN_QUEUE' && st.position > 0 ? st.position : 0;
+    UI.shotAt = UI.shotAt || {};
+    if (st.status === 'IN_PROGRESS' && !UI.shotAt[kind + i]) UI.shotAt[kind + i] = Date.now();
+    if (st.retry && st.reconnecting) holdMsg(st.offline ? 'Connection lost — reconnecting. Your shots are safe at fal.ai and won’t be charged twice.' : 'fal.ai is slow to answer — reconnecting. Your shots are safe and won’t be charged twice.', 8000);
+    else if (st.retry && st.offline) holdMsg('Connection lost — we’ll keep trying. Your shots are safe at fal.ai.', 8000);
+    if (st.reconnected) UI.hold = 0;
+    storySubs(job);
+  }
+  // What "Try again" still has to pay for (only what isn't made yet, or a request fal no longer holds).
+  function storyMissingCost(job) {
+    var c = 0, vp = (job.sound === 'ai' ? PRICE.ai : PRICE.std) * SHOT_SEC;
+    (job.shots || []).forEach(function (s) {
+      if (s.videoUrl || s.video) return;
+      c += vp;
+      if (!s.stillUrl && !s.still) c += PRICE.still;
+    });
+    return c;
+  }
+  function storyRetryLine(job) {
+    var c = storyMissingCost(job);
+    return c > 0.004 ? 'Only the missing shots · about ' + money(c) + ' more' : 'Already paid for — no extra cost';
+  }
+  // The paid parts of a stopped story, to reuse when the same photo + scene is made again (cancel, moderation of
+  // another shot, …): scene photos always (they only depend on the photo and the shot), clips for the same sound tier.
+  function storyStub(job) {
+    var made = (job.shots || []).filter(function (s) { return s.stillUrl || s.videoUrl; });
+    if (!made.length) return null;
+    return { story: true, sceneId: job.sceneId, sound: job.sound, photoSeq: job.photoSeq, thumb: job.thumb, ref: job.ref || null,
+      shots: (job.shots || []).map(function (s) { return { id: s.id, stillUrl: s.stillUrl || null, videoUrl: s.videoUrl || null }; }) };
+  }
+  function failStory(job, e) {
+    console.warn('[glow-ai] story failed', e);
+    endRun();
+    UI.state = 'error';
+    clearInterval(UI.timer); clearTimeout(UI.msgTimer);
+    var v = errorView(e, job);
+    var hard = e && (e.kind === 'moderation' || e.kind === 'face' || e.kind === 'photo' || e.kind === 'nophoto');
+    var paid = job.shots.some(function (s) { return s.stillUrl || s.still || s.video || s.videoUrl; });
+    if (hard || !paid) {
+      // nothing more can come of this one: stop what is still queued at fal so it isn't charged
+      job.shots.forEach(function (s) { if (s.video && !s.videoUrl) cancelRemote(s.video); else if (s.still && !s.stillUrl) cancelRemote(s.still); });
+      clearJob();
+      S.retryJob = e && e.kind !== 'moderation' && e.kind !== 'auth' ? storyStub(job) : null;
+    } else {
+      // a shot failed on fal's side (not charged) or the connection dropped: every paid shot is kept, and "Try again"
+      // or a reload makes only what is missing
+      var s = e && e.shot != null ? job.shots[e.shot] : null;
+      if (s && !e.live) { if (!s.videoUrl) s.video = null; if (!s.stillUrl) s.still = null; }
+      if (s) setShot(e.shot, 'error');
+      savePaused(job);
+      S.retryJob = { resume: job };
+    }
+    renderJobError(v, job);
+  }
+  function cancelStory(job) {
+    RUN.cancelled = true;
+    endRun(); wakeAll();
+    clearJob();
+    UI.state = 'idle';
+    clearInterval(UI.timer); clearTimeout(UI.msgTimer);
+    closeProgressSheet(); setPill(null);
+    var stub = storyStub(job);
+    var pend = [];
+    job.shots.forEach(function (s, i) {
+      if (s.video && !s.videoUrl) pend.push({ i: i, kind: 'video', h: s.video });
+      else if (s.still && !s.stillUrl) pend.push({ i: i, kind: 'still', h: s.still });
+    });
+    S.retryJob = stub;
+    updateCost();
+    if (!pend.length) {
+      toast(stub ? 'Cancelled. The shots already made are kept — we’ll reuse them if you make this scene again.' : 'Cancelled — nothing was charged.', 'info', 5000);
+      return;
+    }
+    Promise.all(pend.map(function (p) {
+      return cancelRemote(p.h).then(function (res) {
+        if (res.state !== 'ALREADY_COMPLETED') return res.state === 'CANCELLATION_REQUESTED' || !res.status ? 'maybe' : 'ok';
+        // it finished just as Cancel was tapped and is paid for: keep it for next time
+        return falFetch(p.h.response_url, { method: 'GET' }, true).then(function (r) {
+          var b = r.ok && r.body, url = p.kind === 'video' ? b && b.video && b.video.url : b && Array.isArray(b.images) && b.images[0] && b.images[0].url;
+          if (typeof url === 'string' && !running()) {
+            if (!S.retryJob || !S.retryJob.story) S.retryJob = storyStub(job) || { story: true, sceneId: job.sceneId, sound: job.sound, photoSeq: job.photoSeq, thumb: job.thumb, ref: job.ref || null, shots: job.shots.map(function (x) { return { id: x.id, stillUrl: x.stillUrl || null, videoUrl: x.videoUrl || null }; }) };
+            var st = S.retryJob.shots[p.i];
+            if (st) { if (p.kind === 'video') st.videoUrl = url; else st.stillUrl = url; }
+          }
+          return 'kept';
+        }, function () { return 'maybe'; });
+      });
+    })).then(function (r) {
+      var maybe = r.indexOf('maybe') >= 0, kept = r.indexOf('kept') >= 0 || !!stub;
+      toast((maybe ? 'Cancelled. Some shots were already being made, so fal.ai may still charge for them.' : 'Cancelled — the unfinished shots weren’t charged.') +
+        (kept ? ' The shots already made are kept for next time.' : ''), 'info', 7000);
+      updateCost();
+    });
+  }
+  // Shot strip in the progress sheet: one tile per shot, with its scene photo as soon as it is made
+  function renderShots(job) {
+    if (!el.shots) return;
+    var n = job.story && job.shots ? job.shots.length : 0;
+    el.shots.textContent = '';
+    el.shots.hidden = n < 2;
+    el.pv.classList.toggle('has-shots', n >= 2);
+    if (n < 2) return;
+    var sc = sceneById(job.sceneId);
+    job.shots.forEach(function (s, i) {
+      var li = document.createElement('li'); li.className = 'ai-shot'; li.dataset.state = s.videoUrl ? 'done' : 'todo';
+      var fig = document.createElement('span'); fig.className = 'ai-shot-img';
+      var num = document.createElement('i'); num.textContent = String(i + 1); fig.appendChild(num);
+      var still = s.stillUrl || null;
+      if (still) { var img = document.createElement('img'); img.alt = ''; img.src = still; fig.appendChild(img); li.classList.add('has-still'); }
+      var sh = sc.story ? shotById(sc, s.id) : null;
+      var t = document.createElement('small'); t.textContent = (sh && sh.title) || s.title || ('Shot ' + (i + 1));
+      if (s.lip) { var lp = document.createElement('b'); lp.className = 'ai-shot-lip'; lp.textContent = 'Lip-sync'; fig.appendChild(lp); }
+      li.appendChild(fig); li.appendChild(t);
+      li.setAttribute('aria-label', 'Shot ' + (i + 1) + ': ' + t.textContent);
+      el.shots.appendChild(li);
+    });
+  }
+  function setShot(i, state) {
+    if (!el.shots || el.shots.hidden) return;
+    var li = el.shots.children[i];
+    if (!li || li.dataset.state === 'done' && state === 'active') return;
+    li.dataset.state = state;
+  }
+  function shotStill(job, i, url) {
+    if (el.shots && !el.shots.hidden) {
+      var li = el.shots.children[i];
+      if (li && !li.classList.contains('has-still')) {
+        var img = document.createElement('img'); img.alt = ''; img.src = url;
+        li.querySelector('.ai-shot-img').appendChild(img); li.classList.add('has-still');
+      }
+    }
+    // the first scene photo is the big reveal
+    if (!job.stillUrl) { job.stillUrl = url; showStill(url, false); }
+    announce('Scene photo ' + (i + 1) + ' is ready');
+  }
+
   /* Free AI on this PC: GlowLocalAI makes the scene photo and the clip (and the song), then the same finishing as
    * the cloud adds the label and the sound. The engine keeps its own record of the video (and, with {keep: true}, its
    * files) until the labelled video is saved here (GlowLocalAI.release), so a reload continues it, or finishes a clip
    * that was already made, without making it again. This page keeps only which scene, sound and track it was for
    * (LS.localJob). One window at a time makes a free video (the 'glow-local-job' lock). Nothing here is written to the
    * cloud job slot (LS.job). */
-  function localJob(sc, sound, trackId, quality, thumb) {
-    return {
+  function localJob(sc, sound, trackId, quality, thumb, plan) {
+    var job = {
       v: 1, id: 'l' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), engine: 'local', createdAt: Date.now(),
-      sceneId: sc.id, sound: sound === 'ai' ? 'ai' : 'music', trackId: trackId, duration: 5, quality: quality === 'fast' ? 'fast' : 'best', offset: SONG_OFFSET,
+      sceneId: sc.id, sound: sound === 'ai' || sound === 'own' ? sound : 'music', trackId: trackId, duration: 5, quality: quality === 'fast' ? 'fast' : 'best', offset: SONG_OFFSET,
       thumb: thumb || '', photoSeq: S.photo ? S.photo.seq : 0, stage: 'still', still: null, stillUrl: null, video: null, videoUrl: null, tries: {},
       engineJob: null // GlowLocalAI's job id (its record and files are kept until this page has finished the video)
+    };
+    if (!plan) return job;
+    job.duration = plan.duration; job.sync = plan.sync; job.minutes = localRange(plan);
+    if (job.sound === 'own' && S.own) job.own = { id: S.own.id, name: S.own.name, start: S.own.start };
+    job.hint = job.sound === 'ai' ? (sc.story ? ' Everyone moves in time with the upbeat rhythm of the song.' : '') : beatHint(tempoOf(job.sound, trackId));
+    if (plan.local === 'story') {
+      // where each shot's part of the soundtrack starts: shots back to back (lip-synced ones exactly 4.8 s), the
+      // others ending on the song's beats where it has known beats (my song); the finishing step uses the same plan
+      job.story = true;
+      var soundStart = job.sound === 'own' && job.own ? job.own.start : 0;
+      var grid = job.sound === 'own' && S.own ? gridShift(S.own.beat, soundStart, 90) : null;
+      var tl = planTimeline(plan.shots.map(function (x) { return x.lip ? LIP_SEC : 5.03; }), plan.shots.map(function (x) { return x.lip; }), null, grid);
+      job.shots = plan.shots.map(function (x, i) { return { id: x.shot.id, title: x.shot.title, lip: x.lip, audioStart: x.lip ? Math.round((soundStart + tl.B[i]) * 1000) / 1000 : null }; });
+      job.songStart = 0;
+      if (job.sound === 'ai') job.songSeconds = Math.max(10, Math.min(60, Math.ceil(tl.total + 2)));
+    } else if (plan.single) job.shotId = plan.single.shot.id;
+    return job;
+  }
+  // The shot spec (prompts) of a job's shot id
+  function jobShot(sc, job, id) {
+    if (sc.story) return shotById(sc, id);
+    var list = shotsFor(sc, job.duration || 20);
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+    return list[0];
+  }
+  // The request for GlowLocalAI.generateStory() (without photo and signal): see the contract in local-engine.js.
+  function storyRequest(sc, job, fastPack) {
+    var model = job.quality === 'fast' && fastPack ? 'klein' : 'qwen', anyLip = false;
+    var shots = job.shots.map(function (x) {
+      var sh = jobShot(sc, job, x.id);
+      if (x.lip) anyLip = true;
+      var o = { id: x.id, stillPrompt: localStillText(model, sh.local.still, sh.local.framing), motionPrompt: x.lip ? (sh.local.sing || singLine(sc, sh)) : sh.local.motion + (job.hint || ''), negativePrompt: LOCAL_NEGATIVE, lipSync: !!x.lip };
+      if (x.lip && x.audioStart != null) o.audioStart = x.audioStart;
+      return o;
+    });
+    return {
+      quality: job.quality, shots: shots,
+      song: job.sound === 'ai' && sc.song ? { lyrics: sc.song.lyrics, style: sc.song.style, language: 'es', seconds: job.songSeconds || 22 } : null,
+      audio: job.sound === 'own' && anyLip && S.own ? { blob: S.own.blob, start: job.own ? job.own.start : S.own.start } : null
     };
   }
   // Resolves true when the video now runs in this page, false when another window is making one (or this page is busy).
@@ -2459,7 +3859,7 @@
   async function runLocal(job, opts, ctl) {
     var sc = sceneById(job.sceneId);
     try {
-      if (!job.localBlob) {
+      if (!job.localBlob && !(job.story && job.clips)) {
         var att = opts.attach || null;
         // "Try finishing again" after the clip had to be dropped: fetch it again from the engine's kept record
         if (!att && job.engineJob) {
@@ -2479,19 +3879,39 @@
         else {
           await localNotBusy();
           check(job);
-          var req = localRequest(sc, job.sound, job.quality, localPack('fast'));
+          var req;
+          if (job.story) {
+            if (job.sound === 'own' && !S.own) throw finErr('own-missing');
+            req = storyRequest(sc, job, localPack('fast'));
+          } else req = localRequest(sc, job.sound, job.quality, localPack('fast'), job.shotId && sc.story ? shotById(sc, job.shotId) : null, job.hint);
           req.photo = S.photo.blob;
           req.keep = true;
           if (ctl) req.signal = ctl.signal;
-          res = await LOC.api.generate(req, onP);
+          res = job.story ? await LOC.api.generateStory(req, onP) : await LOC.api.generate(req, onP);
         }
         check(job);
-        job.localBlob = res.video;
-        job.localAudio = res.audio || null;
-        job.local = { width: res.width, height: res.height, fps: res.fps, seconds: res.seconds, lipSync: !!res.lipSync, stillModel: res.stillModel, quality: res.quality, timings: res.timings };
-        if (res.job && res.job !== job.engineJob) { job.engineJob = res.job; saveLocalMeta(job); }
-        if (res.stillUrl && !job.stillUrl) { job.stillUrl = res.stillUrl; showStill(res.stillUrl, true); }
-        setStep('still', 'done', 'Done'); setStep('video', 'done', 'Done');
+        if (res && Array.isArray(res.clips)) {
+          // a story: every shot's clip, in order (and the whole song, with where each shot's part of it starts)
+          job.clips = res.clips.map(function (c) { return { id: c.id, blob: c.video, lipSync: !!c.lipSync, seconds: c.seconds, width: c.width, height: c.height, fps: c.fps, stillUrl: c.stillUrl || null }; });
+          if (!job.clips.length || job.clips.some(function (c) { return !(c.blob && c.blob.size); })) throw lostErr('the story came back without its clips');
+          job.localAudio = res.audio || null;
+          job.songOffsets = res.songOffsets || null;
+          job.story = true;
+          if (!job.shots || job.shots.length !== job.clips.length) job.shots = job.clips.map(function (c) { return { id: c.id, lip: c.lipSync, audioStart: null }; });
+          job.local = { stillModel: res.stillModel, quality: res.quality || job.quality, timings: res.timings, seed: res.seed };
+          if (res.job && res.job !== job.engineJob) { job.engineJob = res.job; saveLocalMeta(job); }
+          var first = job.clips.filter(function (c) { return c.stillUrl; })[0];
+          if (first && !job.stillUrl) { job.stillUrl = first.stillUrl; showStill(first.stillUrl, true); }
+          job.clips.forEach(function (c, i) { if (c.stillUrl) shotStill(job, i, c.stillUrl); setShot(i, 'done'); });
+          setStep('still', 'done', 'Done'); setStep('video', 'done', 'Done');
+        } else {
+          job.localBlob = res.video;
+          job.localAudio = res.audio || null;
+          job.local = { width: res.width, height: res.height, fps: res.fps, seconds: res.seconds, lipSync: !!res.lipSync, stillModel: res.stillModel, quality: res.quality, timings: res.timings };
+          if (res.job && res.job !== job.engineJob) { job.engineJob = res.job; saveLocalMeta(job); }
+          if (res.stillUrl && !job.stillUrl) { job.stillUrl = res.stillUrl; showStill(res.stillUrl, true); }
+          setStep('still', 'done', 'Done'); setStep('video', 'done', 'Done');
+        }
       }
       await finishStage(job);
     } catch (e) {
@@ -2500,7 +3920,7 @@
     }
   }
   // GlowLocalAI stages -> the three steps on screen: starting/upload/still = 1, song/video/download = 2.
-  var LOCAL_STEP = { starting: 'still', upload: 'still', still: 'still', song: 'video', video: 'video', download: 'video' };
+  var LOCAL_STEP = { starting: 'still', upload: 'still', still: 'still', song: 'video', video: 'video', lipsync: 'video', download: 'video' };
   function localProgress(job, p) {
     if (p.job && p.job !== job.engineJob) { job.engineJob = p.job; saveLocalMeta(job); }
     if (job.made) {
@@ -2514,17 +3934,31 @@
     UI.localStage = p.stage;
     UI.localOverall = Math.max(UI.localOverall || 0, clamp(+p.overall || 0, 0, 1));
     var pct = Math.round(clamp(+p.pct || 0, 0, 1) * 100), sub;
+    var n = job.story && job.shots ? job.shots.length : 1, si = p.shot != null ? +p.shot : null, of = si != null && n > 1 ? ' ' + (si + 1) + ' of ' + n : '';
     if (p.stage === 'starting') sub = 'Starting the free AI…';
     else if (p.stage === 'upload') sub = 'Sending your photo to the AI…';
     else if (p.stage === 'song') sub = 'Writing your song · ' + pct + '%';
-    else if (p.stage === 'download') sub = 'Saving the clip…';
+    else if (p.stage === 'download') sub = n > 1 ? 'Saving the clips…' : 'Saving the clip…';
+    else if (n > 1 && p.stage === 'still') sub = 'Scene photo' + of + ' · ' + pct + '%';
+    else if (n > 1 && p.stage === 'lipsync') sub = 'Lip-sync, shot' + of + ' · ' + pct + '%';
+    else if (n > 1 && p.stage === 'video') sub = 'Shot' + of + ' · ' + pct + '%';
     else sub = pct + '%';
     setStep(step, null, sub);
     if (p.message) setMsg(p.message); // the engine's own plain words, as they are
-    if (p.stillUrl && !job.stillUrl) {
-      job.stillUrl = p.stillUrl;
+    if (n > 1 && si != null && si >= 0 && si < n) {
+      // the shot strip: the shot being worked on is lit; a clip is done once the engine moves on to the next one
+      UI.shotSeen = UI.shotSeen || {};
+      var key = (p.stage === 'lipsync' ? 'video' : p.stage), prev = UI.shotSeen[key];
+      if ((key === 'video') && prev != null && prev !== si) setShot(prev, 'done');
+      UI.shotSeen[key] = si;
+      setShot(si, 'active');
+    }
+    var su = p.stillUrl, sIdx = p.shotIndex != null ? +p.shotIndex : si;
+    if (su && n > 1 && sIdx != null) shotStill(job, sIdx, su);
+    else if (su && !job.stillUrl) {
+      job.stillUrl = su;
       setStep('still', 'done', 'Done');
-      showStill(p.stillUrl, false); // the scene photo is the first reveal
+      showStill(su, false); // the scene photo is the first reveal
     }
     tick();
   }
@@ -2547,6 +3981,7 @@
     var msg = e && e.name === 'GlowLocalAIError' && e.message ? engineText(e.message, 'panel') : '';
     var det = e && e.detail ? String(e.detail) : '';
     if (e && e.kind === 'finish') {
+      if (e.code === 'own-missing') return { t: 'Add your song again', p: 'Your video is made, but your song isn’t loaded any more. Choose the same song file again and we’ll finish it — it’s free.', a: ['sound', 'finish'] };
       if (e.code === 'unsupported') return { t: 'This window can’t finish AI videos', p: 'Adding the AI label and the sound needs video recording. Update Microsoft Edge or Google Chrome, then try again. Your clip is kept until you close Glow Studio.', a: ['finish'] };
       if (e.code === 'decode') return { t: 'The finished clip couldn’t be opened', p: 'Your video was made, but it couldn’t be played to add the AI label. Try finishing again (the clip is fetched from the AI again); if that keeps failing, make it again — it’s free.', a: ['finish', 'retry'] };
       return { t: 'Finishing didn’t complete', p: 'Adding the AI label and the sound stopped halfway. Keep this window open and in front while it finishes, then try again — it’s free. If you close Glow Studio now, it is offered again the next time.', a: ['finish'] };
@@ -2573,6 +4008,8 @@
         return { t: 'Another video is being made on this PC', p: msg, a: ['retry'], detail: det };
       case 'bad-photo': case 'upload':
         return { t: 'This photo didn’t work', p: msg, a: ['photo', 'retry'], detail: det };
+      case 'bad-audio':
+        return { t: 'Your song didn’t work for this video', p: msg || 'The song file couldn’t be used. Try another start point, or an MP3 or M4A file.', a: ['sound', 'retry'], detail: det };
       default: // interrupted, lost, failed, download, network, missing-still, bad-request, unavailable
         return { t: 'The free AI couldn’t finish this video', p: msg || 'Something went wrong while making the video. Please try again.', a: ['retry'], detail: det };
     }
@@ -2593,13 +4030,13 @@
 
   // Downloads fal's finished clip. A 4xx means the file is gone; connection trouble is waited out (the video is
   // paid for and safe at fal), and only after a long run of failures do we pause and let the user try again.
-  async function downloadVideo(job) {
+  async function downloadVideo(job, url) {
     var fails = 0, t0 = Date.now();
     for (;;) {
       check(job);
       var r = null, blob = null;
       try {
-        r = await fetch(job.videoUrl, { credentials: 'omit' });
+        r = await fetch(url || job.videoUrl, { credentials: 'omit' });
         if (r.ok) blob = await r.blob();
       } catch (e) { blob = null; }
       check(job);
@@ -2617,21 +4054,45 @@
       await nap(backoff(fails));
     }
   }
+  // The shots of a job as clips for finishClips(): fal stories are downloaded (kept in memory, so "Try finishing again"
+  // doesn't download them again), this PC's clips are already here.
+  async function jobClips(job) {
+    if (job.story && job.engine === 'local') {
+      return (job.clips || []).map(function (c, i) { var p = job.shots && job.shots[i]; return { blob: c.blob, id: c.id, lipSync: !!c.lipSync, seconds: c.seconds, audioStart: p && p.audioStart != null ? p.audioStart : null }; });
+    }
+    if (job.story) {
+      job.clipBlobs = job.clipBlobs || [];
+      var out = [];
+      for (var i = 0; i < job.shots.length; i++) {
+        if (!job.clipBlobs[i]) {
+          setStep('finish', null, 'Downloading shot ' + (i + 1) + ' of ' + job.shots.length + '…');
+          job.clipBlobs[i] = await downloadVideo(job, job.shots[i].videoUrl);
+        }
+        out.push({ blob: job.clipBlobs[i], id: job.shots[i].id, lipSync: false });
+      }
+      return out;
+    }
+    var raw = job.localBlob || null;
+    if (!raw) { raw = await downloadVideo(job); job.localBlob = raw; }
+    return [{ blob: raw, id: 'main', lipSync: false }];
+  }
+  // The new finisher (beat-locked cuts, punches, my song) for stories, built-in music and my song; the original one for
+  // a single clip with AI sound (the clip's own sound, or this PC's song under a lip-synced clip).
+  function usesClips(job) { return !!job.story || job.sound === 'music' || job.sound === 'own'; }
   async function finishStage(job) {
     enterStage('finish');
     var sc = sceneById(job.sceneId);
     el.cancel.hidden = true;
-    setStep('finish', null, 'Downloading your video…');
-    // The clip stays in memory, so "Try finishing again" in this visit doesn't download it again.
-    var raw = job.localBlob || null;
-    if (!raw) { raw = await downloadVideo(job); job.localBlob = raw; }
+    setStep('finish', null, job.story ? 'Getting your shots…' : 'Downloading your video…');
+    if (job.story) { renderShots(job); job.shots.forEach(function (x, i) { setShot(i, 'done'); }); }
+    var clips = await jobClips(job), raw = clips[0] && clips[0].blob;
     check(job);
     var fin = null, lastErr = null;
     for (var attempt = 0; attempt < 3 && !fin; attempt++) {
       try {
         UI.finishFrac = 0;
-        setStep('finish', null, job.sound === 'ai' ? (job.engine === 'local' ? 'Adding your song & the AI label…' : 'Adding the AI label…') : 'Mixing ' + ((trackById(job.trackId) || {}).name || 'music') + '…');
-        fin = await finishVideo(job, raw, sc);
+        setStep('finish', null, job.story ? 'Cutting your shots to the beat…' : job.sound === 'ai' ? (job.engine === 'local' ? 'Adding your song & the AI label…' : 'Adding the AI label…') : 'Mixing ' + (job.sound === 'own' ? 'your song' : ((trackById(job.trackId) || {}).name || 'music')) + '…');
+        fin = usesClips(job) ? await finishClips(job, clips, sc) : await finishVideo(job, raw, sc);
       } catch (e) {
         if (e === CANCELLED) throw e;
         lastErr = e;
@@ -2645,7 +4106,7 @@
     }
     check(job);
     // A clip this browser couldn't play is downloaded afresh next time (it may have been damaged on the way).
-    if (!fin && lastErr && lastErr.code === 'decode') job.localBlob = null;
+    if (!fin && lastErr && lastErr.code === 'decode') { job.localBlob = null; job.clipBlobs = null; if (job.engine === 'local' && job.story) job.clips = null; }
     // Never hand out fal's original, unlabelled file: stop here and let the user try finishing again (no cost).
     if (!fin) throw FalErr('finish', (lastErr && lastErr.message) || 'Finishing failed', { code: (lastErr && lastErr.code) || 'record', live: true });
     return completeJob(job, fin);
@@ -2959,6 +4420,465 @@
   }
 
   /* ------------------------------------------------------------------ *
+   * Finishing, part 2: shots cut together on the beat (stories, built-in music, my song)
+   *
+   * One continuous soundtrack (built-in track, the AI song or the user's song from the chosen start point) is the
+   * clock. Every shot gets a segment of the finished video: lip-synced shots play at normal speed exactly where their
+   * part of the song is; the other shots are retimed gently (0.85–1.15x) so the cuts land on downbeats (or beats).
+   * On strong beats there is a small zoom punch and light pulse; between shots a hard cut, a quick white flash or a
+   * whip pan (the scene decides). The last half second fades to black while the music fades out. The "AI-generated"
+   * label is drawn on every frame, after everything else. Recorded in real time like finishVideo().
+   * ------------------------------------------------------------------ */
+  var RATE_LO = 0.85, RATE_HI = 1.15, FADE_V = 0.5, FADE_A = 1.2, TRANS_SEC = 0.18, BURST_MS = 16;
+  // durs: clip lengths; lips: shots that must play at normal speed; anchors[i]: where a lip-synced shot must start
+  // (video time) or null; grid: { beats, downbeats } in video time, or null (shots back to back, no retiming).
+  function planTimeline(durs, lips, anchors, grid) {
+    var n = durs.length, B = [0], rate = [], i, ref = 0, acc = 0;
+    function near(list, want, lo, hi) {
+      var b = null;
+      (list || []).forEach(function (t) { if (t >= lo - 1e-6 && t <= hi + 1e-6 && (b === null || Math.abs(t - want) < Math.abs(b - want))) b = t; });
+      return b;
+    }
+    // the downbeat closest to where the cut would naturally be, unless a plain beat is clearly closer
+    function snap(want, lo, hi, last) {
+      if (!grid) return want;
+      var d = near(grid.downbeats, want, lo, hi), b = near(grid.beats, want, lo, hi);
+      if (d != null && (b == null || Math.abs(d - want) <= Math.abs(b - want) + (last ? 0.12 : 0.2))) return d;
+      return b != null ? b : want;
+    }
+    for (i = 0; i < n; i++) {
+      // a lip-synced shot starts exactly where its part of the song plays (the shot before it is stretched or cut)
+      if (lips[i] && anchors && anchors[i] != null && i > 0) B[i] = Math.max(B[i - 1] + 0.3, anchors[i]);
+      var start = B[i];
+      if (lips[i] || !grid) { B[i + 1] = start + durs[i]; ref = B[i + 1]; acc = 0; continue; }
+      if (i + 1 < n && lips[i + 1] && anchors && anchors[i + 1] != null) { B[i + 1] = Math.max(start + 0.3, anchors[i + 1]); ref = B[i + 1]; acc = 0; continue; }
+      // where this cut would be with no retiming at all since the last fixed point (so small shifts never add up)
+      acc += durs[i];
+      B[i + 1] = snap(ref + acc, start + durs[i] / RATE_HI, start + durs[i] / RATE_LO, i === n - 1);
+    }
+    for (i = 0; i < n; i++) {
+      var len = Math.max(0.05, B[i + 1] - B[i]);
+      rate.push(lips[i] || !grid ? 1 : clamp(durs[i] / len, RATE_LO, RATE_HI));
+    }
+    return { B: B, rate: rate, total: B[n] };
+  }
+  // Strong beats (video time) for the zoom punches: downbeats and loud beats, not right at a cut or in the fade.
+  function strongBeats(grid, B, total) {
+    if (!grid || !grid.beats) return [];
+    var downs = {}, out = [], last = -9;
+    (grid.downbeats || []).forEach(function (t) { downs[t.toFixed(3)] = 1; });
+    grid.beats.forEach(function (t, k) {
+      var e = grid.energy ? grid.energy[k] : 0.7, strong = downs[t.toFixed(3)] ? e >= 0.45 : e >= 0.9;
+      if (!strong || t < 0.3 || t > total - FADE_V - 0.2 || t - last < 0.8) return;
+      if (B.some(function (b) { return Math.abs(b - t) < 0.22; })) return;
+      out.push({ t: t, a: downs[t.toFixed(3)] ? 1 : 0.6 });
+      last = t;
+    });
+    return out;
+  }
+  function gridShift(beat, offset, until) {
+    if (!beat || !beat.beats || !beat.beats.length) return null;
+    var g = { beats: [], downbeats: [], energy: [] };
+    beat.beats.forEach(function (t, k) { var v = t - offset; if (v >= -0.02 && v <= until) { g.beats.push(Math.max(0, v)); g.energy.push(beat.energy ? beat.energy[k] : 0.7); } });
+    (beat.downbeats || []).forEach(function (t) { var v = t - offset; if (v >= -0.02 && v <= until) g.downbeats.push(Math.max(0, v)); });
+    return g.beats.length >= 2 ? g : null;
+  }
+  // opts: { size: {w,h}, canvas, host, silent, check(), onFrac(f), transitions: false, punches: false }
+  async function finishClips(job, clips, sc, opts) {
+    opts = opts || {};
+    var chk = opts.check || function () { check(job); };
+    if (!canRecord()) throw finErr('unsupported');
+    if (document.hidden) throw finErr('hidden');
+    var ctx = ensureAudio();
+    if (!ctx || typeof ctx.createMediaStreamDestination !== 'function') throw finErr('unsupported', 'No audio recording');
+    if (ctx.state !== 'running') { try { await Promise.race([ctx.resume(), wait(900)]); } catch (e) { /* ignore */ } }
+    if (ctx.state !== 'running' && !opts.silent) throw finErr('gesture');
+    await loadLabelFont();
+    var local = job.engine === 'local', story = !!job.story;
+    var sound = opts.silent ? 'none' : job.sound;
+    var host = opts.host || el.pv, cleanup = [];
+    function clean() { cleanup.splice(0).forEach(function (f) { try { f(); } catch (e) { /* ignore */ } }); }
+    try {
+      // the clips, as hidden <video> elements in the page (so every browser keeps decoding frames)
+      var vids = clips.map(function (c) {
+        var url = URL.createObjectURL(c.blob), v = document.createElement('video');
+        v.crossOrigin = 'anonymous'; v.playsInline = true; v.setAttribute('playsinline', ''); v.preload = 'auto';
+        v.muted = true; v.className = 'ai-pv-src'; v.setAttribute('aria-hidden', 'true');
+        host.appendChild(v); v.src = url;
+        cleanup.push(function () { try { v.pause(); } catch (e) { /* ignore */ } v.removeAttribute('src'); try { v.load(); } catch (e) { /* ignore */ } if (v.parentNode) v.parentNode.removeChild(v); URL.revokeObjectURL(url); });
+        return v;
+      });
+      for (var w = 0; w < vids.length; w++) { await mediaReady(vids[w], 20000); chk(); }
+      var durs = vids.map(function (v, k) { var d = v.duration; return d > 0 && isFinite(d) ? d : (clips[k].seconds || SHOT_SEC); });
+      var lips = clips.map(function (c) { return !!c.lipSync; });
+      var v0 = vids[0];
+      if (!v0.videoWidth || !v0.videoHeight) throw finErr('decode', 'No picture');
+      var W, H;
+      if (opts.size) { W = opts.size.w; H = opts.size.h; }
+      else if (local || story) { W = LOCAL_OUT.w; H = LOCAL_OUT.h; }
+      else { var s2 = Math.min(1, 1920 / Math.max(v0.videoWidth, v0.videoHeight)); W = Math.max(2, Math.round(v0.videoWidth * s2 / 2) * 2); H = Math.max(2, Math.round(v0.videoHeight * s2 / 2) * 2); }
+
+      // the soundtrack and its beat grid
+      var trackBuf = null, soundStart = 0, beat = null, clipAudio = false, songOffsets = job.songOffsets || null;
+      if (sound === 'own') {
+        var own = S.own;
+        if (!own || !own.buffer || (job.own && job.own.id && own.id !== job.own.id)) throw finErr('own-missing', 'Your song is no longer loaded');
+        trackBuf = own.buffer; soundStart = job.own ? job.own.start : own.start; beat = own.beat;
+      } else if (sound === 'ai' && local) {
+        if (job.localAudio) { try { trackBuf = await decodeAudio(ctx, job.localAudio); } catch (e) { console.warn('[glow-ai] song decode failed', e); trackBuf = null; } }
+        chk();
+        if (trackBuf && window.GlowBeat) { try { beat = await window.GlowBeat.analyze(trackBuf); } catch (e) { beat = null; } }
+        soundStart = job.songStart || 0;
+        if (!trackBuf) clipAudio = true; // the lip-synced clips have the song muxed in
+      } else if (sound === 'ai') {
+        clipAudio = true; // fal Happy Horse: every clip brings its own sound
+      } else if (sound === 'music') {
+        var tr = trackById(job.trackId) || trackById(sc.defaultTrack);
+        if (tr && window.GlowBeat) beat = window.GlowBeat.grid(tr.bpm, 60, 0);
+      }
+      // a story that starts with a lip-synced shot: the soundtrack starts at that shot's part of the song
+      if (lips[0] && songOffsets && clips[0].id && songOffsets[clips[0].id] != null) soundStart = songOffsets[clips[0].id];
+      var anchors = clips.map(function (c, k) {
+        if (!lips[k]) return null;
+        var at = songOffsets && c.id && songOffsets[c.id] != null ? songOffsets[c.id] : (c.audioStart != null ? c.audioStart : null);
+        return at == null ? null : at - soundStart;
+      });
+      var grid = clipAudio || sound === 'none' ? null : gridShift(beat, soundStart, 90);
+      var tl = planTimeline(durs, lips, anchors, grid);
+      var B = tl.B, rate = tl.rate, total = tl.total, n = clips.length;
+      var pulses = opts.punches === false ? [] : strongBeats(grid, B, total);
+      var trans = opts.transitions === false ? 'cut' : (sc && sc.transition) || (n > 1 ? 'flash' : 'cut');
+      UI.timeline = { B: B.map(r3), rate: rate.map(function (r) { return Math.round(r * 1000) / 1000; }), total: r3(total), soundStart: r3(soundStart), anchors: anchors, pulses: pulses.length, trans: trans, grid: !!grid };
+      if (sound === 'music') {
+        try { trackBuf = await getMusic(job.trackId || sc.defaultTrack, Math.max(1, total + 0.5)); } catch (e) { console.warn('[glow-ai] music failed', e); trackBuf = null; }
+        chk();
+        if (!trackBuf) toast('The music couldn’t be made — your video will be silent.', 'warn');
+      }
+
+      // the canvas the finished video is drawn on (in the progress sheet, so the user watches it being finished)
+      var cv;
+      if (opts.canvas) cv = opts.canvas;
+      else { cv = el.pvCanvas.cloneNode(false); el.pvCanvas.parentNode.replaceChild(cv, el.pvCanvas); el.pvCanvas = cv; }
+      cv.width = W; cv.height = H;
+      var cx = cv.getContext('2d', { alpha: false }) || cv.getContext('2d');
+      cx.imageSmoothingEnabled = true;
+      try { cx.imageSmoothingQuality = 'high'; } catch (e) { /* older browsers */ }
+      function drawClip(k, T, dx, alpha) {
+        var v = vids[k], vw = v.videoWidth, vh = v.videoHeight;
+        if (!vw || !vh) return;
+        var segT = clamp((T - B[k]) / Math.max(0.1, B[k + 1] - B[k]), 0, 1);
+        var kb = n > 1 ? 1 + 0.035 * (k % 2 ? 1 - segT : segT) : 1, punch = 0; // stories: slow push in / pull out, alternating
+        pulses.forEach(function (p) { var d = T - p.t; if (d >= 0 && d < 0.45) punch += 0.04 * p.a * Math.exp(-d / 0.11); });
+        if (lips[k]) punch *= 0.5;
+        var cs = Math.max(W / vw, H / vh) * (kb + punch), dw = vw * cs, dh = vh * cs;
+        cx.globalAlpha = alpha == null ? 1 : alpha;
+        try { cx.drawImage(v, (W - dw) / 2 + (dx || 0), (H - dh) / 2, dw, dh); } catch (e) { /* frame not ready */ }
+        cx.globalAlpha = 1;
+      }
+      function segAt(T) { var k = 0; while (k < n - 1 && T >= B[k + 1]) k++; return k; }
+      function draw(T) {
+        var k = segAt(T), lt = T - B[k];
+        cx.fillStyle = '#000'; cx.fillRect(0, 0, W, H);
+        if (trans === 'whip' && k > 0 && lt < TRANS_SEC) {
+          var p = lt / TRANS_SEC, e = 1 - Math.pow(1 - p, 3), blur = (1 - p) * W * 0.035;
+          drawClip(k - 1, T, -e * W); drawClip(k, T, (1 - e) * W);
+          if (blur > 1) { drawClip(k, T, (1 - e) * W + blur, 0.35); drawClip(k - 1, T, -e * W - blur, 0.35); }
+        } else drawClip(k, T, 0);
+        var light = 0;
+        if (trans === 'flash' && k > 0 && lt < 0.24) light = 0.8 * Math.pow(1 - lt / 0.24, 2);
+        pulses.forEach(function (p2) { var d = T - p2.t; if (d >= 0 && d < 0.3) light += 0.11 * p2.a * Math.exp(-d / 0.08); });
+        if (light > 0.005) { cx.save(); cx.globalCompositeOperation = 'lighter'; cx.fillStyle = 'rgba(255,255,255,' + Math.min(0.9, light) + ')'; cx.fillRect(0, 0, W, H); cx.restore(); }
+        if (T > total - FADE_V) { cx.fillStyle = 'rgba(0,0,0,' + clamp((T - (total - FADE_V)) / FADE_V, 0, 1) + ')'; cx.fillRect(0, 0, W, H); }
+        drawLabel(cx, W, H); // always, on top of everything (also over the fade)
+      }
+      draw(0);
+      if (!opts.canvas) el.pv.classList.add('has-video');
+
+      // audio graph: soundtrack (or the clips' own sound) -> mix -> recorder (+ speakers while the user watches)
+      var dest = ctx.createMediaStreamDestination(), mix = ctx.createGain(), mon = ctx.createGain(), late = ctx.createDelay(0.5);
+      mix.gain.value = 1; mon.gain.value = opts.canvas ? 0 : (monitorWanted() ? 0.9 : 0);
+      // the recorded sound goes through a short delay when this browser's recorder would put it ahead of the picture
+      mix.connect(late); late.connect(dest); mix.connect(mon); mon.connect(ctx.destination);
+      if (!opts.canvas) { UI.mon = mon; el.mon.hidden = false; }
+      cleanup.push(function () { try { mix.disconnect(); late.disconnect(); } catch (e) { /* ignore */ } try { mon.disconnect(); } catch (e) { /* ignore */ } if (UI.mon === mon) { UI.mon = null; el.mon.hidden = true; } });
+      var music = null, env = null, clipGains = [];
+      if (trackBuf) {
+        music = ctx.createBufferSource(); music.buffer = trackBuf;
+        env = ctx.createGain(); env.gain.value = 0;
+        music.connect(env); env.connect(mix);
+        cleanup.push(function () { try { music.stop(); } catch (e) { /* ignore */ } try { music.disconnect(); env.disconnect(); } catch (e) { /* ignore */ } });
+      } else if (clipAudio) {
+        vids.forEach(function (v, k) {
+          v.muted = false;
+          var es = ctx.createMediaElementSource(v), g = ctx.createGain();
+          g.gain.value = 0; es.connect(g); g.connect(mix); clipGains[k] = g;
+          cleanup.push(function () { try { es.disconnect(); g.disconnect(); } catch (e) { /* ignore */ } });
+        });
+      }
+
+      // one frame per new clip frame where the browser can (no judder from a fixed 30 fps sampling of 32 fps clips)
+      var vStream = null, vTrack = null, perFrame = false;
+      if (typeof v0.requestVideoFrameCallback === 'function') {
+        try { vStream = cv.captureStream(0); vTrack = vStream.getVideoTracks()[0]; perFrame = !!(vTrack && typeof vTrack.requestFrame === 'function'); } catch (e) { perFrame = false; }
+        if (!perFrame && vStream) { vStream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) { /* ignore */ } }); vStream = null; }
+      }
+      if (!vStream) vStream = cv.captureStream(30);
+      var tracksOut = vStream.getVideoTracks().concat(sound === 'none' ? [] : dest.stream.getAudioTracks());
+      var stream = new MediaStream(tracksOut);
+      cleanup.push(function () { stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) { /* ignore */ } }); });
+      var mime = TEST.mime || pickMime();
+      if (sound === 'none' && mime) mime = mime.replace(/,\s*(mp4a\.40\.2|opus)/, '').replace(/;codecs=$/, '');
+      var ropts = { videoBitsPerSecond: Math.min(W, H) >= 1080 ? 12e6 : W >= 700 ? 10e6 : 3e6, audioBitsPerSecond: 192000 };
+      if (mime) ropts.mimeType = mime;
+      var rec;
+      try { rec = new MediaRecorder(stream, ropts); } catch (e) { try { delete ropts.mimeType; rec = new MediaRecorder(stream, ropts); } catch (e2) { rec = new MediaRecorder(stream); } }
+      var chunks = [];
+      rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+      if (!opts.canvas) { document.documentElement.classList.add('glow-rec'); cleanup.push(function () { document.documentElement.classList.remove('glow-rec'); }); }
+
+      var thumbBlob = null, skew = 0;
+      if (sound !== 'none') {
+        setStep('finish', null, 'Getting the recorder ready…');
+        skew = await avSkew(ctx, ropts.mimeType);
+        chk();
+        if (skew < 0) late.delayTime.value = Math.min(0.45, -skew);
+      }
+      UI.timeline.skew = Math.round(skew * 1000) / 1000;
+      var result = await new Promise(function (resolve, reject) {
+        var settled = false, stopping = false, raf = 0, watchdog = 0, t0 = 0, started = [], newFrame = false, lastGrab = 0, grabs = 0, lastPct = -1;
+        var useCtx = true, lastCt = -1, lastCtAt = 0, base = 0, baseAt = 0, lastVT = -1, lastVMove = 0;
+        function clock() {
+          var now = performance.now();
+          if (useCtx) {
+            var ct = ctx.currentTime;
+            if (ct !== lastCt) { lastCt = ct; lastCtAt = now; return ct - t0; }
+            if (now - lastCtAt < 800) return ct - t0;
+            useCtx = false; base = ct - t0; baseAt = lastCtAt; // the audio clock stopped: carry on with the wall clock
+          }
+          return base + (now - baseAt) / 1000;
+        }
+        function grab() { grabs++; try { vTrack.requestFrame(); } catch (e) { /* ignore */ } }
+        vids.forEach(function (v, k) {
+          if (!perFrame) return;
+          var cb = function () { if (settled) return; newFrame = true; v.requestVideoFrameCallback(cb); };
+          v.requestVideoFrameCallback(cb);
+        });
+        function stopAll() { cancelAnimationFrame(raf); clearInterval(watchdog); document.removeEventListener('visibilitychange', onVis); vids.forEach(function (v) { try { v.pause(); } catch (e) { /* ignore */ } }); }
+        function fail(e) { if (settled) return; settled = true; stopAll(); try { rec.onstop = null; if (rec.state !== 'inactive') rec.stop(); } catch (x) { /* ignore */ } reject(e); }
+        function onVis() { if (document.hidden && !stopping) fail(finErr('hidden')); }
+        document.addEventListener('visibilitychange', onVis);
+        function control(T) {
+          for (var k = 0; k < n; k++) {
+            if (!started[k] && T >= B[k] - 0.004) {
+              started[k] = true;
+              var v = vids[k];
+              try { v.playbackRate = rate[k]; } catch (e) { /* ignore */ }
+              var pr = v.play();
+              if (pr && pr.catch) pr.catch(function (e) { if (!settled) fail(finErr(e && e.name === 'NotAllowedError' ? 'gesture' : 'decode', String(e && e.message || e))); });
+              if (clipGains[k]) { var at = ctx.currentTime; clipGains[k].gain.setValueAtTime(0, at); clipGains[k].gain.linearRampToValueAtTime(1, at + 0.03); }
+              if (k > 0) {
+                var prev = vids[k - 1], pg = clipGains[k - 1];
+                if (pg) { var at2 = ctx.currentTime; pg.gain.setValueAtTime(pg.gain.value, at2); pg.gain.linearRampToValueAtTime(0, at2 + 0.04); }
+                setTimeout(function () { try { prev.pause(); } catch (e) { /* ignore */ } }, (TRANS_SEC + 0.05) * 1000);
+              }
+            }
+          }
+          var a = segAt(T), va = vids[a];
+          if (!started[a]) return;
+          var want = (T - B[a]) * rate[a];
+          if (want < durs[a] - 0.06 && !va.ended) {
+            var err = va.currentTime - want;
+            if (Math.abs(err) > 0.3) { try { va.currentTime = Math.max(0, want); } catch (e) { /* ignore */ } }
+            else if (!clipAudio) {
+              var r = clamp(rate[a] * (1 - err * 1.5), rate[a] * 0.9, rate[a] * 1.1);
+              if (Math.abs(va.playbackRate - r) > 0.004) { try { va.playbackRate = r; } catch (e) { /* ignore */ } }
+            }
+            if (va.currentTime !== lastVT) { lastVT = va.currentTime; lastVMove = performance.now(); }
+          } else lastVMove = performance.now();
+        }
+        function loop() {
+          if (settled || stopping) return;
+          var T = Math.max(0, clock());
+          control(T);
+          var now = performance.now();
+          if (!perFrame) draw(Math.min(T, total));
+          else if (newFrame || now - lastGrab > 34) { newFrame = false; lastGrab = now; draw(Math.min(T, total)); grab(); }
+          var f = clamp(T / total, 0, 1);
+          if (opts.onFrac) opts.onFrac(f);
+          else {
+            UI.finishFrac = f;
+            var pc = Math.round(f * 100);
+            if (pc !== lastPct) { lastPct = pc; setStep('finish', null, pc + '%'); }
+          }
+          if (!thumbBlob && T >= Math.min(1.2, total * 0.3)) {
+            thumbBlob = 'pending';
+            toBlob(drawScaled(cv, W, H, 480), 'image/jpeg', 0.82).then(function (b) { thumbBlob = b; }, function () { thumbBlob = null; });
+          }
+          if (T >= total) { finish(); return; }
+          raf = requestAnimationFrame(loop);
+        }
+        function finish() {
+          if (settled || stopping) return;
+          stopping = true;
+          draw(total); if (perFrame) grab();
+          UI.capture = perFrame ? 'per-frame' : 'fixed 30 fps';
+          UI.captureFrames = perFrame ? grabs : null;
+          var recMs = (performance.now() - t0w);
+          setTimeout(function () {
+            rec.onstop = function () {
+              if (settled) return; settled = true; stopAll();
+              var type = (rec.mimeType || ropts.mimeType || 'video/webm').split(';')[0] || 'video/webm';
+              var out = new Blob(chunks, { type: type });
+              if (!out.size) { reject(finErr('record', 'empty recording')); return; }
+              if (/webm/i.test(type)) fixDuration(out, recMs + 140).then(function (b) { resolve({ blob: b, type: type }); }, function () { resolve({ blob: out, type: type }); });
+              else resolve({ blob: out, type: type });
+            };
+            try { rec.stop(); } catch (e) { fail(e); }
+          }, 140);
+        }
+        rec.onerror = function (e) { fail((e && e.error) || finErr('record', 'recorder error')); };
+        vids.forEach(function (v) { v.addEventListener('error', function () { fail(finErr('decode', 'Playback error')); }); });
+        watchdog = setInterval(function () {
+          if (settled || stopping) return;
+          if (performance.now() - lastVMove > 7000) fail(finErr('stalled', 'Playback stalled'));
+          // rAF stops in a background window: the clock check keeps the recording ending on time
+          if (clock() >= total + 0.4) finish();
+        }, 400);
+        vids.forEach(function (v) { try { v.currentTime = 0; } catch (e) { /* ignore */ } });
+        // The soundtrack, the first clip and the clock start together at the moment the recorder really begins to
+        // capture (measured just before, see captureLag), so the finished file begins exactly at the chosen start
+        // point of the song. Until then the first frame (with the label) is shown.
+        var t0w = performance.now(), began = false;
+        function begin() {
+          if (began || settled) return;
+          began = true;
+          t0w = performance.now();
+          t0 = ctx.currentTime; lastCt = t0; lastCtAt = t0w; lastVMove = t0w;
+          if (music && env) {
+            env.gain.setValueAtTime(0, t0);
+            env.gain.linearRampToValueAtTime(0.92, t0 + 0.02);
+            var fadeAt = Math.max(t0 + 0.2, t0 + total - FADE_A);
+            env.gain.setValueAtTime(0.92, fadeAt);
+            env.gain.linearRampToValueAtTime(0, t0 + total + 0.02);
+            // (a recorder that puts the sound behind the picture: the song starts that much further in)
+            try { music.start(t0, clamp(soundStart + Math.max(0, skew), 0, Math.max(0, trackBuf.duration - 0.05))); } catch (e) { /* ignore */ }
+          }
+          raf = requestAnimationFrame(loop);
+        }
+        // The picture, the soundtrack and the clock start together with the recorder. Its sound track only begins
+        // a little later (see avSkew): the delay node above holds the sound back by exactly that much, so the file
+        // begins at the chosen start point of the song with the picture in sync.
+        if (perFrame) { draw(0); grab(); lastGrab = performance.now(); }
+        try { rec.start(250); } catch (e) { fail(e); return; }
+        begin();
+        // frames at display rate while the recorder attaches, so its first picture comes as early as its first sound
+        if (perFrame) {
+          var burst = setInterval(function () { if (settled || stopping) { clearInterval(burst); return; } draw(Math.max(0, clock())); grab(); lastGrab = performance.now(); }, BURST_MS);
+          setTimeout(function () { clearInterval(burst); }, 150);
+        }
+      });
+      if (thumbBlob === 'pending') await wait(150);
+      if (!(thumbBlob instanceof Blob)) { try { thumbBlob = await toBlob(drawScaled(cv, W, H, 480), 'image/jpeg', 0.82); } catch (e) { thumbBlob = null; } }
+      return { blob: result.blob, type: result.type, width: W, height: H, duration: total, thumb: thumbBlob, labelled: true, timeline: UI.timeline };
+    } finally {
+      clean();
+    }
+  }
+  function r3(x) { return Math.round(x * 1000) / 1000; }
+  /* How far this browser's MediaRecorder puts the sound ahead of (negative) or behind (positive) the picture. Chrome's
+   * MP4 recorder starts each track at its own first frame, and the first sound frame comes a few tens of
+   * milliseconds after the first picture, so the sound would lead the picture (lips moving after the singing). It
+   * is measured once per page and container: a one-second silent test recording (never played on the speakers) with
+   * a click and a white flash at the same moment, started the same way as the real one; the click is found in the
+   * decoded sound, the flash by playing the test file back. */
+  var AVSKEW = {};
+  function avSkew(ctx, mime) {
+    var key = mime || 'default';
+    if (AVSKEW[key] != null) return Promise.resolve(AVSKEW[key]);
+    if (TEST.avSkew != null) return Promise.resolve(TEST.avSkew);
+    var got = [];
+    var one = function () { return skewOnce(ctx, mime).then(function (v) { if (v != null) got.push(v); }); };
+    return one().then(one).then(one).then(function () {
+      if (!got.length) return 0;
+      got.sort(function (a, b) { return a - b; });
+      var v = got[got.length >> 1];
+      AVSKEW[key] = v;
+      return v;
+    });
+  }
+  function skewOnce(ctx, mime) {
+    return new Promise(function (resolve) {
+      var done = false, parts = [];
+      function fin(v) { if (done) return; done = true; parts.forEach(function (f) { try { f(); } catch (e) { /* ignore */ } }); resolve(v); }
+      setTimeout(function () { fin(null); }, 8000);
+      try {
+        var dest = ctx.createMediaStreamDestination(), g = ctx.createGain(), mute = ctx.createGain(); mute.gain.value = 0;
+        g.connect(dest); g.connect(mute); mute.connect(ctx.destination);
+        parts.push(function () { g.disconnect(); mute.disconnect(); });
+        var cv = document.createElement('canvas'); cv.width = 32; cv.height = 32;
+        var cx = cv.getContext('2d'), vs = cv.captureStream(0), vt = vs.getVideoTracks()[0];
+        var st = new MediaStream(vs.getVideoTracks().concat(dest.stream.getAudioTracks()));
+        parts.push(function () { st.getTracks().forEach(function (t) { t.stop(); }); });
+        var rec; try { rec = new MediaRecorder(st, mime ? { mimeType: mime } : {}); } catch (e) { rec = new MediaRecorder(st); }
+        var chunks = [], AT = 0.45, n = Math.round(ctx.sampleRate * 0.03), buf = ctx.createBuffer(1, n, ctx.sampleRate), d = buf.getChannelData(0);
+        for (var i = 0; i < n; i++) d[i] = Math.sin(2 * Math.PI * 2000 * i / ctx.sampleRate) * 0.9;
+        rec.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+        rec.onstop = function () {
+          var type = (rec.mimeType || mime || 'video/webm').split(';')[0], blob = new Blob(chunks, { type: type });
+          Promise.all([clickAt(ctx, blob), flashAt(blob)]).then(function (r) {
+            fin(r[0] == null || r[1] == null ? null : clamp(r[0] - r[1], -0.25, 0.25));
+          }, function () { fin(null); });
+        };
+        cx.fillStyle = '#000'; cx.fillRect(0, 0, 32, 32);
+        try { vt.requestFrame(); } catch (e) { /* ignore */ }
+        // the same start as the real recording (picture + sound + clock together, frames in quick succession)
+        rec.start(250);
+        var t0 = ctx.currentTime, src = ctx.createBufferSource();
+        src.buffer = buf; src.connect(g); src.start(t0 + AT);
+        var iv = setInterval(function () {
+          if (done) { clearInterval(iv); return; }
+          var T = ctx.currentTime - t0;
+          cx.fillStyle = T >= AT && T < AT + 0.15 ? '#fff' : '#000'; cx.fillRect(0, 0, 32, 32);
+          try { vt.requestFrame(); } catch (e) { /* ignore */ }
+          if (T > AT + 0.5) { clearInterval(iv); try { rec.stop(); } catch (e) { fin(null); } }
+        }, BURST_MS);
+        parts.push(function () { clearInterval(iv); });
+      } catch (e) { fin(null); }
+    });
+  }
+  function clickAt(ctx, blob) {
+    return decodeAudio(ctx, blob).then(function (ab) {
+      var x = ab.getChannelData(0), mx = 0, k;
+      for (k = 0; k < x.length; k++) if (Math.abs(x[k]) > mx) mx = Math.abs(x[k]);
+      if (!(mx > 0.05)) return null;
+      for (k = 0; k < x.length && Math.abs(x[k]) < mx * 0.3; k++) { /* the click */ }
+      return k / ab.sampleRate;
+    }, function () { return null; });
+  }
+  function flashAt(blob) {
+    return new Promise(function (resolve) {
+      var v = document.createElement('video'), url = URL.createObjectURL(blob), c = document.createElement('canvas'), x;
+      c.width = 4; c.height = 4; x = c.getContext('2d', { willReadFrequently: true });
+      var done = false, fin = function (t) { if (done) return; done = true; try { v.pause(); } catch (e) { /* ignore */ } v.removeAttribute('src'); v.remove(); URL.revokeObjectURL(url); resolve(t); };
+      v.muted = true; v.playsInline = true; v.className = 'ai-pv-src'; v.setAttribute('aria-hidden', 'true');
+      (document.getElementById('aiSeeHost') ? seeHost() : seeHost()).appendChild(v);
+      if (typeof v.requestVideoFrameCallback !== 'function') { fin(null); return; }
+      var cb = function (now, meta) {
+        if (done) return;
+        try { x.drawImage(v, 0, 0, 4, 4); var px = x.getImageData(1, 1, 1, 1).data; if (px[0] > 128) { fin(meta.mediaTime); return; } } catch (e) { fin(null); return; }
+        v.requestVideoFrameCallback(cb);
+      };
+      v.requestVideoFrameCallback(cb);
+      v.onended = function () { fin(null); };
+      v.onerror = function () { fin(null); };
+      setTimeout(function () { fin(null); }, 7000);
+      v.src = url;
+      v.playbackRate = 0.25; // every frame is presented (and seen by the frame callback)
+      var pr = v.play(); if (pr && pr.catch) pr.catch(function () { fin(null); });
+    });
+  }
+
+  /* ------------------------------------------------------------------ *
    * Completion, errors, cancel
    * ------------------------------------------------------------------ */
   function otherModalOpen() { return !!document.querySelector('.modal:not(.ai-modal):not([hidden])'); }
@@ -2972,7 +4892,8 @@
       duration: fin.duration || job.duration, width: fin.width || null, height: fin.height || null,
       type: fin.type || (fin.blob && fin.blob.type) || 'video/webm',
       size: fin.blob ? fin.blob.size : 0, blob: fin.blob, thumb: fin.thumb || null,
-      rawUrl: job.videoUrl, stillUrl: job.engine === 'local' ? null : job.stillUrl, labelled: true, note: '', engine: job.engine === 'local' ? 'local' : 'fal'
+      rawUrl: job.story ? null : job.videoUrl, stillUrl: job.engine === 'local' ? null : job.stillUrl, labelled: true, note: '', engine: job.engine === 'local' ? 'local' : 'fal',
+      story: !!job.story, shots: job.shots ? job.shots.length : 1, sync: job.sync || 'beat', ownName: job.own ? job.own.name : null
     };
     if (job.engine === 'local') { item.quality = job.quality; item.localJob = job.engineJob || null; }
     if (!item.thumb && job.stillUrl && job.engine !== 'local') item.thumbUrl = job.stillUrl;
@@ -3008,14 +4929,15 @@
   function errorView(e, job) {
     var kind = e && e.kind || (e && e.code) || 'server';
     var detail = e && e.detail ? String(e.detail) : (e && e.message ? String(e.message) : '');
-    var paid = job && job.stillUrl ? ' Your scene photo is saved, so trying again only makes the video.' : '';
+    var paid = job && job.story ? (job.shots.some(function (x) { return x.stillUrl || x.videoUrl; }) ? ' The shots that are already made are kept, so trying again only makes what is missing.' : '')
+      : job && job.stillUrl ? ' Your scene photo is saved, so trying again only makes the video.' : '';
     var safe = ' Your video is safe at fal.ai and already paid for, so trying again costs nothing extra.';
     var live = !!(e && e.live);
     switch (kind) {
       case 'auth': return { t: 'fal.ai didn’t accept your key', p: 'Check that you pasted the whole key (two parts joined by a colon), or create a new one on fal.ai.' + (live ? ' Then we’ll pick up your video again without paying twice.' : ''), a: ['key', 'keys'] };
       case 'credit': return { t: 'Your fal.ai balance needs a top-up', p: 'fal.ai says this account is out of credit or locked. Add credit on fal.ai, then try again' + (live ? '.' : ' — nothing was charged for this attempt.') + paid, a: ['billing', 'retry'] };
       case 'permission': return { t: 'This key can’t use the AI models', p: 'When you create the key on fal.ai, choose the “API” preset (or allow these models). Then paste the new key here.', a: ['keys', 'key'] };
-      case 'moderation': return { t: 'This one didn’t pass fal.ai’s safety check', p: 'Their content filter stopped this photo or scene, and we respect that. Try a different photo — one person, face clearly visible, everyday clothes — or pick another scene. ' + (job && job.stillUrl ? 'The scene photo was charged; the blocked video wasn’t.' : 'Blocked results aren’t charged.'), a: ['photo', 'scene'] };
+      case 'moderation': return { t: 'This one didn’t pass fal.ai’s safety check', p: 'Their content filter stopped this photo or scene, and we respect that. Try a different photo — one person, face clearly visible, everyday clothes — or pick another scene. ' + (job && job.story ? 'Shots that were already made were charged; the blocked one wasn’t, and the rest were stopped.' : job && job.stillUrl ? 'The scene photo was charged; the blocked video wasn’t.' : 'Blocked results aren’t charged.'), a: ['photo', 'scene'] };
       case 'face': return { t: 'We couldn’t find a clear face', p: 'Use a photo where your face is clearly visible, in good light, with just you in it.', a: ['photo'] };
       case 'photo': return { t: 'fal.ai couldn’t use this photo', p: (detail ? detail + ' ' : '') + 'Try another photo, at least 300 px on each side.', a: ['photo', 'retry'] };
       case 'validation': return { t: 'fal.ai couldn’t start this one', p: (detail || 'The request was rejected.') + paid, a: ['retry', 'scene'] };
@@ -3023,8 +4945,10 @@
       case 'notfound': return { t: 'This request has expired', p: 'fal.ai no longer has this result. Please start again.', a: ['retry'] };
       case 'network': return { t: 'Couldn’t reach fal.ai', p: 'Check your internet connection and try again.' + (live ? safe : paid), a: live ? ['retry', 'discard'] : ['retry'] };
       case 'download': return { t: 'Your video is made, but it didn’t download', p: 'We couldn’t download the finished video from fal.ai. Check your connection and try again.' + safe, a: ['finish', 'discard'] };
-      case 'gone': return { t: 'fal.ai’s file for this video is no longer available', p: 'The finished video was removed from fal.ai before it could be downloaded. Making it again costs about ' + money(videoPrice(job)) + '.' + paid, a: ['retry'] };
+      case 'gone': return { t: 'fal.ai’s file for this video is no longer available', p: 'The finished video was removed from fal.ai before it could be downloaded. Making it again costs about ' + money(job && job.story ? falCost(sceneById(job.sceneId), job.sound, job.duration) : videoPrice(job)) + '.' + paid, a: ['retry'] };
+      case 'own-missing': return { t: 'Add your song again', p: 'Your video is made, but your song isn’t loaded any more (the page was reloaded). Choose the same song file again and we’ll finish it — no extra cost.', a: ['sound', 'finish'] };
       case 'finish':
+        if (e.code === 'own-missing') return errorView({ kind: 'own-missing' }, job);
         if (e.code === 'unsupported') return { t: 'This browser can’t finish AI videos', p: 'Adding the AI label and the sound needs a browser that can record video. Open Glow Studio in Chrome, Edge or Safari.' + safe, a: ['finish', 'discard'] };
         if (e.code === 'decode') return { t: 'This browser couldn’t open the video', p: 'Your video is made, but this browser can’t play fal.ai’s file to add the AI label. Try again, or use Chrome, Edge or Safari.' + safe, a: ['finish', 'discard'] };
         return { t: 'Finishing didn’t complete', p: 'Adding the AI label and the sound stopped halfway. Keep this tab open and in front while it finishes, then try again.' + safe, a: ['finish', 'discard'] };
@@ -3079,10 +5003,12 @@
         b.target = '_blank'; b.rel = 'noopener';
       }
       else b.type = 'button';
-      var retryLabel = local ? 'Try again · free' : S.retryJob && S.retryJob.resume ? 'Try again — no extra cost' : 'Try again · about ' + money(S.retryJob && S.retryJob.stillUrl ? videoPrice(job) : estimate(job.sound, job.duration));
+      var retryLabel = local ? 'Try again · free'
+        : S.retryJob && S.retryJob.resume ? (job && job.story && storyMissingCost(S.retryJob.resume) > 0.004 ? 'Try again · about ' + money(storyMissingCost(S.retryJob.resume)) + ' for the missing shots' : 'Try again — no extra cost')
+        : job && job.story ? 'Try again · about ' + money(falCost(sceneById(job.sceneId), job.sound, job.duration)) : 'Try again · about ' + money(S.retryJob && S.retryJob.stillUrl ? videoPrice(job) : estimate(job.sound, job.duration));
       b.textContent = { key: 'Fix my key', keys: 'Open fal.ai keys', billing: 'Add credit on fal.ai', retry: retryLabel, finish: 'Try finishing again', photo: 'Choose another photo', scene: 'Pick another scene', discard: 'Discard this video',
         repair: 'Check & repair files', setup: 'Open Free AI on this PC', driver: 'Update NVIDIA driver', vcredist: 'Get the Microsoft component', singing: 'Get the Singing add-on',
-        fast: 'Switch to Fast & try again', fal: 'Use fal.ai cloud instead' }[a];
+        fast: 'Switch to Fast & try again', fal: 'Use fal.ai cloud instead', sound: 'Choose my song again' }[a];
       if (a === 'discard') b.dataset.armed = '';
       b.addEventListener('click', function () {
         if (a === 'discard' && !b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'Tap again to discard it (it was paid for)'; return; }
@@ -3119,6 +5045,7 @@
     if (a === 'fast') { S.quality = 'fast'; savePrefs(); updateAll(); onMake({ retry: true, engine: 'local' }); return; }
     if (a === 'key') openConnect(pausedJob() ? 'resume' : null);
     else if (a === 'photo') { attention(el.photoCard); openPicker(); }
+    else if (a === 'sound') { if (el.soundCard) attention(el.soundCard); S.sound = 'own'; S.userSound = 'own'; updateAll(); openOwnPicker(); }
     else if (a === 'scene') { attention(el.sceneCard); var b = sceneBtns[S.sceneId]; if (b) try { b.btn.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }
     else if (a === 'retry' || a === 'finish') onMake({ retry: true, engine: UI.errEngine });
     else if (a === 'discard') discardPaused();
@@ -3149,6 +5076,7 @@
     if (!job) { closeProgressSheet(); return; }
     if (job.engine === 'local') { cancelLocal(job); return; }
     if (UI.stage === 'finish') return; // already paid for: always finish
+    if (job.story) { cancelStory(job); return; }
     RUN.cancelled = true;
     var stage = job.video ? 'video' : job.still ? 'still' : '', h = job.video || job.still;
     var wasRunning = UI.lastStatus[stage] === 'IN_PROGRESS';
@@ -3241,10 +5169,12 @@
       }
       if (r && (await localLockFree())) r.discard();
     }
+    if (sound === 'own' && !S.own) { toast('Choose your song first.', 'warn'); attention(el.soundCard); openOwnPicker(); return; }
     if (!photoReady()) return;
     if (!canRecord()) { refuseUnsupported(); return; }
-    var q = effQuality(sound);
-    startLocalRun(localJob(sc, sound, S.trackId, q, S.photo.thumb), {});
+    if (SEE.running) seePause('Your video comes first — the previews wait until it’s done.');
+    var plan = planFor(sc, { sound: sound });
+    startLocalRun(localJob(sc, sound, S.trackId, plan.quality, S.photo.thumb, plan), {});
   }
   // "Continue your video" / "Finish my video". Resolves 'started', 'busy' (another window has it), 'stale' (the offer
   // was out of date) or '' (nothing done).
@@ -3285,6 +5215,10 @@
     job.createdAt = m.createdAt || r.startedAt || Date.now();
     job.engineJob = r.job;
     if (m.offset != null) job.offset = m.offset;
+    // a story (or a single clip made with this release's plan): the same shots, song and start point as before
+    ['duration', 'sync', 'own', 'songStart', 'songSeconds', 'shotId', 'hint', 'minutes'].forEach(function (k) { if (m[k] != null) job[k] = m[k]; });
+    if (m.story || r.kind === 'story') { job.story = true; job.shots = m.shots || null; }
+    if (job.story && !job.shots) job.shots = [];
     if (!isLocal()) { S.engine = 'local'; renderEngine(); updateAll(); } // this one is made on this PC either way
     var ok = await startLocalRun(job, { attach: r, resumed: true });
     return ok ? 'started' : 'busy';
@@ -3324,8 +5258,12 @@
       });
       return;
     }
+    if (effSound() === 'own' && !S.own) { toast('Choose your song first.', 'warn'); attention(el.soundCard); openOwnPicker(); return; }
     var rj = S.retryJob && S.retryJob.stillUrl && S.retryJob.sceneId === S.sceneId && (!S.photo || S.retryJob.photoSeq === S.photo.seq) ? S.retryJob : null;
-    if (!S.photo && !rj) {
+    // a stopped story of this scene and photo: its paid shots are reused
+    var rs = S.retryJob && S.retryJob.story && !S.retryJob.resume && S.retryJob.sceneId === S.sceneId && (!S.photo || S.retryJob.photoSeq === S.photo.seq) ? S.retryJob : null;
+    if (rs && !S.photo && !shotsFor(sceneById(S.sceneId), S.duration).every(function (sh) { return rs.shots.some(function (x) { return x.id === sh.id && (x.stillUrl || x.videoUrl); }); })) rs = null;
+    if (!S.photo && !rj && !rs) {
       toast('Add your selfie first.', 'warn');
       attention(el.photoCard);
       setTimeout(function () { try { el.pick.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }, 300);
@@ -3343,8 +5281,21 @@
     if (!getKey()) { openConnect('make'); return; }
     if (navigator.onLine === false) { toast('You’re offline. Connect to the internet to make a video.', 'warn', 4500); return; }
     var job = newJob();
+    if (rs && job.story) {
+      var sameTier = (rs.sound === 'ai') === (job.sound === 'ai');
+      job.shots.forEach(function (x) {
+        var o = rs.shots.filter(function (y) { return y.id === x.id; })[0];
+        if (!o) return;
+        if (o.stillUrl) x.stillUrl = o.stillUrl;
+        if (o.videoUrl && sameTier) x.videoUrl = o.videoUrl;
+      });
+      if (rs.ref) job.ref = rs.ref;
+      if (!job.thumb) job.thumb = rs.thumb;
+      job.photoSeq = rs.photoSeq;
+      job.stillUrl = (job.shots.filter(function (x) { return x.stillUrl; })[0] || {}).stillUrl || null;
+    }
     // After a failure or a cancel, trying again reuses the scene photo that was already made (and paid for).
-    if (rj) {
+    else if (rj && !job.story) {
       job.stillUrl = rj.stillUrl; job.stage = 'video';
       if (!job.thumb) job.thumb = rj.thumb;
       job.photoSeq = rj.photoSeq;
@@ -3453,14 +5404,16 @@
     if (item.width && item.height) bits.push(item.width + '×' + item.height);
     if (item.size) bits.push(fmtBytes(item.size));
     bits.push(extOf(item.type).toUpperCase());
-    bits.push(item.sound === 'ai' ? (item.engine === 'local' ? 'AI song' : 'AI sound') : ((trackById(item.trackId) || {}).name || 'Music'));
+    if (item.story && item.shots > 1) bits.push(item.shots + ' shots');
+    bits.push(item.sound === 'ai' ? (item.engine === 'local' ? 'AI song' : 'AI sound') : item.sound === 'own' ? 'Your song' : ((trackById(item.trackId) || {}).name || 'Music'));
+    if (item.sync === 'lips') bits.push('Lip-sync');
     if (item.engine === 'local') bits.push('Made on this PC');
     el.resMeta.textContent = bits.join(' · ');
     el.resNote.hidden = true; el.resNote.textContent = '';
     var fresh = !!(opts && opts.fresh);
     el.resTt.textContent = fresh ? 'Your AI video is ready' : (item.sceneName || 'Your AI video');
     el.again.hidden = !fresh || !S.photo; el.other.hidden = !fresh; el.del.hidden = fresh;
-    if (el.againT) el.againT.textContent = isLocal() ? 'Make again · free' : 'Make again · ' + money(estimate(item.sound, item.duration || 5));
+    if (el.againT) el.againT.textContent = isLocal() ? 'Make again · free' : 'Make again · ' + money(falCost(sceneById(item.sceneId), item.sound === 'own' ? 'music' : item.sound, lengthsFor(sceneById(item.sceneId)).indexOf(Math.round(item.duration / 5) * 5) >= 0 ? Math.round(item.duration / 5) * 5 : (item.duration || 5)));
     el.del.textContent = 'Delete from this device'; el.del.dataset.armed = '';
     var file = null;
     try { file = item.blob ? new File([item.blob], fileName(item), { type: item.blob.type || item.type }) : null; } catch (e) { file = null; }
@@ -3612,6 +5565,7 @@
       li.appendChild(acts);
       el.hist.appendChild(li);
     });
+    updateCardPreviews(); // a scene the user made a video in shows it on its card
   }
   function downloadItem(item) {
     if (!isLabelled(item)) return;
@@ -3634,6 +5588,8 @@
     el.consentRow.classList.toggle('on', S.consent);
     el.consentRow.classList.remove('need');
     if (S.consent && el.photoStatus.textContent.indexOf('Photo ready') === 0) el.photoStatus.textContent = '';
+    if (!S.consent && SEE.running) seePause();
+    renderSee();
     // the next step is the button: make sure it is on screen
     if (S.consent) { try { el.make.scrollIntoView({ behavior: REDUCED ? 'auto' : 'smooth', block: 'nearest' }); } catch (e) { /* ignore */ } }
   });
@@ -3643,11 +5599,84 @@
     b.addEventListener('keydown', function (e) {
       if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].indexOf(e.key) < 0) return;
       e.preventDefault();
-      var nb = all[(i + 1) % all.length];
-      setSound(nb.getAttribute('data-sound'), true);
-      all[effSound() === 'ai' ? 1 : 0].focus();
+      // the next option that can be chosen for this scene (a locked one is skipped)
+      var dir = e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 1;
+      for (var k = 1; k < all.length; k++) {
+        var nb = all[(i + dir * k + all.length * 2) % all.length];
+        if (nb.classList.contains('locked')) continue;
+        var kind = nb.getAttribute('data-sound');
+        if (kind === 'own' && !S.own) { S.sound = 'own'; S.userSound = 'own'; savePrefs(); updateAll(); }
+        else setSound(kind, true);
+        nb.focus();
+        return;
+      }
     });
   });
+  // My song
+  if (el.ownEmpty) el.ownEmpty.addEventListener('click', openOwnPicker);
+  if (el.ownChange) el.ownChange.addEventListener('click', openOwnPicker);
+  if (el.ownFile) el.ownFile.addEventListener('change', function () { var f = el.ownFile.files; if (f && f.length) loadOwnFile(f[0]); });
+  if (el.ownPlay) el.ownPlay.addEventListener('click', function () { if (OWN.src) stopOwnPreview(); else playOwnPart(); });
+  if (el.ownRemove) el.ownRemove.addEventListener('click', function () {
+    if (!el.ownRemove.dataset.armed) {
+      el.ownRemove.dataset.armed = '1'; el.ownRemove.textContent = 'Tap again to remove';
+      setTimeout(function () { el.ownRemove.dataset.armed = ''; el.ownRemove.textContent = 'Remove'; }, 3500);
+      return;
+    }
+    el.ownRemove.dataset.armed = ''; el.ownRemove.textContent = 'Remove';
+    removeOwn();
+  });
+  if (el.wave) {
+    // drag the bright part (or tap where it should start); it snaps to the nearest downbeat when let go
+    el.wave.addEventListener('pointerdown', function (e) {
+      if (!S.own) return;
+      e.preventDefault();
+      try { el.wave.setPointerCapture(e.pointerId); } catch (x) { /* ignore */ }
+      var t = waveTime(e), len = Math.min(S.duration, S.own.duration), inside = t >= S.own.start && t <= S.own.start + len;
+      OWN.drag = { off: inside ? t - S.own.start : len / 2, id: e.pointerId };
+      setOwnStart(t - OWN.drag.off, false);
+      el.wave.classList.add('dragging');
+    });
+    el.wave.addEventListener('pointermove', function (e) { if (OWN.drag && S.own) setOwnStart(waveTime(e) - OWN.drag.off, false); });
+    var dragEnd = function () { if (!OWN.drag) return; OWN.drag = null; el.wave.classList.remove('dragging'); setOwnStart(S.own ? S.own.start : 0, true); saveOwnStart(); updateAll(); };
+    el.wave.addEventListener('pointerup', dragEnd);
+    el.wave.addEventListener('pointercancel', dragEnd);
+    el.wave.addEventListener('keydown', function (e) {
+      var own = S.own; if (!own) return;
+      var b = own.beat, step = b && b.bpm ? 60 / b.bpm : 1, big = step * 4, t = own.start;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowUp') t += step;
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') t -= step;
+      else if (e.key === 'PageUp') t += big * 2;
+      else if (e.key === 'PageDown') t -= big * 2;
+      else if (e.key === 'Home') t = 0;
+      else if (e.key === 'End') t = own.duration;
+      else return;
+      e.preventDefault();
+      setOwnStart(t, e.key === 'Home' ? false : true);
+      saveOwnStart(); updateCost();
+    });
+  }
+  window.addEventListener('resize', function () { drawWave(); });
+  // Sync to the song
+  if (el.syncSeg) Array.prototype.forEach.call(el.syncSeg.querySelectorAll('.opt'), function (b) {
+    b.addEventListener('click', function () { S.sync = b.getAttribute('data-sync') === 'lips' ? 'lips' : 'beat'; savePrefs(); updateAll(); });
+  });
+  // Preview sheet
+  if (el.pvSheet) {
+    el.pvsClose.addEventListener('click', closeScenePreview);
+    el.pvsBack.addEventListener('click', closeScenePreview);
+    el.pvSheet.addEventListener('click', function (e) { if (e.target === el.pvSheet) closeScenePreview(); });
+    el.pvsMute.addEventListener('click', function () { PV.muted = !PV.muted; syncPvMute(); });
+    el.pvsUse.addEventListener('click', function () {
+      var id = PV.id;
+      closeScenePreview();
+      if (id) { selectScene(id, { user: true }); var c = sceneBtns[id]; if (c) { try { c.btn.focus({ preventScroll: true }); } catch (e) { /* ignore */ } } }
+    });
+  }
+  // See yourself in every scene
+  if (el.seeGo) el.seeGo.addEventListener('click', seeStart);
+  if (el.seeStop) el.seeStop.addEventListener('click', function () { seePause('Previews paused — tap “Resume previews” to go on.'); });
+  if (el.seeClear) el.seeClear.addEventListener('click', function () { SEE.queue = []; seeSave(); renderSee(); });
   // AI engine: free on this PC | fal.ai cloud (a radio group: arrows move the choice)
   if (el.engSeg) Array.prototype.forEach.call(el.engSeg.querySelectorAll('.ai-eng-opt'), function (b, i, all) {
     b.addEventListener('click', function () { chooseEngine(b.getAttribute('data-engine'), true); });
@@ -3763,8 +5792,10 @@
     if (it) {
       var sc = sceneById(it.sceneId);
       S.sceneId = sc.id;
-      if (sc.audio !== 'required') S.sound = it.sound === 'ai' ? 'ai' : 'music';
-      if (LENGTHS.indexOf(it.duration) >= 0) S.duration = it.duration;
+      if (it.sound === 'own' && S.own) S.sound = 'own';
+      else if (sc.audio !== 'required') S.sound = it.sound === 'ai' ? 'ai' : 'music';
+      var d5 = Math.round((it.duration || 5) / 5) * 5;
+      if (lengthsFor(sc).indexOf(d5) >= 0) S.duration = d5;
       if (it.trackId && trackById(it.trackId)) S.trackId = it.trackId;
       savePrefs(); updateAll();
     }
@@ -3785,7 +5816,8 @@
   });
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return;
-    if (!el.res.hidden) closeResult();
+    if (el.pvSheet && !el.pvSheet.hidden) closeScenePreview();
+    else if (!el.res.hidden) closeResult();
     else if (!el.conn.hidden) { connectThen = null; closeSheet(el.conn); }
     else if (!el.prog.hidden) minimize();
   });
@@ -3793,7 +5825,7 @@
     if (e.detail && e.detail.mode !== 'ai') stopTrackPreview();
     syncMonitor(); renderPill(); fitStage();
   });
-  document.addEventListener('visibilitychange', function () { if (document.hidden) stopTrackPreview(); syncMonitor(); });
+  document.addEventListener('visibilitychange', function () { if (document.hidden) { stopTrackPreview(); stopOwnPreview(); if (PV.gain && actx) { try { PV.gain.gain.value = 0; } catch (e) { /* ignore */ } } } else if (PV.gain) syncPvMute(); syncMonitor(); });
   // Leaving the page releases the job at once, so a reload or another tab can pick it up without waiting.
   window.addEventListener('pagehide', function () {
     if (!RUN.job) return;
@@ -3834,7 +5866,7 @@
     if (!dragFiles(e)) return;
     e.preventDefault(); dragDepth = 0; document.body.classList.remove('dragging');
     var f = e.dataTransfer.files;
-    if (f && f.length) setPhotoFile(f[0]);
+    if (f && f.length) { if (looksLikeAudio(f[0]) && !looksLikeImage(f[0])) loadOwnFile(f[0]); else setPhotoFile(f[0]); }
   });
   // paste a photo (desktop)
   document.addEventListener('paste', function (e) {
@@ -3856,10 +5888,29 @@
     // Exactly what would be sent to fal for a scene (used by tests and handy for debugging).
     requests: function (sceneId, sound, dur, refUrl, stillUrl) {
       var sc = sceneById(sceneId), tier = (sc.audio === 'required' || sound === 'ai') ? 'ai' : 'std';
+      if (sc.story) { // a story scene: the requests of its 5 s shot (see storyRequests for every shot)
+        var k = keyShot(sc);
+        return { still: { endpoint: EP.still, input: shotStillInput(k, refUrl || 'https://example.invalid/selfie.jpg') }, video: { endpoint: tier === 'ai' ? EP.ai : EP.std, input: shotVideoInput(sc, k, tier, stillUrl || 'https://example.invalid/still.jpg', '') } };
+      }
       return { still: { endpoint: EP.still, input: stillInput(sc, refUrl || 'https://example.invalid/selfie.jpg') }, video: { endpoint: tier === 'ai' ? EP.ai : EP.std, input: videoInput(sc, tier, dur || sc.length, stillUrl || 'https://example.invalid/still.jpg') } };
     },
     // Exactly what would be passed to GlowLocalAI.generate() for a scene (without the photo).
     localRequest: function (sceneId, sound, quality, fastPack) { var sc = sceneById(sceneId); return localRequest(sc, sc.audio === 'required' ? 'ai' : sound, quality, !!fastPack); },
+    // fal story: the scene photo + clip requests of every shot (sound 'music'/'own' = silent Kling, 'ai' = Happy Horse)
+    storyRequests: function (sceneId, sound, dur, refUrl, stillUrl) {
+      var sc = sceneById(sceneId), tier = sound === 'ai' ? 'ai' : 'std', hint = tier === 'ai' ? '' : beatHint(tempoOf(sound, sc.defaultTrack));
+      return shotsFor(sc, dur || sc.length).map(function (sh) {
+        return { id: sh.id, still: { endpoint: EP.still, input: shotStillInput(sh, refUrl || 'https://example.invalid/selfie.jpg') }, video: { endpoint: tier === 'ai' ? EP.ai : EP.std, input: shotVideoInput(sc, sh, tier, stillUrl || 'https://example.invalid/still.jpg', hint) } };
+      });
+    },
+    // this PC: the plan and the generateStory() request the current choices would make (without the photo)
+    localPlan: function () {
+      var sc = sceneById(S.sceneId), plan = planFor(sc, { engine: 'local' }), job = localJob(sc, plan.sound, S.trackId, plan.quality, '', plan);
+      return { local: plan.local, shots: job.shots, duration: job.duration, sync: job.sync, minutes: job.minutes, request: job.story ? storyRequest(sc, job, localPack('fast')) : null };
+    },
+    planTimeline: planTimeline,
+    beatHint: function (bpm, energy) { return beatHint({ bpm: bpm, energy: energy }); },
+    openPreview: function (id) { openScenePreview(id); },
     get state() {
       return {
         engine: S.engine, quality: S.quality, effSound: effSound(),
@@ -3868,7 +5919,13 @@
         hasKey: !!getKey(), running: running(), stage: running() ? UI.stage : null, ui: UI.state, estimate: estimate(S.sound, S.duration),
         history: H.list.length, historyPersistent: !H.mem, job: lsJSON(LS.job), inst: INST, locks: LOCKS,
         retry: S.retryJob ? (S.retryJob.resume ? 'resume' : 'still') : null, pill: el.pill.hidden ? null : UI.pill,
-        monitor: UI.mon ? UI.mon.gain.value : null, capture: UI.capture || null, captureFrames: UI.captureFrames == null ? null : UI.captureFrames, localElsewhere: LOC.elsewhere
+        monitor: UI.mon ? UI.mon.gain.value : null, capture: UI.capture || null, captureFrames: UI.captureFrames == null ? null : UI.captureFrames, localElsewhere: LOC.elsewhere,
+        sync: S.sync, effSync: effSync(sceneById(S.sceneId), effSound()), storyOk: storyOk(), lengths: lengthsFor(sceneById(S.sceneId)),
+        own: S.own ? { id: S.own.id, name: S.own.name, duration: S.own.duration, start: S.own.start, bpm: S.own.beat ? S.own.beat.bpm : 0, firstDownbeat: S.own.beat ? S.own.beat.firstDownbeat : null } : null,
+        timeline: UI.timeline || null, cardDraws: CARD.draws, cardVisible: Object.keys(CARD.vis).filter(function (k) { return CARD.vis[k]; }),
+        cardMedia: Object.keys(sceneBtns).filter(function (k) { return !!sceneBtns[k].vid; }), preview: el.pvSheet && !el.pvSheet.hidden ? { id: PV.id, muted: PV.muted, music: !!PV.src, video: !!PV.video } : null,
+        see: { running: SEE.running, queue: SEE.queue.slice(), done: SEE.done.slice(), failed: SEE.failed.slice(), cur: SEE.cur, saved: Object.keys(SEE.saved) },
+        shots: running() && RUN.job && RUN.job.shots ? RUN.job.shots.map(function (x) { return { id: x.id, still: !!(x.stillUrl || x.still), stillUrl: !!x.stillUrl, video: !!x.video, videoUrl: !!x.videoUrl, lip: !!x.lip }; }) : null
       };
     }
   };
@@ -3876,12 +5933,14 @@
   renderScenes();
   renderTracks();
   renderLengths();
+  if (el.sceneHint) el.sceneHint.textContent = SCENES.length + ' scenes';
   (function initSelection() {
     var sc = sceneById(S.sceneId);
     S.trackId = trackById(prefs.trackId) ? prefs.trackId : (trackById(sc.defaultTrack) ? sc.defaultTrack : (tracks[0] ? tracks[0].id : ''));
     if (!S.trackId) S.sound = 'ai';
-    S.duration = S.userLen || (sc.length || 5);
-    if (sc.audio === 'required') S.sound = 'ai';
+    S.duration = fitLen(sc);
+    if (S.sound === 'own') { /* my song works for every scene */ }
+    else if (sc.audio === 'required') S.sound = 'ai';
     else if (!prefs.sound) S.sound = sc.audio === 'recommended' ? 'ai' : 'music';
   })();
   var startHash = location.hash;
@@ -3896,6 +5955,9 @@
   renderEngine();
   updateAll();
   loadHistory();
+  loadSeePreviews();
+  // my song, kept on this device: when it is the chosen sound, or a video still has to be finished with it
+  (function () { var lj = localMeta(), cj = storedJob(); if (S.sound === 'own' || (lj && lj.own) || (cj && cj.own)) restoreOwn(); })();
   setTimeout(resumeIfAny, 60);
   fitStage();
   if (LOC.inApp && LOC.api) refreshLocal().then(checkLocalResume);
