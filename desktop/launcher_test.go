@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -133,6 +134,10 @@ func TestHoldKeepsLauncherBusy(t *testing.T) {
 	if h.e.Busy() {
 		t.Fatal("cleanup must release the hold")
 	}
+	// (a cancelled story's cleanup can arrive before its own release: the log still says it ended)
+	if !strings.Contains(strings.Join(h.status().Engine.Log, "\n"), "video gstory2 is no longer in progress") {
+		t.Fatal("a hold released by cleanup should be logged")
+	}
 	// a page that never comes back: the hold lapses
 	h.e.mu.Lock() // holdTTL is read under e.mu
 	old := holdTTL
@@ -194,7 +199,7 @@ func TestLauncherIdleExitProcess(t *testing.T) {
 		t.Fatalf("quit too early (%s)", d)
 	}
 	logText, _ := os.ReadFile(logPath)
-	for _, want := range []string{"Glow Studio 1.2.0 starting", fmt.Sprintf("listening on http://127.0.0.1:%d/", port), "exiting: idle exit: no Glow Studio window has been open for 2s and nothing is running", "stopped (exit code 0)"} {
+	for _, want := range []string{"Glow Studio " + launcherVersion + " starting", fmt.Sprintf("listening on http://127.0.0.1:%d/", port), "exiting: idle exit: no Glow Studio window has been open for 2s and nothing is running", "stopped (exit code 0)"} {
 		if !strings.Contains(string(logText), want) {
 			t.Fatalf("launcher.log lacks %q:\n%s", want, logText)
 		}
@@ -492,6 +497,7 @@ echo "# main" > "$out/ComfyUI_windows_portable/ComfyUI/main.py"
 	if strings.Join(sevenZip, "|") != strings.Join(want, "|") {
 		t.Fatalf("7-zip lines in Details: %q", sevenZip)
 	}
+	h.e.logs.sync() // (the log files are written in the background)
 	data, _ := os.ReadFile(filepath.Join(s.InstallDir, "logs", "engine.log"))
 	sc := bufio.NewScanner(strings.NewReader(string(data)))
 	n := 0
@@ -544,7 +550,7 @@ func TestListenStartsFreshOrOpensTheRunningCopy(t *testing.T) {
 	go gsrv.Serve(glow)
 	defer gsrv.Close()
 	gp := glow.Addr().(*net.TCPAddr).Port
-	ln, running, err := listen([]int{gp})
+	ln, running, _, err := listen([]int{gp})
 	if err != nil || ln != nil || running != fmt.Sprintf("http://127.0.0.1:%d/", gp) {
 		t.Fatalf("running copy: %v %q %v", ln, running, err)
 	}
@@ -554,27 +560,27 @@ func TestListenStartsFreshOrOpensTheRunningCopy(t *testing.T) {
 	go osrv.Serve(other)
 	defer osrv.Close()
 	free := freeTCPPort(t)
-	ln, running, err = listen([]int{other.Addr().(*net.TCPAddr).Port, free})
+	ln, running, _, err = listen([]int{other.Addr().(*net.TCPAddr).Port, free})
 	if err != nil || running != "" || ln.Addr().(*net.TCPAddr).Port != free {
 		t.Fatalf("next port: %v %q %v", ln, running, err)
 	}
 	ln.Close()
 	// the old copy is gone: its port is free again and a stale instance.json is ignored
 	writeInstancePort(free)
-	ln, running, err = listen([]int{free})
+	ln, running, _, err = listen([]int{free})
 	if err != nil || running != "" || ln.Addr().(*net.TCPAddr).Port != free {
 		t.Fatalf("fresh start: %v %q %v", ln, running, err)
 	}
 	ln.Close()
 	// every fixed port taken by others, instance.json names a dead port: a random port
-	ln, running, err = listen([]int{other.Addr().(*net.TCPAddr).Port})
+	ln, running, _, err = listen([]int{other.Addr().(*net.TCPAddr).Port})
 	if err != nil || running != "" || ln == nil {
 		t.Fatalf("random port: %v %q %v", ln, running, err)
 	}
 	ln.Close()
 	// … but a copy recorded in instance.json that answers is opened
 	writeInstancePort(gp)
-	if _, running, _ = listen([]int{other.Addr().(*net.TCPAddr).Port}); running != fmt.Sprintf("http://127.0.0.1:%d/", gp) {
+	if _, running, _, _ = listen([]int{other.Addr().(*net.TCPAddr).Port}); running != fmt.Sprintf("http://127.0.0.1:%d/", gp) {
 		t.Fatalf("instance.json copy: %q", running)
 	}
 }
@@ -688,7 +694,8 @@ func TestLauncherStaysUpAfterAnInstallWithoutPings(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("did not quit after the install")
 	}
-	if d := time.Since(finished); d < 1200*time.Millisecond {
+	// (counted from the tick that saw the install end, so never less than the idle time)
+	if d := time.Since(finished); d < 1900*time.Millisecond {
 		t.Fatalf("quit %s after the install finished: it must wait the idle time from then", d)
 	}
 	data, _ := os.ReadFile(logPath)
@@ -696,5 +703,271 @@ func TestLauncherStaysUpAfterAnInstallWithoutPings(t *testing.T) {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("launcher.log lacks %q:\n%s", want, data)
 		}
+	}
+}
+
+// ---------------------------------------------------------------- updates (takeover.go)
+
+func TestNewerVersion(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"1.3.0", "1.2.0", true}, {"1.2.0", "1.3.0", false}, {"1.3.0", "1.3.0", false},
+		{"1.10.0", "1.9.9", true}, {"2.0.0", "1.99.99", true}, {"1.3.0", "", true}, {"", "1.0.0", false},
+		{"1.3", "1.2.9", true}, {"v1.3.1", "1.3.0", true}, {"garbage", "0.0.1", false},
+	}
+	for _, c := range cases {
+		if got := newerVersion(c.a, c.b); got != c.want {
+			t.Errorf("newerVersion(%q, %q) = %v", c.a, c.b, got)
+		}
+	}
+}
+
+// fakeLauncher serves a running Glow Studio of version v on a free port: a 1.3+
+// one (modern: /__glow/version and /__glow/quit) or an older one (engine status
+// + ComfyUI queue). busy: it is making a video. A quit closes it.
+func fakeLauncher(t *testing.T, v string, busy, modern bool) (int, *atomic.Int32) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	quits := &atomic.Int32{}
+	srv := &http.Server{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/__glow/ping", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "glow-studio") })
+	if modern {
+		mux.HandleFunc("/__glow/version", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, 200, map[string]any{"app": "glow-studio", "version": v, "busy": busy, "why": "a video is being made (gst1)"})
+		})
+		mux.HandleFunc("/__glow/quit", func(w http.ResponseWriter, r *http.Request) {
+			quits.Add(1)
+			if busy {
+				writeJSON(w, 409, map[string]any{"busy": true})
+				return
+			}
+			writeJSON(w, 200, map[string]any{"ok": true})
+			go func() { time.Sleep(100 * time.Millisecond); srv.Close() }()
+		})
+	} else {
+		mux.HandleFunc("/__glow/engine/status", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, 200, map[string]any{"launcher": v, "engine": map[string]any{"state": "ready"}, "job": nil})
+		})
+		mux.HandleFunc("/__glow/comfy/queue", func(w http.ResponseWriter, r *http.Request) {
+			running := []any{}
+			if busy {
+				running = append(running, []any{1, "p1"})
+			}
+			writeJSON(w, 200, map[string]any{"queue_running": running, "queue_pending": []any{}})
+		})
+	}
+	srv.Handler = mux
+	go srv.Serve(ln)
+	t.Cleanup(func() { srv.Close() })
+	return ln.Addr().(*net.TCPAddr).Port, quits
+}
+
+func TestUpdateTakesOverFromAnOlderIdleCopy(t *testing.T) {
+	t.Setenv("GLOW_ENGINE_DIR", filepath.Join(t.TempDir(), "GlowStudio", "engine"))
+	url := func(p int) string { return fmt.Sprintf("http://127.0.0.1:%d/", p) }
+
+	// an idle older copy (1.3+) is asked to quit, and this copy starts on its port
+	p, quits := fakeLauncher(t, "1.2.9", false, true)
+	ln, running, note, err := listen([]int{p})
+	if err != nil || ln == nil || running != "" || note != "" || ln.Addr().(*net.TCPAddr).Port != p || quits.Load() != 1 {
+		t.Fatalf("idle older copy: %v %q %q %v quits=%d", ln, running, note, err, quits.Load())
+	}
+	ln.Close()
+
+	// a busy older copy is left alone: a window opens on it, with a note to try later
+	p, quits = fakeLauncher(t, "1.2.0", true, true)
+	ln, running, note, err = listen([]int{p})
+	if err != nil || ln != nil || running != url(p) || !strings.Contains(note, "busy") || quits.Load() != 0 {
+		t.Fatalf("busy older copy: %v %q %q %v quits=%d", ln, running, note, err, quits.Load())
+	}
+
+	// the same version, or a newer one: simply open it
+	for _, v := range []string{launcherVersion, "9.0.0"} {
+		p, quits = fakeLauncher(t, v, false, true)
+		ln, running, note, err = listen([]int{p})
+		if err != nil || ln != nil || running != url(p) || note != "" || quits.Load() != 0 {
+			t.Fatalf("version %s: %v %q %q %v", v, ln, running, note, err)
+		}
+	}
+
+	// a launcher from before 1.3 (no /__glow/version) making a video: left alone
+	p, _ = fakeLauncher(t, "1.1.0", true, false)
+	ln, running, note, err = listen([]int{p})
+	if err != nil || ln != nil || running != url(p) || !strings.Contains(note, "making a video") {
+		t.Fatalf("old busy copy: %v %q %q %v", ln, running, note, err)
+	}
+}
+
+func TestUpdateClosesAnOldIdleLauncherByItsProcessID(t *testing.T) {
+	if _, err := os.Stat("/proc/self/cmdline"); err != nil {
+		t.Skip("needs /proc")
+	}
+	t.Setenv("GLOW_ENGINE_DIR", filepath.Join(t.TempDir(), "GlowStudio", "engine"))
+	sleepBin, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Skip("no sleep")
+	}
+	run := func(name string) *exec.Cmd {
+		p := filepath.Join(t.TempDir(), name)
+		data, _ := os.ReadFile(sleepBin)
+		os.WriteFile(p, data, 0o755)
+		cmd := exec.Command(p, "60")
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
+		return cmd
+	}
+	record := func(port, pid int) {
+		os.MkdirAll(filepath.Dir(instancePath()), 0o755)
+		data, _ := json.Marshal(instanceInfo{Port: port, PID: pid})
+		os.WriteFile(instancePath(), data, 0o644)
+	}
+
+	// a program that is not a Glow Studio is never ended, even when instance.json names it
+	p, _ := fakeLauncher(t, "1.1.0", false, false)
+	other := run("sleep-other")
+	record(p, other.Process.Pid)
+	ln, running, note, err := listen([]int{p})
+	if err != nil || ln != nil || running == "" || !strings.Contains(note, "Close all Glow Studio windows") {
+		t.Fatalf("not a glow program: %v %q %q %v", ln, running, note, err)
+	}
+	if other.ProcessState != nil || other.Process.Signal(syscall.Signal(0)) != nil {
+		t.Fatal("another program was ended")
+	}
+
+	// the old idle Glow Studio recorded there is ended (SIGTERM here, TerminateProcess on Windows)
+	old := run("glow-studio-old")
+	p2 := 0
+	{
+		ln2, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		p2 = ln2.Addr().(*net.TCPAddr).Port
+		mux := http.NewServeMux()
+		mux.HandleFunc("/__glow/ping", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "glow-studio") })
+		mux.HandleFunc("/__glow/engine/status", func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, 200, map[string]any{"launcher": "1.1.0", "engine": map[string]any{"state": "stopped"}, "job": nil})
+		})
+		srv := &http.Server{Handler: mux}
+		go srv.Serve(ln2)
+		go func() { old.Wait(); srv.Close() }() // the "old launcher" stops serving when its process ends
+		t.Cleanup(func() { srv.Close() })
+	}
+	record(p2, old.Process.Pid)
+	ln, running, note, err = listen([]int{p2})
+	if err != nil || ln == nil || running != "" || ln.Addr().(*net.TCPAddr).Port != p2 {
+		t.Fatalf("old idle launcher: %v %q %q %v", ln, running, note, err)
+	}
+	ln.Close()
+}
+
+func TestVersionAndQuitEndpoints(t *testing.T) {
+	h := newHarness(t)
+	code, res := h.do("GET", "/__glow/version", nil)
+	if code != 200 || res["version"] != launcherVersion || res["app"] != "glow-studio" || res["busy"] != false {
+		t.Fatalf("version: %d %v", code, res)
+	}
+	quit := make(chan string, 1)
+	old := quitApp
+	quitApp = func(reason string) { quit <- reason }
+	defer func() { quitApp = old }()
+	// a page on another site cannot make it quit
+	if code, _ := h.do("POST", "/__glow/quit", map[string]any{"version": "9.0.0"}, "Origin", "https://evil.example"); code != 403 {
+		t.Fatalf("cross-site quit: %d", code)
+	}
+	// only for a newer version
+	if code, _ := h.do("POST", "/__glow/quit", map[string]any{"version": launcherVersion}); code != 400 {
+		t.Fatalf("same-version quit: %d", code)
+	}
+	// never while a video is being made
+	h.do("POST", "/__glow/engine/hold", map[string]any{"job": "gst9"})
+	if code, res := h.do("POST", "/__glow/quit", map[string]any{"version": "9.0.0"}); code != 409 || res["busy"] != true {
+		t.Fatalf("busy quit: %d %v", code, res)
+	}
+	if code, res := h.do("GET", "/__glow/version", nil); code != 200 || res["busy"] != true {
+		t.Fatalf("busy version: %d %v", code, res)
+	}
+	h.do("POST", "/__glow/engine/hold", map[string]any{"job": "gst9", "done": true})
+	h.e.releaseHold("gst9")
+	if code, _ := h.do("POST", "/__glow/quit", map[string]any{"version": "9.0.0"}); code != 200 {
+		t.Fatalf("idle quit: %d", code)
+	}
+	select {
+	case r := <-quit:
+		if !strings.Contains(r, "9.0.0") {
+			t.Fatalf("reason %q", r)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("did not quit")
+	}
+}
+
+func TestCancelAnswersAtOnceWhileManifestWriteIsStuck(t *testing.T) {
+	h := newHarness(t)
+	h.status()
+	var stuck atomic.Int32
+	release := make(chan struct{})
+	hook := func() {
+		if stuck.Add(1) == 1 {
+			select {
+			case <-release:
+			case <-time.After(10 * time.Second):
+			}
+		}
+	}
+	manifestWriteHook.Store(&hook)
+	defer manifestWriteHook.Store(nil)
+	if code, out := h.do("POST", "/__glow/engine/install", map[string]any{"packs": []string{"core"}}); code != 202 {
+		t.Fatalf("install %d %v", code, out)
+	}
+	time.Sleep(200 * time.Millisecond)
+	t0 := time.Now()
+	if code, _ := h.do("POST", "/__glow/engine/cancel", nil); code != 200 {
+		t.Fatalf("cancel %d", code)
+	}
+	if d := time.Since(t0); d > 2500*time.Millisecond {
+		t.Fatalf("Pause answered after %s", d)
+	}
+	t1 := time.Now()
+	s := h.status()
+	if d := time.Since(t1); d > 200*time.Millisecond {
+		t.Fatalf("status took %s", d)
+	}
+	if s.Job == nil || (s.Job.State == "running" && (!s.Job.Pausing || !strings.HasPrefix(s.Job.Step, "Pausing"))) {
+		t.Fatalf("while pausing: %+v", s.Job)
+	}
+	close(release)
+	if s := h.waitJob("cancelled", "done", "error"); s.Job.State != "cancelled" || s.Job.Pausing {
+		t.Fatalf("after the pause: %+v", s.Job)
+	}
+}
+
+func TestRingLogAddNeverWaitsForTheFile(t *testing.T) {
+	r := &ringLog{max: 10}
+	r.fileMu.Lock() // the disk is stuck
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < 50; i++ {
+			r.addf("[launcher] line %d", i)
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("add waited for the log file")
+	}
+	r.fileMu.Unlock()
+	r.sync()
+	if l := r.last(3); len(l) != 3 || l[2] != "[launcher] line 49" {
+		t.Fatal(l)
 	}
 }

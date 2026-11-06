@@ -29,12 +29,28 @@ const startTimeout = 15 * time.Minute
 // launcher's own lines — [launcher], [install], [repair], [7-zip] — also go to
 // launcher.log). The file is written outside mu, so the status (which reads
 // the last lines) never waits for the disk.
+// ringLog keeps the last lines for the setup page's Details and copies every
+// line to <install folder>\logs\engine.log (and launcher lines to
+// launcher.log). The files are written by one background writer: callers often
+// hold e.mu, and a slow, antivirus-scanned or sleeping disk must never hold up
+// the status (or anything else that waits for e.mu).
 type ringLog struct {
 	mu     sync.Mutex
 	lines  []string
 	max    int
 	fileMu sync.Mutex
 	file   *os.File
+	qOnce  sync.Once
+	q      chan logItem
+}
+
+// logItem is one job for the writer: a line, a folder to (re)open engine.log
+// in, or a flush marker.
+type logItem struct {
+	line  string
+	at    time.Time
+	open  string
+	flush chan struct{}
 }
 
 func launcherLine(line string) bool {
@@ -76,14 +92,54 @@ func (r *ringLog) push(line string) {
 	}
 }
 
-func (r *ringLog) toFile(line string) {
-	r.fileMu.Lock()
-	if r.file != nil {
-		fmt.Fprintf(r.file, "%s %s\n", time.Now().Format("15:04:05"), line)
+func (r *ringLog) toFile(line string) { r.enqueue(logItem{line: line, at: time.Now()}) }
+
+// enqueue hands an item to the writer; it never blocks (when the queue is
+// full, which only a stuck disk can cause, the line stays in memory only).
+func (r *ringLog) enqueue(it logItem) {
+	r.qOnce.Do(func() {
+		r.q = make(chan logItem, 4096)
+		go r.writer()
+	})
+	select {
+	case r.q <- it:
+	default:
+		if it.flush != nil {
+			close(it.flush)
+		}
 	}
-	r.fileMu.Unlock()
-	if launcherLine(line) {
-		launcherLog.line(line)
+}
+
+func (r *ringLog) writer() {
+	for it := range r.q {
+		func() {
+			defer recoverLog("log writer")
+			switch {
+			case it.flush != nil:
+				close(it.flush)
+			case it.open != "":
+				r.reopen(it.open)
+			default:
+				r.fileMu.Lock()
+				if r.file != nil {
+					fmt.Fprintf(r.file, "%s %s\n", it.at.Format("15:04:05"), it.line)
+				}
+				r.fileMu.Unlock()
+				if launcherLine(it.line) {
+					launcherLog.lineAt(it.at, it.line)
+				}
+			}
+		}()
+	}
+}
+
+// sync waits (up to 3 s) until every line queued so far is written.
+func (r *ringLog) sync() {
+	ch := make(chan struct{})
+	r.enqueue(logItem{flush: ch})
+	select {
+	case <-ch:
+	case <-time.After(3 * time.Second):
 	}
 }
 
@@ -114,7 +170,10 @@ func (r *ringLog) last(n int) []string {
 	return append([]string{}, r.lines[len(r.lines)-n:]...)
 }
 
-func (r *ringLog) openFile(dir string) {
+// openFile makes engine.log in dir the log file (in the background).
+func (r *ringLog) openFile(dir string) { r.enqueue(logItem{open: dir}) }
+
+func (r *ringLog) reopen(dir string) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return
 	}
@@ -205,6 +264,15 @@ func comfyArgs(port int) []string {
 // startEngine launches ComfyUI. It returns quickly; readiness is tracked in
 // the background ("starting" until GET /system_stats answers).
 func (e *Engine) startEngine() error {
+	// the folder lock touches the disk: take it before e.mu (a no-op when held)
+	e.mu.Lock()
+	core, dir := e.coreInstalledLocked(), e.installDir
+	e.mu.Unlock()
+	if core {
+		if err := e.lockDir(dir); err != nil {
+			return err
+		}
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.proc != nil && (e.state == "starting" || e.state == "ready") {

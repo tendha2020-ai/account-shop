@@ -18,12 +18,19 @@
  *  3. tempo: autocorrelation of the envelope scored with a 4-tap comb (k * period), a broad log-normal tempo prior
  *     around 120 BPM, then folded into 76–170 BPM choosing the octave the data supports best ("tempo octave traps":
  *     a half-time trap groove is still 140, a lo-fi track with eighth-note hats is still 84);
- *  4. beats: dynamic-programming beat tracking (Ellis 2007), refined to sub-frame precision; the BPM is then fitted
- *     to the tracked beats by least squares;
+ *  4. beats: dynamic-programming beat tracking (Ellis 2007), refined to sub-frame precision, then two checks:
+ *     - phase: the kick is felt on the beat, so when the low band (linear magnitude) hits clearly harder 1/4, 1/2 or
+ *       3/4 of a beat later, every beat moves there (four-on-the-floor with an off-beat bass or off-beat open hats:
+ *       trance, techno, house, EDM pop would otherwise be tracked on the off-beats);
+ *     - slow songs: a 60–75 BPM song is first tracked at double speed (the fold above); when every other tracked beat
+ *       is clearly weaker and nothing happens halfway between them, it is halved back (ballads say "about 72", not 144);
+ *     the BPM is then fitted to the tracked beats by least squares;
  *  5. downbeats: the bar phase (of 4) with the loudest bass, the most energy and the biggest harmonic change;
  *  6. energy: RMS around each beat, normalised by the song's loud level.
- * Known limit: in strongly syncopated grooves (afro-pop with off-beat percussion) the beats can sit half a beat off;
- * the tempo is still right and every beat still lands on the eighth-note grid, so cuts stay in time.
+ * Songs that change tempo: analyse the part that is used (start/seconds), not the whole song, to get that part's tempo.
+ * Known limits: very busy slow grooves (a 70 BPM rumba with off-beat strums and kicks) stay at double speed, and a
+ * sparse half-time groove (kick on 1, snare on 3, nothing in between) reads as half speed; both keep every beat on the
+ * song's grid, so cuts stay in time.
  * GlowBeat.grid(bpm, seconds, offset) gives the exact grid of a song whose tempo is known (the built-in tracks).
  */
 (function (global) {
@@ -232,6 +239,72 @@
       return f + Math.max(-0.5, Math.min(0.5, off));
     });
   }
+  /* ---------- 4b: beat phase check ---------- */
+  // The tracker follows the strongest onsets. In four-on-the-floor dance music with an off-beat bass or off-beat open
+  // hats (trance, techno, house, EDM pop) those sit between the kicks, so every beat would land half (or a quarter) of a
+  // beat late. The kick is felt on the beat: compare how hard the low band rises (linear magnitude, so a loud kick
+  // outweighs a quieter bass's many harmonics) at the tracked beats and at the same beats moved by 1/4, 1/2 and 3/4 of a
+  // beat, and move them only when a moved set clearly hits harder, beat after beat.
+  function lowRise(bass) {
+    var n = bass.length, r = new Float32Array(n);
+    for (var t = 3; t < n; t++) { var d = bass[t] - Math.min(bass[t - 1], bass[t - 2], bass[t - 3]); r[t] = d > 0 ? d : 0; }
+    return r;
+  }
+  function peakIn(a, from, to) { var m = 0; for (var q = Math.max(0, Math.floor(from)); q <= Math.min(a.length - 1, Math.ceil(to)); q++) if (a[q] > m) m = a[q]; return m; }
+  function phaseCheck(frames, o, bass, period, fps) {
+    var n = frames.length;
+    if (n < 8) return { frames: frames, shift: 0 };
+    var rise = lowRise(bass), w = Math.max(2, Math.round(0.03 * fps));
+    var iv = frames.map(function (f, k) { return k + 1 < n ? frames[k + 1] - f : (k ? f - frames[k - 1] : period); });
+    var SH = [0, 0.25, 0.5, 0.75], at = [], S = [];
+    SH.forEach(function (s) {
+      var v = frames.map(function (f, k) { var g = f + s * iv[k]; return peakIn(rise, g - w, g + w); });
+      at.push(v); S.push(mean(v));
+    });
+    var best = 0;
+    for (var j = 1; j < SH.length; j++) {
+      var wins = 0;
+      for (var k = 0; k < n; k++) if (at[j][k] > 1.2 * at[0][k] + 1e-9) wins++;
+      if (S[j] > 1.5 * S[0] && wins >= 0.6 * n && (!best || S[j] > S[best])) best = j;
+    }
+    if (!best) return { frames: frames, shift: 0 };
+    // move every beat, then put it on the nearest onset peak (sub-frame, like the tracker does)
+    var sm = smoothGauss(o, period / 32), s0 = SH[best], out = [];
+    var first = frames[0] + s0 * iv[0] - iv[0];
+    if (first >= w && peakIn(rise, first - w, first + w) >= 0.5 * median(at[best])) out.push(first);
+    frames.forEach(function (f, k) { out.push(f + s0 * iv[k]); });
+    return {
+      shift: s0,
+      frames: out.filter(function (g) { return g >= 1 && g < sm.length - 2; }).map(function (g) {
+        var a = Math.max(1, Math.round(g - w)), b = Math.min(sm.length - 2, Math.round(g + w)), arg = -1, mx = 0;
+        for (var q = a; q <= b; q++) if (sm[q] > mx && sm[q] >= sm[q - 1] && sm[q] >= sm[q + 1]) { mx = sm[q]; arg = q; }
+        if (arg < 0) return g;
+        var p0 = sm[arg - 1], c = sm[arg], p1 = sm[arg + 1], den = p0 - 2 * c + p1;
+        return arg + (den < 0 ? Math.max(-0.5, Math.min(0.5, 0.5 * (p0 - p1) / den)) : 0);
+      })
+    };
+  }
+  // Slow songs: the tempo is folded into 76–170 BPM (above), so a 60–75 BPM ballad is first tracked at double speed,
+  // every other "beat" being the "and" between two real beats. Halve it when the tracked beats clearly alternate
+  // strong/weak AND nothing happens halfway between them: a real fast song keeps its in-between busy (8th/16th hats in
+  // a half-time trap groove) or its weak beats strong (kick/snare). Returns the beats to keep, or null.
+  function slowCheck(frames, o, period, fps, bpm) {
+    var n = frames.length;
+    if (!(bpm >= 112 && bpm < 2 * FOLD_LO) || n < 16) return null;
+    var sm = smoothGauss(o, period / 32), w = Math.max(2, Math.round(0.03 * fps));
+    var at = frames.map(function (f) { return peakIn(sm, f - w, f + w); });
+    var mid = frames.map(function (f, k) { var iv = k + 1 < n ? frames[k + 1] - f : f - frames[k - 1]; return peakIn(sm, f + iv / 2 - w, f + iv / 2 + w); });
+    var e = [0, 0], c = [0, 0];
+    for (var k = 0; k < n; k++) { e[k % 2] += at[k]; c[k % 2]++; }
+    var ph = e[0] / c[0] >= e[1] / c[1] ? 0 : 1, strong = e[ph] / c[ph], weak = e[1 - ph] / c[1 - ph];
+    var wins = 0, pairs = 0;
+    for (var j = ph; j < n; j += 2) {
+      var nb = Math.max(j > 0 ? at[j - 1] : 0, j + 1 < n ? at[j + 1] : 0);
+      pairs++; if (at[j] > 1.25 * nb) wins++;
+    }
+    if (!(strong >= 1.6 * weak && wins >= 0.6 * pairs && mean(mid) <= 1.2 * weak)) return null;
+    return frames.filter(function (f, k) { return k % 2 === ph; });
+  }
   // tempo from the tracked beats (least squares over the longest steady run)
   function fitBpm(times, fallback) {
     if (times.length < 4) return fallback;
@@ -279,11 +352,14 @@
     var period = 60 * fps / tp.bpm;
     var frames = track(o, period);
     if (frames.length < 2) return empty;
+    frames = phaseCheck(frames, o, on.bass, period, fps).frames;
+    var tempoBpm = tp.bpm, slow = slowCheck(frames, o, period, fps, tempoBpm);
+    if (slow) { frames = slow; tempoBpm /= 2; period *= 2; }
     // frame t covers samples [t*HOP, t*HOP+N): an attack shows in the flux about when it reaches the window's middle
     var LAT = (N / 2 - HOP * 0.25) / srD;
     var times = frames.map(function (fr) { return start + fr * HOP / srD + LAT; });
-    var bpm = fitBpm(times, tp.bpm);
-    if (!(bpm > 0) || Math.abs(bpm / tp.bpm - 1) > 0.08) bpm = tp.bpm;
+    var bpm = fitBpm(times, tempoBpm);
+    if (!(bpm > 0) || Math.abs(bpm / tempoBpm - 1) > 0.08) bpm = tempoBpm;
     // energy at each beat
     var en = frames.map(function (fr) {
       var a = Math.max(0, Math.round(fr - 0.03 * fps)), b = Math.min(on.rms.length, Math.round(fr + 0.12 * fps));
@@ -348,5 +424,5 @@
     return { bpm: bpm, beats: beats, downbeats: downbeats, energy: energy, firstDownbeat: beats.length ? beats[0] : null, confidence: 1, start: offset, seconds: seconds };
   }
 
-  global.GlowBeat = { version: '1.0.0', analyze: analyze, analyzeSync: analyzeSync, grid: grid };
+  global.GlowBeat = { version: '1.1.0', analyze: analyze, analyzeSync: analyzeSync, grid: grid };
 })(window);

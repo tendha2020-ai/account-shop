@@ -507,11 +507,13 @@
     own: $('#aiOwn'), ownEmpty: $('#aiOwnEmpty'), ownBox: $('#aiOwnBox'), ownName: $('#aiOwnName'), ownMeta: $('#aiOwnMeta'), ownChange: $('#aiOwnChange'),
     ownRemove: $('#aiOwnRemove'), wave: $('#aiWave'), waveCv: $('#aiWaveCv'), ownPlay: $('#aiOwnPlay'), ownStart: $('#aiOwnStart'), ownShort: $('#aiOwnShort'),
     ownSt: $('#aiOwnSt'), ownFile: $('#aiOwnFile'),
-    syncGroup: $('#aiSyncGroup'), syncSeg: $('#aiSync'), syncNote: $('#aiSyncNote'),
+    syncGroup: $('#aiSyncGroup'), syncSeg: $('#aiSync'), syncNote: $('#aiSyncNote'), syncL: $('#aiSyncL'),
     pvSheet: $('#aiPreview'), pvsT: $('#aiPvsT'), pvsClose: $('#aiPvsClose'), pvsCanvas: $('#aiPvsCanvas'), pvsVideo: $('#aiPvsVideo'), pvsChip: $('#aiPvsChip'),
     pvsMute: $('#aiPvsMute'), pvsCap: $('#aiPvsCap'), pvsLine: $('#aiPvsLine'), pvsInfo: $('#aiPvsInfo'), pvsShots: $('#aiPvsShots'), pvsNote: $('#aiPvsNote'),
     pvsUse: $('#aiPvsUse'), pvsBack: $('#aiPvsBack'),
-    see: $('#aiSee'), seeList: $('#aiSeeList'), seeTime: $('#aiSeeTime'), seeGo: $('#aiSeeGo'), seeStop: $('#aiSeeStop'), seeClear: $('#aiSeeClear'), seeSt: $('#aiSeeSt')
+    see: $('#aiSee'), seeList: $('#aiSeeList'), seeTime: $('#aiSeeTime'), seeGo: $('#aiSeeGo'), seeStop: $('#aiSeeStop'), seeClear: $('#aiSeeClear'), seeSt: $('#aiSeeSt'),
+    seeTop: $('#aiSeeTop'), seeTopT: $('#aiSeeTopT'), seeTopGo: $('#aiSeeTopGo'), seeTopMore: $('#aiSeeTopMore'),
+    seeKept: $('#aiSeeKept'), seeKeptT: $('#aiSeeKeptT'), seeRemove: $('#aiSeeRemove'), pvsDel: $('#aiPvsDel')
   };
   if (!el.ai) return; // page without the AI section
 
@@ -1124,12 +1126,14 @@
       dg.addColorStop(0, '#ffcf7a'); dg.addColorStop(1, '#ff7a45');
       x.fillStyle = dg; x.fillRect(W * 0.38, H * 0.25, W * 0.24, H * 0.36);
       lighter(p, function () { glow(p, W * 0.5, H * 0.45, W * 0.38, '#ffb04a', 0.45); });
-      x.save(); x.lineCap = 'round'; x.lineWidth = W * 0.016; x.shadowBlur = W * 0.06;
-      x.strokeStyle = '#ff5ccf'; x.shadowColor = '#ff5ccf';
-      x.beginPath(); x.moveTo(W * 0.3, H * 0.17); x.lineTo(W * 0.46, H * 0.17); x.stroke();
+      // the neon sign over the door: a word in pink neon script in a thin cyan frame
+      x.save(); x.lineJoin = 'round'; x.lineWidth = Math.max(1, W * 0.008); x.shadowBlur = W * 0.05;
       x.strokeStyle = '#4fd8ff'; x.shadowColor = '#4fd8ff';
-      x.beginPath(); x.moveTo(W * 0.54, H * 0.17); x.lineTo(W * 0.7, H * 0.17); x.stroke();
-      x.beginPath(); x.arc(W * 0.5, H * 0.17, W * 0.035, 0, TAU); x.stroke();
+      rr(x, W * 0.27, H * 0.125, W * 0.46, H * 0.09, W * 0.03); x.stroke();
+      x.fillStyle = '#ffd6f3'; x.shadowColor = '#ff5ccf'; x.shadowBlur = W * 0.06;
+      x.font = 'italic 700 ' + Math.round(H * 0.064) + 'px "Segoe Script", "Brush Script MT", "Trebuchet MS", cursive';
+      x.textAlign = 'center'; x.textBaseline = 'middle';
+      x.fillText('noche', W * 0.5, H * 0.172);
       x.restore();
       // bouncer by the door
       person(p, W * 0.3, H * 0.63, H * 0.36, { fill: '#05050c', glow: '#ffb04a', glowR: 0.05, pose: 'down', step: 0.01 });
@@ -1182,7 +1186,11 @@
       var ck = document.createElement('span'); ck.className = 'ai-check'; ck.setAttribute('aria-hidden', 'true');
       ck.innerHTML = '<svg viewBox="0 0 24 24"><path d="M5.5 12.5l4 4 9-9"/></svg>';
       art.appendChild(ck);
-      var you = document.createElement('span'); you.className = 'ai-you'; you.hidden = true; you.setAttribute('aria-hidden', 'true'); art.appendChild(you);
+      // on a card that plays the user's own AI video (or quick preview): who it is, and the AI label (always shown
+      // there: the label burned into the video can be cropped off by the card's shape)
+      var you = document.createElement('span'); you.className = 'ai-you'; you.hidden = true; you.setAttribute('aria-hidden', 'true');
+      var youT = document.createElement('b'); var youL = document.createElement('i'); youL.textContent = 'AI-generated';
+      you.appendChild(youT); you.appendChild(youL); art.appendChild(you);
       var txt = document.createElement('span'); txt.className = 'ai-scene-txt';
       var nm = document.createElement('b'); nm.textContent = sc.name; txt.appendChild(nm);
       if (sc.alt) { var al = document.createElement('i'); al.textContent = sc.alt; txt.appendChild(al); }
@@ -1203,7 +1211,7 @@
       pv.addEventListener('click', function (e) { e.stopPropagation(); openScenePreview(sc.id, pv); });
       wrap.appendChild(b); wrap.appendChild(pv);
       el.scenes.appendChild(wrap);
-      sceneBtns[sc.id] = { btn: b, canvas: cv, art: art, pv: pv, you: you, wrap: wrap };
+      sceneBtns[sc.id] = { btn: b, canvas: cv, art: art, pv: pv, you: you, youT: youT, wrap: wrap };
     });
     var paintAll = function () {
       SCENES.forEach(function (sc, k) {
@@ -1252,7 +1260,15 @@
     }, { rootMargin: '40px 0px', threshold: 0.01 });
     Object.keys(sceneBtns).forEach(function (id) { sceneBtns[id].art.setAttribute('data-card', id); CARD.io.observe(sceneBtns[id].art); });
   }
-  function cardsActive() { return !REDUCED && !document.hidden && mode() === 'ai' && !document.documentElement.classList.contains('glow-rec'); }
+  // Cards move only when someone can see them and nothing heavier needs the PC: never behind an open sheet (the
+  // progress of a 30-minute video, a preview), and not while this PC's AI is making a video or the quick previews.
+  function cardsActive() {
+    return !REDUCED && !document.hidden && mode() === 'ai' && !document.documentElement.classList.contains('glow-rec') &&
+      !document.querySelector('.modal:not([hidden])') && !localBusyHere();
+  }
+  function localBusyHere() { return (running() && !!RUN.job && RUN.job.engine === 'local') || SEE.running; }
+  // (called when a sheet opens or closes, and when a video or the previews start or end)
+  function cardsWake() { cardsLoop(); Object.keys(sceneBtns).forEach(cardVideoPlay); }
   function cardsLoop() {
     if (CARD.raf || !cardsActive()) return;
     var tickC = function (now) {
@@ -1394,14 +1410,14 @@
       v.src = url;
       c.art.insertBefore(v, c.art.children[1]);
       c.vid = v;
-      c.you.textContent = m.kind === 'video' ? 'Your video' : 'You · preview';
+      c.youT.textContent = m.kind === 'video' ? 'Your video' : 'You · preview';
       CARDV.src[id] = { key: key, url: url };
       cardVideoPlay(id);
     });
   }
   function cardVideoPlay(id) {
     var c = sceneBtns[id]; if (!c || !c.vid) return;
-    var want = !REDUCED && CARD.vis[id] && !document.hidden && mode() === 'ai';
+    var want = CARD.vis[id] && cardsActive();
     if (want && c.vid.paused) { var pr = c.vid.play(); if (pr && pr.catch) pr.catch(function () { /* autoplay blocked: the poster stays */ }); }
     else if (!want && !c.vid.paused) { try { c.vid.pause(); } catch (e) { /* ignore */ } }
   }
@@ -1425,6 +1441,9 @@
     var bits = [];
     if (sc.story) bits.push((sc.length || 20) + ' s · ' + n + ' shots');
     bits.push(sc.audio === 'required' ? (isLocal() ? 'AI song or your own song' : 'AI sound or your own song') : 'Built-in music: ' + (tr ? tr.name + ' (' + tr.bpm + ' BPM)' : 'original'));
+    // a singing scene's example plays a built-in track: say it is only a stand-in for the song the video gets
+    var sings = sc.audio === 'required' || !!sc.song;
+    if (sings && !m && tr) bits.push('Music in this example: ' + tr.name + ', a stand-in — your video gets its own ' + (sc.id === 'club-exit-sing' || sc.id === 'spanish' ? 'Spanish party song' : 'song') + ', or your song');
     el.pvsInfo.textContent = bits.join(' · ');
     el.pvsChip.textContent = m ? (m.kind === 'video' ? 'Your latest video' : 'Quick preview of you') : 'Example';
     el.pvsChip.classList.toggle('you', !!m);
@@ -1439,6 +1458,7 @@
       el.pvsShots.appendChild(li);
     });
     PV.muted = false; syncPvMute();
+    if (el.pvsDel) el.pvsDel.hidden = !(m && m.kind === 'preview');
     el.pvsUse.textContent = S.sceneId === sc.id ? 'Use this scene ✓' : 'Use this scene';
     openSheet(el.pvSheet, el.pvsUse);
     if (m) {
@@ -1496,7 +1516,7 @@
         if (k !== last) {
           last = k;
           Array.prototype.forEach.call(el.pvsShots.children, function (li, i) { li.classList.toggle('on', i === k); });
-          el.pvsCap.textContent = (k + 1) + ' / ' + shots.length + ' · ' + shots[k].title;
+          el.pvsCap.textContent = (k + 1) + ' / ' + shots.length + ' · ' + shots[k].title + (shots[k].lyric ? '\n♪ ' + shots[k].lyric.line : '');
         }
       } else { drawCard(c, t); el.pvsCap.textContent = ''; }
       el.pvsCap.hidden = !shots.length;
@@ -1651,7 +1671,7 @@
       var bb = document.createElement('b'); bb.textContent = d + ' s';
       var sm = document.createElement('small'); sm.className = 'ai-len-cost';
       b.appendChild(bb); b.appendChild(sm);
-      b.addEventListener('click', function () { S.duration = d; S.userLen = d; savePrefs(); updateAll(); });
+      b.addEventListener('click', function () { S.duration = d; S.userLen = d; savePrefs(); fitOwnStart(); updateAll(); });
       el.len.appendChild(b);
     });
   }
@@ -1675,10 +1695,18 @@
   }
   // Lip-sync to the chosen song: this PC with the Singing add-on (Wan2.2-S2V), the AI song or the user's own song.
   // fal.ai cloud has no verified audio-driven lip-sync model in this app, so it never offers it.
-  function lipsAvailable(sc, sound, engine) {
+  function lipsAvailable(sc, sound, engine, dur) {
     if ((engine || S.engine) !== 'local' || !singingOk() || !storyOk()) return false;
-    return (sound === 'own' && !!S.own) || (sound === 'ai' && !!sc.song);
+    return (sound === 'own' && ownLipsFit(dur || S.duration, true)) || (sound === 'ai' && !!sc.song);
   }
+  // My song must last as long as what is lip-synced to it: every shot (4.8 s each, back to back), or a video in
+  // which one shot sings (the chorus) — otherwise that shot would have no song under its lips.
+  function ownLipsFit(dur, all) {
+    var own = S.own; if (!own) return false;
+    return own.duration + 1e-3 >= (all ? shotCount(dur) * LIP_SEC + 0.1 : dur - 0.2);
+  }
+  // The longest length whose every shot can be lip-synced to my song (0 when none)
+  function ownLipsLen() { var best = 0; ALL_LENGTHS.forEach(function (d) { if (ownLipsFit(d, true) && d > best) best = d; }); return best; }
   function effSync(sc, sound, engine) { return S.sync === 'lips' && lipsAvailable(sc, sound, engine) ? 'lips' : 'beat'; }
   /* What the next video is, in one place: engine, sound, length, the shots (each with lip-sync or not) and, on this
    * PC, whether it is one clip made the single-clip way (GlowLocalAI.generate) or a story (generateStory). */
@@ -1689,7 +1717,7 @@
     var plan = { sc: sc, engine: engine, sound: sound, duration: dur, sync: sync, n: n, shots: null, lips: 0, local: '' };
     var many = engine === 'local' ? (sc.story || n > 1 || sync === 'lips') : sc.story;
     if (many) {
-      var src = engine === 'local' && singingOk() && ((sound === 'ai' && !!sc.song) || (sound === 'own' && !!S.own));
+      var src = engine === 'local' && singingOk() && ((sound === 'ai' && !!sc.song) || (sound === 'own' && ownLipsFit(dur, sync === 'lips')));
       plan.shots = shotsFor(sc, dur).map(function (sh) {
         var lip = !!src && (sync === 'lips' || (!!sh.lipSync && (sc.story || sound === 'ai')));
         if (lip) plan.lips++;
@@ -1778,7 +1806,7 @@
       if (kind === 'ai') {
         var t = b.querySelector('.ai-snd-t b'), sm = b.querySelector('.ai-snd-t small'), tag = b.querySelector('.ai-snd-tag');
         if (t) t.textContent = local ? 'AI song' : 'AI sound';
-        if (sm) sm.textContent = local ? (sc.song ? 'You sing in Spanish' : 'Singing scenes only') : 'Crowd & singing';
+        if (sm) sm.textContent = local ? (sc.song ? 'Sing in Spanish' : 'Singing scenes') : 'Crowd & singing';
         if (tag) tag.textContent = local ? (singingOk() ? 'Free' : 'Add-on') : 'Premium';
       } else if (kind === 'own') {
         var sm2 = b.querySelector('.ai-snd-t small');
@@ -1822,8 +1850,14 @@
         b.textContent = req ? (sc.alt || sc.name) + ' needs AI sound.' : 'Real sound, made with the video.';
         el.aiNote.appendChild(b);
         el.aiNote.appendChild(document.createTextNode((req ? ' So the video can really sing' + (spanish ? ' in Spanish' : '') + ', the' : ' The') +
-          ' video model creates the ' + what + ' together with the picture' + (/singing/.test(what) ? ', with lips matched to the song.' : '.') +
+          ' video model creates the ' + what + ' together with the picture' + (/singing/.test(what) ? ', with lips matched to the singing.' : '.') +
           (req ? ' Or pick “My song” to use your own music.' : '')));
+        // a cloud story is several clips made one by one: each brings its own sound
+        if (sc.story && shotCount(S.duration) > 1) {
+          var each = document.createElement('span'); each.className = 'ai-note-each';
+          each.textContent = ' Each 5 s shot gets its own AI ' + (/singing/.test(what) ? 'singing' : 'sound') + ', so the ' + (/singing/.test(what) ? 'song changes' : 'sound changes') + ' from shot to shot. For one song across all ' + S.duration + ' s, pick “My song”' + (LOC.inApp ? ', or make it free on this PC' : '') + '.';
+          el.aiNote.appendChild(each);
+        }
       }
     }
     if (sound !== 'ai') el.aiNote.dataset.k = '';
@@ -1839,6 +1873,7 @@
     // Length (1, 2 or 4 shots) with the price (cloud) or the time (this PC) under each choice
     var L = lengthsFor(sc);
     if (L.indexOf(S.duration) < 0) S.duration = fitLen(sc);
+    fitOwnStart();
     if (el.lenGroup) el.lenGroup.hidden = L.length < 2;
     Array.prototype.forEach.call(el.len.children, function (b) {
       var d = +b.dataset.len, avail = L.indexOf(d) >= 0;
@@ -1903,7 +1938,7 @@
     el.cost.textContent = sub;
     el.make.classList.toggle('idle', !S.photo && !running() && !pausedJob() && !(isLocal() && (LOC.retry || LOC.resume)));
     el.make.setAttribute('aria-describedby', 'aiCost');
-    if (el.connRange) el.connRange.textContent = money(estimate('music', LENGTHS[0])) + '–' + money(estimate('ai', LENGTHS[LENGTHS.length - 1]));
+    if (el.connRange) el.connRange.textContent = money(estimate('music', LENGTHS[0])) + '–' + money(falMax()) + ' (5–20 s)';
     if (el.conn && !el.conn.hidden && connectThen === 'make') el.keySave.textContent = 'Save & make my video · ' + money(falCost(sc, sound, S.duration));
   }
   function updateAll() { updateSceneUI(); updateSoundUI(); updateCost(); renderSee(); }
@@ -1967,19 +2002,21 @@
     try {
       var buf = await decodeAudio(ctx, file);
       if (seq !== OWN.seq) return;
-      if (!(buf.duration > 1.5)) throw new Error('too short');
+      if (!(buf.duration > 1.5)) { var se = new Error('too short'); se.code = 'short'; se.seconds = buf.duration; throw se; }
       var id = restore ? restore.id : ownId(file);
       var own = { id: id, name: restore ? restore.name : (file.name || 'My song').replace(/\.[a-z0-9]+$/i, ''), size: file.size, type: file.type, blob: file, buffer: buf, duration: buf.duration, start: 0, beat: null, peaks: peaksOf(buf, 720) };
       if (!restore) setOwnStatus('Finding the beat…');
       try { own.beat = window.GlowBeat ? await window.GlowBeat.analyze(buf) : null; } catch (e) { own.beat = null; }
       if (seq !== OWN.seq) return;
-      own.start = restore && restore.start != null ? clamp(restore.start, 0, Math.max(0, buf.duration - 1)) : liveliest(own, S.duration);
+      own.start = restore && restore.start != null ? clamp(restore.start, 0, Math.max(0, buf.duration - 1)) : snapStart(liveliest(own, S.duration), own);
+      ownPartBeat(own, Math.min(own.start, ownMaxStart(own)));
       S.own = own;
       OWN.loading = false;
       if (!restore) {
         S.sound = 'own'; S.userSound = 'own'; savePrefs();
         setOwnStatus('');
-        announce('Your song is ready' + (own.beat && own.beat.bpm ? ', about ' + Math.round(own.beat.bpm) + ' beats per minute' : ''));
+        var pb = ownPartBeat(own, own.start, null, true);
+        announce('Your song is ready' + (pb && pb.bpm ? ', about ' + Math.round(pb.bpm) + ' beats per minute' : ''));
         var rec = { id: 'own', key: own.id, name: own.name, size: own.size, type: own.type, start: own.start, blob: file, at: Date.now() };
         xidb('sounds', 'readwrite', function (st) { return st.put(rec); }).catch(function (e) { console.warn('[glow-ai] song not kept on this device', e); });
       }
@@ -1989,7 +2026,10 @@
       console.warn('[glow-ai] song decode failed', e);
       OWN.loading = false;
       setOwnStatus('');
-      if (!restore) toast('That song couldn’t be opened in this browser. Try an MP3 or M4A file.', 'warn', 6000);
+      if (!restore) {
+        if (e && e.code === 'short') toast('That song is only ' + Math.max(0.1, Math.round((e.seconds || 0) * 10) / 10) + ' s long — pick a song of at least a few seconds.', 'warn', 6000);
+        else toast('That song couldn’t be opened in this browser. Try an MP3 or M4A file.', 'warn', 6000);
+      }
       renderOwn();
     }
   }
@@ -2034,7 +2074,7 @@
     var b = own.beat, dur = own.duration;
     if (dur <= len + 0.5) return 0;
     if (!b || !b.downbeats || !b.downbeats.length) return 0;
-    var best = b.downbeats[0], bs = -1;
+    var best = null, bs = -1;
     b.downbeats.forEach(function (d) {
       if (d + len > dur) return;
       var e = 0, c = 0;
@@ -2042,25 +2082,73 @@
       var sc = c ? e / c : 0;
       if (sc > bs + 0.02) { bs = sc; best = d; }
     });
-    return best;
+    return best == null ? 0 : best;
   }
-  function snapStart(t) {
-    var own = S.own; if (!own) return t;
-    var maxStart = Math.max(0, own.duration - Math.min(S.duration, own.duration));
+  // The latest start that still fits the video (the whole song when it is shorter than the video).
+  function ownMaxStart(own, dur) { own = own || S.own; return own ? Math.max(0, own.duration - Math.min(dur || S.duration, own.duration)) : 0; }
+  /* The beat of the part of my song that plays, analysed on its own (plus a little around it): a song that changes
+   * tempo gets that part's tempo, beats and downbeats, not the whole song's (and a start after the first 6 minutes
+   * still has beats). About 0.1 s for a 20 s part; cached until the part moves out of the analysed window. Falls back
+   * to the whole-song analysis when the part has no steady beat. */
+  function ownPartBeat(own, start, len, cachedOnly) {
+    own = own || S.own;
+    if (!own) return null;
+    start = start == null ? own.start : start;
+    len = Math.min(len == null ? S.duration : len, own.duration);
+    var end = Math.min(own.duration, start + len), p = own.part;
+    if (p && p.from <= start + 1e-6 && p.from >= start - 3.5 && p.to >= end - 1e-6 && p.to <= end + 12) return p.beat;
+    if (cachedOnly || !own.buffer || !window.GlowBeat || typeof window.GlowBeat.analyzeSync !== 'function') return own.beat;
+    var from = Math.max(0, start - 2), to = Math.min(own.duration, Math.max(end + 4, from + 16)), b = null;
+    try { b = window.GlowBeat.analyzeSync(own.buffer, { start: from, seconds: to - from }); } catch (e) { b = null; }
+    if (!b || !(b.bpm > 0) || !b.beats || b.beats.length < 4) b = own.beat;
+    own.part = { from: from, to: to, beat: b };
+    return b;
+  }
+  // A start point on a downbeat of that part (the nearest one; a plain beat only when no downbeat is near), never so
+  // late that the song ends before the video does.
+  function snapStart(t, own, dur) {
+    own = own || S.own; if (!own) return t;
+    var maxStart = ownMaxStart(own, dur);
     t = clamp(t, 0, maxStart);
-    var b = own.beat;
-    if (b && b.downbeats && b.downbeats.length) {
-      var best = null;
-      b.downbeats.concat(b.beats).forEach(function (d, i) { if (d <= maxStart + 1e-6 && (best === null || Math.abs(d - t) < Math.abs(best - t) - (i < b.downbeats.length ? 0.12 : 0))) best = d; });
-      if (best !== null && Math.abs(best - t) < 1.2) t = best;
+    var b = ownPartBeat(own, t, dur);
+    if (b && b.beats && b.beats.length) {
+      var near = function (list) { var best = null; (list || []).forEach(function (x) { if (x <= maxStart + 1e-6 && x >= -1e-6 && (best === null || Math.abs(x - t) < Math.abs(best - t))) best = x; }); return best; };
+      var d = near(b.downbeats), bt = near(b.beats), beatSec = b.bpm > 0 ? 60 / b.bpm : 0.5;
+      // (at the very end: the last bar that still fits, even when a plain beat would be a little later)
+      var lim = t >= maxStart - 0.01 ? Math.max(1.2, beatSec * 4.2) : Math.max(1.2, beatSec * 2.2);
+      if (d !== null && Math.abs(d - t) <= lim) t = d;
+      else if (bt !== null && Math.abs(bt - t) < 1.2) t = bt;
     }
     return Math.round(t * 1000) / 1000;
   }
   function setOwnStart(t, snap) {
     if (!S.own) return;
-    S.own.start = snap ? snapStart(t) : clamp(t, 0, Math.max(0, S.own.duration - Math.min(S.duration, S.own.duration)));
+    S.own.start = snap ? snapStart(t) : clamp(t, 0, ownMaxStart());
     drawWave(); renderOwnText();
     if (OWN.src) playOwnPart(); // keep hearing it from the new start
+  }
+  // After the video length changed: the chosen part must still fit in the song (it keeps its place when it does).
+  function fitOwnStart() {
+    if (!S.own || OWN.drag) return;
+    if (S.own.start > ownMaxStart() + 1e-3) { setOwnStart(S.own.start, true); saveOwnStart(); }
+  }
+  // The part of my song a new video uses: where it starts (clamped to fit the video) and that part's beat.
+  function ownForJob(dur) {
+    var own = S.own; if (!own) return null;
+    var st = Math.min(own.start, ownMaxStart(own, dur));
+    return { id: own.id, name: own.name, start: Math.round(st * 1000) / 1000 };
+  }
+  // The next/previous downbeat (the arrow keys move the start by whole bars): from the analysis of the part that plays
+  // now while the target is inside it (so the bars stay the ones shown), else from an analysis around the target.
+  function stepOwnStart(dir, bars) {
+    var own = S.own; if (!own) return 0;
+    var t = own.start, max = ownMaxStart(), b = ownPartBeat(own, t), step = b && b.bpm > 0 ? 60 / b.bpm : 0.5;
+    var target = clamp(t + dir * bars * 4 * step, 0, max);
+    var covers = function (x) { return x && x.downbeats && x.downbeats.length && target >= (x.start || 0) - 1e-6 && target <= (x.start || 0) + (x.seconds || 0) - 0.5; };
+    var bb = covers(b) ? b : ownPartBeat(own, target);
+    var best = null;
+    if (bb && bb.downbeats) bb.downbeats.forEach(function (x) { if ((dir > 0 ? x > t + 0.05 : x < t - 0.05) && x <= max + 1e-6 && x >= -1e-6 && (best === null || Math.abs(x - target) < Math.abs(best - target))) best = x; });
+    return best !== null ? best : target;
   }
   function setOwnStatus(t) { if (el.ownSt) el.ownSt.textContent = t || ''; }
   function renderOwn() {
@@ -2076,7 +2164,7 @@
   }
   function renderOwnText() {
     var own = S.own; if (!own) return;
-    var len = Math.min(S.duration, own.duration), b = own.beat;
+    var len = Math.min(S.duration, own.duration), b = ownPartBeat(own, own.start, null, true);
     el.ownMeta.textContent = fmt(own.duration) + (b && b.bpm ? ' · about ' + Math.round(b.bpm) + ' BPM' : '');
     el.ownStart.textContent = 'Plays ' + fmtP(own.start) + '–' + fmtP(own.start + len);
     el.wave.setAttribute('aria-valuemin', '0');
@@ -2106,9 +2194,10 @@
       x.fillRect(px, mid - v, Math.max(1, bw - (bw > 2 ? 0.6 : 0)), v * 2);
     }
     // bars (downbeats) inside the chosen part
-    if (own.beat && own.beat.downbeats) {
+    var wb = ownPartBeat(own, own.start, null, true);
+    if (wb && wb.downbeats) {
       x.fillStyle = 'rgba(255,214,107,.85)';
-      own.beat.downbeats.forEach(function (d) { if (d >= own.start - 0.01 && d <= own.start + len) { var bx = d / dur * w; x.fillRect(bx - DPR * 0.75, h - 5 * DPR, 1.5 * DPR, 5 * DPR); } });
+      wb.downbeats.forEach(function (d) { if (d >= own.start - 0.01 && d <= own.start + len) { var bx = d / dur * w; x.fillRect(bx - DPR * 0.75, h - 5 * DPR, 1.5 * DPR, 5 * DPR); } });
     }
     // edges + playhead
     x.fillStyle = '#fff';
@@ -2149,30 +2238,52 @@
     if (sound === 'ai' && !local) { el.syncGroup.hidden = true; return; }
     el.syncGroup.hidden = false;
     var lipsOk = lipsAvailable(sc, sound), allLip = local && sound === 'ai' && !!sc.song && !sc.story;
+    // my song is too short to lip-sync every shot of this length: the choice stays, greyed out, with the reason
+    var lipsShort = local && sound === 'own' && !!S.own && singingOk() && storyOk() && !lipsOk;
     var sync = effSync(sc, sound);
-    el.syncSeg.hidden = !lipsOk || allLip;
+    var showSeg = (lipsOk || lipsShort) && !allLip;
+    el.syncSeg.hidden = !showSeg;
+    // (with nothing to choose, the line below is just a hint: no heading over an empty space)
+    if (el.syncL) el.syncL.hidden = !showSeg;
+    el.syncGroup.classList.toggle('ai-sync-hint', !showSeg);
+    // singing scenes say what you get: one shot sings the chorus, or every shot sings
+    var chorus = showSeg && planFor(sc, { sound: sound, sync: 'beat' }).lips > 0;
     Array.prototype.forEach.call(el.syncSeg.querySelectorAll('.opt'), function (b) {
-      var k = b.getAttribute('data-sync');
+      var k = b.getAttribute('data-sync'), off = k === 'lips' && lipsShort;
       b.setAttribute('aria-pressed', k === sync ? 'true' : 'false');
+      b.setAttribute('aria-disabled', off ? 'true' : 'false');
+      b.classList.toggle('locked', off);
+      var bb = b.querySelector('b');
+      if (bb) bb.textContent = k === 'lips' ? (chorus ? 'Sing every shot' : 'Lip-sync to the song') : (chorus ? 'Sing the chorus' : 'Dance to the beat');
       var sm = b.querySelector('small');
-      if (sm && k === 'lips' && lipsOk) sm.textContent = rangeText(localRange(planFor(sc, { sound: sound, sync: 'lips' })));
-      if (sm && k === 'beat' && lipsOk) sm.textContent = rangeText(localRange(planFor(sc, { sound: sound, sync: 'beat' })));
+      if (!sm) return;
+      if (off) sm.textContent = 'Song too short';
+      else if (lipsOk) sm.textContent = rangeText(localRange(planFor(sc, { sound: sound, sync: k === 'lips' ? 'lips' : 'beat' })));
+      else sm.textContent = '';
     });
-    var t = '', tr = trackById(S.trackId), b2 = S.own && S.own.beat;
+    var t = '', tr = trackById(S.trackId), b2 = S.own ? ownPartBeat(S.own, Math.min(S.own.start, ownMaxStart()), S.duration) : null;
     if (sync === 'lips') {
       // the time per shot, from the engine's own estimate for this plan (about 5½–8½ min on an RTX 5060)
       var lp = planFor(sc, { sound: sound, sync: 'lips' }), lm = localRange(lp), k = Math.max(1, lp.shots ? lp.shots.length : 1);
       var per0 = Math.max(0.5, Math.round(lm[0] / k * 2) / 2), per1 = Math.max(per0 + 0.5, Math.round(lm[1] / k * 2) / 2);
-      t = 'Every shot is lip-synced to the song, one after another from ' + (sound === 'own' && S.own ? fmtP(S.own.start) : 'its start') + ' — slow but fun: each 5 s shot takes about ' + half(per0) + '–' + half(per1) + ' min on this PC.';
+      t = 'Every shot is lip-synced to the song, one after another from ' + (sound === 'own' && S.own ? fmtP(Math.min(S.own.start, ownMaxStart())) : 'its start') + ' — slow but fun: each 5 s shot takes about ' + half(per0) + '–' + half(per1) + ' min on this PC.';
     }
     else if (allLip) t = 'Every shot sings the song in sync (lip-sync), and the cuts follow its beat.';
     else if (sound === 'music') t = tr ? 'Moves and cuts follow the beat of ' + tr.name + ' (' + tr.bpm + ' BPM).' : 'Moves and cuts follow the beat.';
     else if (sound === 'own') t = !S.own ? 'Moves and cuts will follow your song’s beat.' : b2 && b2.bpm ? 'Moves and cuts follow your song’s beat (about ' + Math.round(b2.bpm) + ' BPM).' : 'No steady beat found in your song — the shots are simply cut one after another.';
     else if (sound === 'ai') t = sc.story ? 'Cuts follow the song’s beat, and you sing the chorus in sync.' : 'Cuts follow the song’s beat.';
-    if (local && sync !== 'lips' && !allLip && (sound === 'own' || (sound === 'ai' && sc.song)) && !lipsOk) {
+    if (chorus && sync !== 'lips') t = (sound === 'own' ? 'One shot sings the chorus of your song in sync; the others dance to its beat.' : 'One shot sings the chorus in sync; the others dance to the song’s beat.');
+    if (lipsShort) t += ' ' + ownShortText();
+    if (local && sync !== 'lips' && !allLip && !lipsShort && (sound === 'own' || (sound === 'ai' && sc.song)) && !lipsOk) {
       t += !singingOk() ? ' Lip-sync to the song needs the free Singing add-on.' : !storyOk() ? ' Lip-sync to your song needs the latest Glow Studio app.' : '';
     }
     el.syncNote.textContent = t;
+  }
+  // Why "every shot sings" is greyed out for my song, and what works instead
+  function ownShortText() {
+    var own = S.own; if (!own) return '';
+    var fit = ownLipsLen(), secs = Math.max(1, Math.floor(own.duration));
+    return 'Your song is ' + secs + ' s, too short to lip-sync every shot of a ' + S.duration + ' s video' + (fit ? ' — pick ' + fit + ' s for that.' : ' — use a longer song for that.');
   }
 
   /* ------------------------------------------------------------------ *
@@ -2188,7 +2299,8 @@
     ctl: null,               // AbortController of the running local video
     release: null,           // releases this page's hold on the local-job lock (one free video at a time, across windows)
     elsewhere: false,        // another Glow Studio window is making a free video right now
-    lastState: null, pollTimer: 0, pollSince: 0, pollKind: ''
+    lastState: null, pollTimer: 0, pollSince: 0, pollKind: '',
+    urls: [], gone: false, lastFail: null
   };
   // Where the setup page opens straight into what the user came for.
   var SETUP_URL = { setup: './engine.html', singing: './engine.html?add=singing', repair: './engine.html?repair=1' };
@@ -2273,6 +2385,7 @@
   }
   // The main button while the free engine is chosen: what tapping it does next, in plain words.
   function localCta(sound) {
+    if (LOC.gone) return { main: 'Open Glow Studio again', sub: 'Its helper has closed — use your desktop icon' };
     if (LOC.retry) return { main: 'Finish my video', sub: 'Your video is made — finishing it is free' };
     if (LOC.resume) return LOC.resume.made ? { main: 'Finish my video', sub: 'Your video is made — finishing it is free' } : { main: 'Continue your video', sub: 'Free · picks up where it left off on this PC' };
     var st = localState();
@@ -2285,9 +2398,12 @@
     if (st === 'nogpu') return { main: 'Use fal.ai cloud', sub: 'Free AI can’t run on this PC' };
     if (st === 'offline') return { main: 'Make my video', sub: 'Free AI on this PC isn’t answering' };
     if (sound === 'ai' && !singingOk()) return { main: 'Get the Singing add-on', sub: 'Free · ' + singingSize() + ' one-time download, then sing' };
-    var sc = sceneById(S.sceneId), plan = planFor(sc, { sound: sound });
-    return { main: 'Make my video', sub: S.duration + ' s · Free · ' + rangeText(localRange(plan)) + ' on this PC' + startExtra() };
+    var sc = sceneById(S.sceneId), plan = planFor(sc, { sound: sound }), m = localRange(plan);
+    // (phones: the short form, so the line doesn't break with one word left over)
+    if (NARROW()) return { main: 'Make my video', sub: S.duration + ' s · Free · ~' + half(m[0]) + '–' + half(m[1]) + ' min' + (startExtra() ? ' +1–2 to start' : '') };
+    return { main: 'Make my video', sub: S.duration + ' s · Free · ' + rangeText(m) + ' on this PC' + startExtra() };
   }
+  function NARROW() { return !!(window.matchMedia && window.matchMedia('(max-width: 480px)').matches); }
   function decideEngine() {
     if (!LOC.inApp || !LOC.api) return 'fal';
     var pref = lsGet(LS.engine);
@@ -2400,6 +2516,27 @@
     var iv = setInterval(function () { if (!localBeatElsewhere()) { clearInterval(iv); done(); } }, 4000);
   }
   // A video that was being made on this PC when the page was closed or reloaded (or whose finishing was cut short).
+  // Right after the page opens, the first "Continue your video" offer is brought into view (after a reload the browser
+  // puts the page back where it was scrolled to, often far below it). Never later, and never once the user has started
+  // using the page.
+  var revealUntil = Date.now() + 15000, revealOk = true;
+  ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(function (t) { window.addEventListener(t, function () { revealUntil = 0; revealOk = false; }, { once: true, passive: true }); });
+  function revealResume() {
+    // after the browser has put the scroll position back (it may do so more than once while the page settles)
+    var tries = 0, moved = false;
+    var go = function () {
+      setTimeout(function () {
+        if (!revealOk || !el.engResume || el.engResume.hidden) return;
+        var rb = el.engResume.getBoundingClientRect();
+        if (rb.top < 0 || rb.bottom > (window.innerHeight || 0)) {
+          if (!moved) { moved = true; attention(el.engCard); }
+          else { try { el.engCard.scrollIntoView({ block: 'center' }); } catch (e) { /* ignore */ } }
+        }
+        if (++tries < 3) go();
+      }, tries ? 900 : 120);
+    };
+    if (document.readyState === 'complete') go(); else window.addEventListener('load', go, { once: true });
+  }
   function checkLocalResume() {
     if (!LOC.inApp || !LOC.api || !LOC.s) return Promise.resolve();
     if (running() || RUN.starting) return Promise.resolve();
@@ -2422,6 +2559,7 @@
         if (LOC.retry && LOC.retry.engineJob === r.job) { dropResume(); return; } // already offered as "Finish my video"
         LOC.resume = r;
         renderEngine(); updateCost();
+        if (Date.now() < revealUntil && el.engResume && !el.engResume.hidden) { revealUntil = 0; revealResume(); }
       }, function () { /* engine not answering: nothing to offer */ });
     });
   }
@@ -2453,8 +2591,11 @@
     var m = [5, 8];
     try { m = LOC.api.estimate({ quality: 'best' }).minutes; } catch (e) { /* defaults */ }
     return '<b>Free:</b> about ' + half(m[0]) + '–' + half(m[1]) + ' min per 5-second shot on your PC, a little softer. ' +
-      '<b>Cloud:</b> usually 1–3 min, sharper, 5 or 10 s, about ' + money(estimate('music', LENGTHS[0])) + '+ each.';
+      '<b>Cloud:</b> usually 1–3 min, sharper, ' + falRangeText() + '.';
   }
+  // what a cloud video costs, from the cheapest 5 s clip to a 20 s story with AI sound
+  function falMax() { var mx = 0; SCENES.forEach(function (sc) { lengthsFor(sc, 'fal').forEach(function (d) { mx = Math.max(mx, falCost(sc, 'ai', d)); }); }); return mx; }
+  function falRangeText() { return '5–20 s, about ' + money(estimate('music', LENGTHS[0])) + '–' + money(falMax()) + ' each'; }
   function setNote(html, cls) {
     el.engNote.className = 'ai-eng-note' + (cls ? ' ' + cls : '');
     // only when it changes: a status refresh must not take the focus from a button in it
@@ -2483,13 +2624,17 @@
     var pill = { checking: ['wait', 'Checking…'], offline: ['warn', 'Not answering'], setup: ['warn', 'Not set up yet'], installing: ['wait', 'Downloading…'],
       paused: ['warn', 'Download paused'], 'install-error': ['bad', 'Download stopped'], repairing: ['wait', 'Checking files…'],
       nogpu: ['bad', 'Not available'], error: ['bad', 'Needs attention'], ready: ['ok', 'Ready · photos stay on this PC'] }[st];
+    if (local && LOC.gone) pill = ['bad', 'Glow Studio’s helper has closed'];
     if (!local) pill = getKey() ? ['ok', 'fal.ai connected'] : ['warn', 'Needs your fal.ai key'];
     el.engSt.className = 'ai-eng-st ' + pill[0]; el.engSt.textContent = pill[1];
     el.engLocalS.textContent = st === 'setup' || st === 'installing' || st === 'paused' || st === 'install-error' ? 'One-time setup' : st === 'nogpu' ? 'Needs NVIDIA' : 'No sign-up';
     var html = '', cls = '';
     var pct = j && j.overallTotal ? Math.floor(j.overallDone / j.overallTotal * 100) : 0;
     if (local) {
-      if (st === 'checking') html = noteHTML('wait', '', 'Checking free AI on this PC…');
+      if (LOC.gone) {
+        cls = 'big';
+        html = noteHTML('bad', 'Glow Studio’s helper has closed', 'The part of Glow Studio that runs the free AI isn’t running any more (it was closed, or your PC went to sleep). Open Glow Studio again from your desktop icon or the Start menu — a video you were making picks up where it left off. This window notices by itself when it’s back.');
+      } else if (st === 'checking') html = noteHTML('wait', '', 'Checking free AI on this PC…');
       else if (st === 'offline') {
         html = noteHTML('warn', 'Free AI on this PC isn’t answering', 'Glow Studio may still be starting. Wait a moment and try again, or use fal.ai cloud for now.',
           '<button type="button" class="btn glass" data-act="recheck">Try again</button>' + A_FAL('Use fal.ai cloud'));
@@ -2549,11 +2694,26 @@
     if (r) {
       var m = metaFor(r), sc = sceneById(m && m.sceneId);
       var where = r.made ? 'made — only the label and sound are left'
+        : r.kind === 'story' ? storyWhere(r, m)
         : { running: 'still being made on this PC', queued: 'waiting its turn on this PC', done: 'almost done', lost: 'the AI engine restarted, so the last step is redone' }[r.state] || 'it picks up where it left off';
       el.engResT.textContent = r.made ? 'Your video is ready to finish' : 'You were making a video';
       el.engResS.textContent = (m ? sc.name + ' · ' : '') + 'started ' + ago((m && m.createdAt) || r.startedAt) + ' · ' + where + ' · free';
       if (el.engContinue) el.engContinue.textContent = r.made ? 'Finish my video' : 'Continue your video';
     }
+  }
+
+  // Where a story stands after the window was closed: the PC finishes only the step it was on, then the story
+  // pauses until it is continued. r.state is that one step's state, so the line is built from the shots done.
+  function storyWhere(r, m) {
+    var n = r.shots || 1, done = r.shotsDone || 0, stills = r.stillsReady || 0;
+    var sofar = done ? done + ' of ' + n + ' shot' + (n > 1 ? 's' : '') + ' done' : stills ? stills + ' of ' + n + ' scene photo' + (n > 1 ? 's' : '') + ' done' : '';
+    if (r.state === 'running' || r.state === 'queued') return 'still being made on this PC' + (sofar ? ' · ' + sofar : '');
+    var left = '';
+    if (m && validRange(m.minutes)) {
+      var f = Math.max(0.15, 1 - (done + 0.2 * Math.max(0, stills - done)) / n);
+      left = ' (about ' + Math.max(1, Math.round(m.minutes[0] * f)) + '–' + Math.max(2, Math.round(m.minutes[1] * f)) + ' min left)';
+    }
+    return 'paused' + (sofar ? ' after ' + sofar.replace(/ done$/, '') : '') + ' — press Continue' + left;
   }
 
   /* ------------------------------------------------------------------ *
@@ -2563,10 +2723,10 @@
    * the queue (Resume continues it). A preview cut off by closing the window is made again, never offered as a video.
    * ------------------------------------------------------------------ */
   var SEE_DEFAULT = ['party-hall', 'famous-street', 'club', 'club-exit-sing'];
-  var SEE = { running: false, queue: [], done: [], failed: [], cur: null, pct: 0, ctl: null, photoSeq: 0, saved: {}, ticked: null, open: false, wait: 0 };
+  var SEE = { running: false, queue: [], done: [], failed: [], cur: null, pct: 0, ctl: null, photoSeq: 0, saved: {}, ticked: null, open: false, wait: 0, resumeAfter: false };
   (function () { var t = lsJSON('glow.ai.see'); SEE.ticked = t && Array.isArray(t.ticked) ? t.ticked : SEE_DEFAULT.slice(); if (t && Array.isArray(t.queue)) SEE.queue = t.queue; })();
   function seeSave() { lsSet('glow.ai.see', JSON.stringify({ ticked: SEE.ticked, queue: SEE.queue })); }
-  function seeAvailable() { return isLocal() && !!LOC.api && localState() === 'ready'; }
+  function seeAvailable() { return isLocal() && !!LOC.api && !LOC.gone && localState() === 'ready'; }
   // a preview already made from this same selfie (making it again would only cost the user time)
   function seeFresh(id) { var r = SEE.saved[id]; return !!(r && S.photo && r.photoKey && r.photoKey === S.photo.key); }
   // the ticked scenes that still need a preview of this selfie, in the order of the scene list
@@ -2580,6 +2740,7 @@
     if (!el.see) return;
     var show = seeAvailable() && !!S.photo && S.consent;
     el.see.hidden = !show && !SEE.running;
+    renderSeeTop(show);
     if (el.see.hidden) return;
     // the scene chips (rebuilt only when needed, so focus stays put)
     if (!el.seeList.children.length) {
@@ -2621,7 +2782,7 @@
     });
     var todo = SEE.running || SEE.queue.length ? SEE.queue.length : seeTodo().length;
     var m = seeMinutes(Math.max(1, todo));
-    el.seeTime.textContent = todo ? todo + ' preview' + (todo > 1 ? 's' : '') + ' · ' + rangeText(m) + ' in all on this PC' + (SEE.running ? '' : ' · 5 s each, Fast quality') :
+    el.seeTime.textContent = todo ? todo + ' preview' + (todo > 1 ? 's' : '') + ' · ' + rangeText(m) + ' in all on this PC' + (SEE.running ? '' : ' · 5 s each, Fast quality') + ' · keep this window open on screen (they pause while it is minimized)' :
       SEE.ticked.length ? 'Your previews are on the scene cards. Tick more scenes to add them.' : 'Tick the scenes you want to see yourself in.';
     el.seeGo.hidden = SEE.running;
     el.seeGo.disabled = !todo;
@@ -2630,6 +2791,45 @@
     el.seeClear.hidden = SEE.running || !SEE.queue.length;
     var cur = SEE.cur ? sceneById(SEE.cur).name : '';
     el.seeSt.textContent = SEE.running ? (cur ? 'Making ' + cur + ' · ' + Math.round(SEE.pct * 100) + '% · ' + (SEE.done.length + 1) + ' of ' + (SEE.done.length + SEE.queue.length) : 'Waiting for the free AI…') : '';
+  }
+  // Above the scene cards (where "show me an example first" is answered): a one-line way to start the previews,
+  // or how they are getting on; and, whenever previews are kept on this PC, a way to remove them.
+  function renderSeeTop(show) {
+    var saved = Object.keys(SEE.saved).length;
+    if (el.seeKept) {
+      el.seeKept.hidden = !saved || SEE.running;
+      if (saved) el.seeKeptT.textContent = 'Your ' + (saved === 1 ? 'quick preview is' : saved + ' quick previews are') + ' kept on this PC so the cards can show ' + (saved === 1 ? 'it' : 'them') + '.';
+    }
+    if (!el.seeTop) return;
+    var todo = SEE.running || SEE.queue.length ? SEE.queue.length : seeTodo().length;
+    el.seeTop.hidden = !(SEE.running || (show && todo > 0 && !running()));
+    if (el.seeTop.hidden) return;
+    var cur = SEE.cur ? sceneById(SEE.cur).name : '';
+    if (SEE.running) {
+      el.seeTopT.textContent = cur ? 'Making your preview of ' + cur + ' · ' + Math.round(SEE.pct * 100) + '% · ' + (SEE.done.length + 1) + ' of ' + (SEE.done.length + SEE.queue.length) : 'Your previews are waiting for the free AI…';
+      el.seeTopGo.hidden = true;
+    } else {
+      el.seeTopT.textContent = 'See yourself in ' + todo + ' scene' + (todo > 1 ? 's' : '') + ' first · ' + rangeText(seeMinutes(todo)) + ', free';
+      el.seeTopGo.hidden = false;
+      el.seeTopGo.textContent = SEE.queue.length ? 'Resume' : 'Start';
+    }
+    el.seeTopMore.textContent = SEE.running ? 'Details' : 'Choose scenes';
+  }
+  // Remove every kept preview (or one scene's): from this PC and from the cards.
+  function removePreviews(id) {
+    var ids = id ? [id] : Object.keys(SEE.saved);
+    ids.forEach(function (k) { delete SEE.saved[k]; });
+    xidb('previews', 'readwrite', function (st) { if (id) return st.delete(id); return st.clear(); }).catch(function () { /* in memory only */ });
+    updateCardPreviews(); renderSee();
+    toast(id ? 'That preview was removed from this PC.' : 'Your previews were removed from this PC.', 'ok', 3000);
+  }
+  // A real video interrupted the previews: they go on by themselves once it is done.
+  function seeAutoResume() {
+    if (!SEE.resumeAfter || SEE.running || running() || RUN.starting) return;
+    SEE.resumeAfter = false;
+    if (!SEE.queue.length || !S.photo || !S.consent || !seeAvailable()) { renderSee(); return; }
+    toast('Your previews go on now.', 'info', 3500);
+    seeStart();
   }
   function seeStart() {
     if (SEE.running) return;
@@ -2640,7 +2840,7 @@
     if (!SEE.queue.length || SEE.photoSeq !== S.photo.seq) SEE.queue = seeTodo();
     if (!SEE.queue.length) { renderSee(); return; }
     SEE.photoSeq = S.photo.seq; SEE.running = true; SEE.done = []; SEE.failed = [];
-    seeSave(); renderSee();
+    seeSave(); renderSee(); cardsWake();
     announce('Making ' + SEE.queue.length + ' previews');
     seeNext();
   }
@@ -2649,17 +2849,17 @@
     SEE.running = false;
     try { if (SEE.ctl) SEE.ctl.abort(); } catch (e) { /* ignore */ }
     SEE.cur = null; clearTimeout(SEE.wait);
-    seeSave(); renderSee();
+    seeSave(); renderSee(); cardsWake();
     if (msg) toast(msg, 'info', 4500);
   }
-  function seeInterrupted() { SEE.running = false; SEE.cur = null; renderSee(); }
+  function seeInterrupted() { SEE.running = false; SEE.cur = null; renderSee(); cardsWake(); }
   async function seeNext() {
     if (!SEE.running) return;
     clearTimeout(SEE.wait);
     var id = SEE.queue[0];
-    if (!id) { SEE.running = false; SEE.cur = null; seeSave(); renderSee(); toast('Your previews are ready — see them on the scene cards.', 'ok', 4500); announce('Your previews are ready'); return; }
+    if (!id) { SEE.running = false; SEE.cur = null; seeSave(); renderSee(); cardsWake(); toast('Your previews are ready — see them on the scene cards.', 'ok', 4500); announce('Your previews are ready'); return; }
     // a real video, another window, the setup, or a hidden window: wait a moment and look again
-    if (running() || RUN.starting || LOC.api.isBusy() || document.hidden || !seeAvailable()) { SEE.wait = setTimeout(seeNext, 2500); return; }
+    if (running() || RUN.starting || LOC.api.isBusy() || !seeAvailable()) { SEE.wait = setTimeout(seeNext, 2500); return; }
     if (!S.photo || S.photo.seq !== SEE.photoSeq || !S.consent) { seePause(); return; }
     if (!(await acquireLocalLock())) { SEE.wait = setTimeout(seeNext, 4000); return; }
     var sc = sceneById(id), photoSeq = SEE.photoSeq, photoKey = S.photo.key;
@@ -2678,6 +2878,7 @@
         if (p.job && !pjob.engineJob) { pjob.engineJob = p.job; saveLocalMeta(pjob); }
         SEE.pct = clamp(+p.overall || 0, 0, 1) * 0.9; renderSee();
       });
+      if (res && res.stillUrl) { try { URL.revokeObjectURL(res.stillUrl); } catch (x) { /* ignore */ } }
       alive();
       // the label is burned in before the preview is kept anywhere
       while (document.hidden) { await wait(500); alive(); }
@@ -2897,12 +3098,14 @@
     m.hidden = false;
     document.body.style.overflow = 'hidden';
     setInert(true);
+    cardsWake(); // (the cards rest behind a sheet)
     if (focusEl) setTimeout(function () { try { focusEl.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }, 30);
   }
   function closeSheet(m) {
     if (m.hidden) return;
     m.hidden = true;
     openStack = openStack.filter(function (x) { return x !== m; });
+    setTimeout(cardsWake, 0);
     if (openStack.length) return;
     // Photo Video's own sheets (export, result) manage the page while they are open.
     if (document.querySelector('.modal:not([hidden])')) return;
@@ -3276,12 +3479,25 @@
     if (job.story && job.shots) h = { at: Math.min.apply(null, job.shots.map(function (x) { var y = x.video || x.still; return y && y.at && !x.videoUrl ? y.at : Date.now(); })) };
     var slow = h && h.at && Date.now() - h.at > CFG.slowAfterMs;
     if (UI.stage === 'finish') el.eta.textContent = '';
-    else if (job.engine === 'local') el.eta.textContent = ' · ' + (job.minutes ? rangeText(job.minutes) : localMinutes(job.sound, job.quality, true)) + ' in all on this PC';
+    else if (job.engine === 'local') { var lft = localLeft(job, el2), all = job.minutes ? rangeText(job.minutes) : localMinutes(job.sound, job.quality, true); el.eta.textContent = ' · ' + lft + (lft ? all.replace(/^about /, '') : all) + ' in all on this PC'; }
     else if (slow) el.eta.textContent = ' · taking longer than usual';
     else if (job.story) el.eta.textContent = ' · usually ' + (job.sound === 'ai' ? '3–7' : '2–5') + ' min for all ' + job.shots.length + ' shots';
     else el.eta.textContent = UI.stage === 'still' ? ' · usually under a minute' : (job.sound === 'ai' ? ' · usually 2–5 min' : ' · usually 1–3 min');
     if (slow && !UI.slowSaid) { UI.slowSaid = true; holdMsg('Still working — fal.ai is busier than usual. We’ll keep checking.', 20000); }
     if (UI.pill === 'run') el.pillT.textContent = (UI.stage === 'finish' ? 'Finishing your video' : 'Making your video') + ' · ' + pct + '%';
+    // the window's title (the taskbar shows it while the window is minimized)
+    setRunTitle(UI.waitVisible ? '✓ Your video is ready to finish' : (UI.stage === 'finish' ? '● Finishing your video ' : '● Making your video ') + pct + '%');
+  }
+  var BASE_TITLE = document.title;
+  function setRunTitle(t) { var v = t ? t + ' — Glow Studio' : BASE_TITLE; if (document.title !== v) { try { document.title = v; } catch (e) { /* ignore */ } } }
+  // "about 12–20 min left": the planned minutes minus the time so far, steered by the engine's own progress
+  function localLeft(job, el2) {
+    var m = validRange(job.minutes) ? job.minutes : null, ov = UI.localOverall || 0, done = (Date.now() - (UI.runAt || UI.startAt)) / 60000;
+    if (!m || UI.stage === 'finish') return '';
+    var lo = m[0] - done, hi = m[1] - done;
+    if (ov >= 0.12 && done > 1) { var proj = done / ov * (1 - ov); lo = Math.min(Math.max(lo, proj * 0.8), proj); hi = Math.max(proj * 1.25, Math.min(hi, proj * 1.6)); }
+    lo = Math.max(1, Math.round(lo)); hi = Math.max(lo + 1, Math.round(hi));
+    return 'about ' + lo + '–' + hi + ' min left · ';
   }
   // fal story: how far the shots are (they run side by side), time-based inside each request like stageFrac()
   function storyFrac(job) {
@@ -3348,7 +3564,7 @@
     if (el.stillName) el.stillName.textContent = nShots > 1 ? 'Placing you in ' + nShots + ' shots' : 'Placing you in the scene';
     UI.shotQ = {}; UI.shotAt = {}; UI.shotSeen = {};
     renderShots(job);
-    if (local) el.keepOpen.textContent = 'Keep Glow Studio open until it’s done. It’s made on this PC, so it’s free. If the window closes, open Glow Studio again: your video waits there (“Continue your video” or “Finish my video”).';
+    if (local) el.keepOpen.textContent = 'It’s made on this PC, so it’s free. You can minimize this window — bring it back for the last minute so the music and the label can be added. If you close this window, your video pauses: open Glow Studio again and press Continue — nothing is lost.';
     else el.keepOpen.innerHTML = KEEP_OPEN_FAL;
     ['still', 'video', 'finish'].forEach(function (s) { setStep(s, 'todo', ''); });
     var thumb = (S.photo && S.photo.url) || job.thumb || '';
@@ -3382,7 +3598,7 @@
       stage: 'upload', thumb: S.photo ? S.photo.thumb : '', photoSeq: S.photo ? S.photo.seq : 0,
       still: null, stillUrl: null, video: null, videoUrl: null, tries: {}
     };
-    if (sound === 'own' && S.own) job.own = { id: S.own.id, name: S.own.name, start: S.own.start };
+    if (sound === 'own' && S.own) job.own = ownForJob(S.duration);
     job.hint = sound === 'ai' ? '' : beatHint(tempoOf(sound, S.trackId));
     if (sc.story) {
       // a story: one scene photo + one 5 s clip per shot, all from the same selfie
@@ -3394,9 +3610,9 @@
   // The tempo the clips should move to ("Dance to the beat"): the built-in track's, or the analysed part of my song.
   function tempoOf(sound, trackId) {
     if (sound === 'own') {
-      var b = S.own && S.own.beat;
+      var b = S.own && ownPartBeat(S.own, Math.min(S.own.start, ownMaxStart()), S.duration);
       if (!b || !(b.bpm > 0)) return null;
-      var st = S.own.start, en = st + S.duration, e = 0, c = 0;
+      var st = Math.min(S.own.start, ownMaxStart()), en = st + S.duration, e = 0, c = 0;
       b.beats.forEach(function (t, k) { if (t >= st && t <= en) { e += b.energy[k] || 0; c++; } });
       return { bpm: b.bpm, energy: c ? e / c : 0.7 };
     }
@@ -3427,7 +3643,7 @@
       return true;
     });
   }
-  function endRun() { RUN.job = null; RUN.persisted = false; releaseLock(); releaseLocalLock(); clearInterval(UI.beatTimer); }
+  function endRun() { RUN.job = null; RUN.persisted = false; releaseLock(); releaseLocalLock(); clearInterval(UI.beatTimer); UI.waitVisible = false; setRunTitle(''); setTimeout(cardsWake, 0); if (SEE.resumeAfter) setTimeout(seeAutoResume, 2500); }
   async function runJob(job) {
     if (job.story) return runStory(job);
     var sc = sceneById(job.sceneId);
@@ -3764,9 +3980,17 @@
     if (!el.shots || el.shots.hidden) return;
     var li = el.shots.children[i];
     if (!li || li.dataset.state === 'done' && state === 'active') return;
+    // only one shot is "being worked on" at a time
+    if (state === 'active') clearActiveShots(i);
     li.dataset.state = state;
   }
+  function clearActiveShots(except) {
+    if (!el.shots) return;
+    Array.prototype.forEach.call(el.shots.children, function (li, k) { if (k !== except && li.dataset.state === 'active') li.dataset.state = 'todo'; });
+  }
   function shotStill(job, i, url) {
+    // kept with the shot, so the strip still shows it when it is drawn again (finishing, after a reload)
+    if (job.shots && job.shots[i] && !job.shots[i].stillUrl) job.shots[i].stillUrl = url;
     if (el.shots && !el.shots.hidden) {
       var li = el.shots.children[i];
       if (li && !li.classList.contains('has-still')) {
@@ -3794,14 +4018,14 @@
     };
     if (!plan) return job;
     job.duration = plan.duration; job.sync = plan.sync; job.minutes = localRange(plan);
-    if (job.sound === 'own' && S.own) job.own = { id: S.own.id, name: S.own.name, start: S.own.start };
+    if (job.sound === 'own' && S.own) job.own = ownForJob(plan.duration);
     job.hint = job.sound === 'ai' ? (sc.story ? ' Everyone moves in time with the upbeat rhythm of the song.' : '') : beatHint(tempoOf(job.sound, trackId));
     if (plan.local === 'story') {
       // where each shot's part of the soundtrack starts: shots back to back (lip-synced ones exactly 4.8 s), the
       // others ending on the song's beats where it has known beats (my song); the finishing step uses the same plan
       job.story = true;
       var soundStart = job.sound === 'own' && job.own ? job.own.start : 0;
-      var grid = job.sound === 'own' && S.own ? gridShift(S.own.beat, soundStart, 90) : null;
+      var grid = job.sound === 'own' && S.own ? gridShift(ownPartBeat(S.own, soundStart, plan.duration), soundStart, 90) : null;
       var tl = planTimeline(plan.shots.map(function (x) { return x.lip ? LIP_SEC : 5.03; }), plan.shots.map(function (x) { return x.lip; }), null, grid);
       job.shots = plan.shots.map(function (x, i) { return { id: x.shot.id, title: x.shot.title, lip: x.lip, audioStart: x.lip ? Math.round((soundStart + tl.B[i]) * 1000) / 1000 : null }; });
       job.songStart = 0;
@@ -3829,7 +4053,7 @@
     return {
       quality: job.quality, shots: shots,
       song: job.sound === 'ai' && sc.song ? { lyrics: sc.song.lyrics, style: sc.song.style, language: 'es', seconds: job.songSeconds || 22 } : null,
-      audio: job.sound === 'own' && anyLip && S.own ? { blob: S.own.blob, start: job.own ? job.own.start : S.own.start } : null
+      audio: job.sound === 'own' && anyLip && S.own ? { blob: S.own.blob, start: job.own ? job.own.start : Math.min(S.own.start, ownMaxStart()) } : null
     };
   }
   // Resolves true when the video now runs in this page, false when another window is making one (or this page is busy).
@@ -3907,7 +4131,7 @@
         check(job);
         if (res && Array.isArray(res.clips)) {
           // a story: every shot's clip, in order (and the whole song, with where each shot's part of it starts)
-          job.clips = res.clips.map(function (c) { return { id: c.id, blob: c.video, lipSync: !!c.lipSync, seconds: c.seconds, width: c.width, height: c.height, fps: c.fps, stillUrl: c.stillUrl || null }; });
+          job.clips = res.clips.map(function (c) { trackUrl(c.stillUrl); return { id: c.id, blob: c.video, lipSync: !!c.lipSync, seconds: c.seconds, width: c.width, height: c.height, fps: c.fps, stillUrl: c.stillUrl || null }; });
           if (!job.clips.length || job.clips.some(function (c) { return !(c.blob && c.blob.size); })) throw lostErr('the story came back without its clips');
           job.localAudio = res.audio || null;
           job.songOffsets = res.songOffsets || null;
@@ -3924,6 +4148,7 @@
           job.localAudio = res.audio || null;
           job.local = { width: res.width, height: res.height, fps: res.fps, seconds: res.seconds, lipSync: !!res.lipSync, stillModel: res.stillModel, quality: res.quality, timings: res.timings };
           if (res.job && res.job !== job.engineJob) { job.engineJob = res.job; saveLocalMeta(job); }
+          trackUrl(res.stillUrl);
           if (res.stillUrl && !job.stillUrl) { job.stillUrl = res.stillUrl; showStill(res.stillUrl, true); }
           setStep('still', 'done', 'Done'); setStep('video', 'done', 'Done');
         }
@@ -3959,8 +4184,10 @@
     else if (n > 1 && p.stage === 'video') sub = 'Shot' + of + ' · ' + pct + '%';
     else sub = pct + '%';
     setStep(step, null, sub);
-    if (p.message) setMsg(p.message); // the engine's own plain words, as they are
-    if (n > 1 && si != null && si >= 0 && si < n) {
+    // the engine's own plain words, as they are (not its final "Done!": the finishing step comes after it)
+    if (p.message && !(p.stage === 'download' && /^done!?$/i.test(String(p.message).trim()))) setMsg(p.message);
+    if (n > 1 && (si == null || p.stage === 'song' || p.stage === 'download')) clearActiveShots(-1);
+    if (n > 1 && si != null && si >= 0 && si < n && p.stage !== 'song' && p.stage !== 'download') {
       // the shot strip: the shot being worked on is lit; a clip is done once the engine moves on to the next one
       UI.shotSeen = UI.shotSeen || {};
       var key = (p.stage === 'lipsync' ? 'video' : p.stage), prev = UI.shotSeen[key];
@@ -3969,6 +4196,7 @@
       setShot(si, 'active');
     }
     var su = p.stillUrl, sIdx = p.shotIndex != null ? +p.shotIndex : si;
+    trackUrl(su);
     if (su && n > 1 && sIdx != null) shotStill(job, sIdx, su);
     else if (su && !job.stillUrl) {
       job.stillUrl = su;
@@ -3992,6 +4220,7 @@
   // Errors from GlowLocalAI, routed by e.code; the engine's message is shown as it is (with the launcher's "press
   // Start" put in this panel's words), its detail under "Details".
   function localErrorView(e, job) {
+    if (LOC.gone && !(e && e.kind === 'finish')) return goneView();
     var code = (e && (e.code || e.kind)) || 'failed';
     var msg = e && e.name === 'GlowLocalAIError' && e.message ? engineText(e.message, 'panel') : '';
     var det = e && e.detail ? String(e.detail) : '';
@@ -4029,6 +4258,12 @@
         return { t: 'The free AI couldn’t finish this video', p: msg || 'Something went wrong while making the video. Please try again.', a: ['retry'], detail: det };
     }
   }
+  // The scene photos the engine hands over (object URLs) belong to this page: let them go once their video is saved.
+  function trackUrl(u) { if (u && /^blob:/.test(u) && LOC.urls.indexOf(u) < 0) LOC.urls.push(u); }
+  function revokeUrls() {
+    if (running()) return;
+    LOC.urls.splice(0).forEach(function (u) { try { URL.revokeObjectURL(u); } catch (e) { /* ignore */ } });
+  }
   function failLocal(job, e) {
     console.warn('[glow-ai] local job failed', e);
     endRun();
@@ -4039,8 +4274,55 @@
     LOC.retry = e && e.kind === 'finish' && (job.localBlob || job.engineJob) ? job : null;
     if (!LOC.retry && e && e.code === 'lost' && job.engineJob) clearLocalMeta();
     if (e && e.stillUrl && !job.stillUrl) { job.stillUrl = e.stillUrl; showStill(e.stillUrl, true); }
+    LOC.lastFail = { e: e, job: job };
     renderJobError(localErrorView(e, job), job);
     renderEngine();
+    // lost the connection: is Glow Studio's helper (the launcher) still there at all?
+    if (e && /network|interrupted|failed|download|unavailable/.test(e.code || '') && !LOC.gone) checkLauncher(true);
+  }
+
+  /* Glow Studio's helper (the launcher that serves this window) can be gone: closed, crashed, or quit while this
+   * window slept. Nothing answers then, and "Try again" could never work, so the page says what to do instead:
+   * open Glow Studio again. Checked every 30 s while the window is on screen, and at once after a lost connection;
+   * when the helper answers again, everything carries on (the video's engine record waits on the PC). */
+  function pingLauncher() {
+    var ctl = typeof AbortController === 'function' ? new AbortController() : null, t = setTimeout(function () { if (ctl) ctl.abort(); }, 5000);
+    return fetch('/__glow/ping', { cache: 'no-store', signal: ctl ? ctl.signal : undefined })
+      .then(function (r) { return r.ok; }, function () { return false; })
+      .then(function (ok) { clearTimeout(t); return ok; });
+  }
+  var goneMisses = 0;
+  function checkLauncher(now) {
+    if (!LOC.inApp) return Promise.resolve(true);
+    return pingLauncher().then(function (ok) {
+      if (ok) {
+        goneMisses = 0;
+        if (LOC.gone) {
+          LOC.gone = false;
+          announce('Glow Studio is back');
+          var f = LOC.lastFail;
+          if (f && UI.state === 'error' && !running() && !el.err.hidden && !el.prog.hidden) renderJobError(localErrorView(f.e, f.job), f.job);
+          refreshLocal().then(function () { checkLocalResume(); });
+        }
+        return true;
+      }
+      if (++goneMisses < (now ? 1 : 2)) return false; // (one missed ping in the background can be a hiccup)
+      if (!LOC.gone) {
+        LOC.gone = true;
+        announce('Glow Studio’s helper has closed. Open Glow Studio again from your desktop icon.');
+        var f2 = LOC.lastFail;
+        if (f2 && UI.state === 'error' && !running() && !el.err.hidden && !el.prog.hidden) renderJobError(localErrorView(f2.e, f2.job), f2.job);
+        renderEngine(); updateCost();
+      }
+      return false;
+    });
+  }
+  function goneView() {
+    return { t: 'Glow Studio’s helper has closed', p: 'The part of Glow Studio that runs the free AI isn’t running any more (it was closed, or your PC went to sleep). Open Glow Studio again from your desktop icon or the Start menu — your video picks up where it left off. This window notices by itself when it’s back.', a: [] };
+  }
+  if (LOC.inApp) {
+    setInterval(function () { if (!document.hidden && (mode() === 'ai' || LOC.gone)) checkLauncher(false); }, TEST.goneMs || 30000);
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) checkLauncher(false); });
   }
 
   // Downloads fal's finished clip. A 4xx means the file is gone; connection trouble is waited out (the video is
@@ -4115,7 +4397,13 @@
           await needTap(job);
           continue;
         }
-        if (e && e.code === 'hidden') { await whenVisible(); continue; }
+        if (e && e.code === 'hidden') {
+          // the clips are made, the finishing needs the window on screen: say so in the taskbar
+          UI.waitVisible = true; tick();
+          holdMsg('Your clips are made — keep this window on screen for the last minute (music and label).', 60000);
+          await whenVisible(); UI.waitVisible = false; UI.hold = 0; tick();
+          continue;
+        }
         break;
       }
     }
@@ -4538,7 +4826,7 @@
       if (sound === 'own') {
         var own = S.own;
         if (!own || !own.buffer || (job.own && job.own.id && own.id !== job.own.id)) throw finErr('own-missing', 'Your song is no longer loaded');
-        trackBuf = own.buffer; soundStart = job.own ? job.own.start : own.start; beat = own.beat;
+        trackBuf = own.buffer; soundStart = job.own ? job.own.start : own.start; beat = ownPartBeat(own, soundStart, job.duration || S.duration);
       } else if (sound === 'ai' && local) {
         if (job.localAudio) { try { trackBuf = await decodeAudio(ctx, job.localAudio); } catch (e) { console.warn('[glow-ai] song decode failed', e); trackBuf = null; } }
         chk();
@@ -4660,7 +4948,7 @@
       }
       UI.timeline.skew = Math.round(skew * 1000) / 1000;
       var result = await new Promise(function (resolve, reject) {
-        var settled = false, stopping = false, raf = 0, watchdog = 0, t0 = 0, started = [], newFrame = false, lastGrab = 0, grabs = 0, lastPct = -1;
+        var settled = false, stopping = false, raf = 0, watchdog = 0, t0 = 0, started = [], released = [], newFrame = false, lastGrab = 0, grabs = 0, lastPct = -1;
         var useCtx = true, lastCt = -1, lastCtAt = 0, base = 0, baseAt = 0, lastVT = -1, lastVMove = 0;
         function clock() {
           var now = performance.now();
@@ -4694,7 +4982,8 @@
               if (k > 0) {
                 var prev = vids[k - 1], pg = clipGains[k - 1];
                 if (pg) { var at2 = ctx.currentTime; pg.gain.setValueAtTime(pg.gain.value, at2); pg.gain.linearRampToValueAtTime(0, at2 + 0.04); }
-                setTimeout(function () { try { prev.pause(); } catch (e) { /* ignore */ } }, (TRANS_SEC + 0.05) * 1000);
+                // the shot before is never drawn again after its transition: free its decoder (phones have few)
+                setTimeout(function () { try { prev.pause(); } catch (e) { /* ignore */ } released[k - 1] = true; try { prev.removeAttribute('src'); prev.load(); } catch (e) { /* ignore */ } }, (TRANS_SEC + 0.05) * 1000);
               }
             }
           }
@@ -4752,7 +5041,7 @@
           }, 140);
         }
         rec.onerror = function (e) { fail((e && e.error) || finErr('record', 'recorder error')); };
-        vids.forEach(function (v) { v.addEventListener('error', function () { fail(finErr('decode', 'Playback error')); }); });
+        vids.forEach(function (v, k) { v.addEventListener('error', function () { if (!released[k]) fail(finErr('decode', 'Playback error')); }); });
         watchdog = setInterval(function () {
           if (settled || stopping) return;
           if (performance.now() - lastVMove > 7000) fail(finErr('stalled', 'Playback stalled'));
@@ -4921,6 +5210,7 @@
       // the labelled video is saved: the engine may forget the job and delete its copies (selfie + raw outputs)
       if (job.engineJob) LOC.api.release(job.engineJob);
       LOC.retry = null; LOC.resume = null; clearLocalMeta(); renderEngine();
+      setTimeout(revokeUrls, 1500); // (the scene photos of this video, once its progress sheet is closed)
     }
     else { clearJob(); S.retryJob = null; }
     UI.state = 'done';
@@ -5187,7 +5477,7 @@
     if (sound === 'own' && !S.own) { toast('Choose your song first.', 'warn'); attention(el.soundCard); openOwnPicker(); return; }
     if (!photoReady()) return;
     if (!canRecord()) { refuseUnsupported(); return; }
-    if (SEE.running) seePause('Your video comes first — the previews wait until it’s done.');
+    if (SEE.running) { seePause('Your video comes first — the previews go on by themselves when it’s done.'); SEE.resumeAfter = true; }
     var plan = planFor(sc, { sound: sound });
     startLocalRun(localJob(sc, sound, S.trackId, plan.quality, S.photo.thumb, plan), {});
   }
@@ -5256,7 +5546,10 @@
     if (running()) { openProgress(); return; }
     if (RUN.starting) return;
     // "Try again" in an error panel goes to the engine that made that video, whatever is chosen now
-    if (opts && opts.engine ? opts.engine === 'local' && LOC.inApp && LOC.api : isLocal()) { onMakeLocal(opts); return; }
+    if (opts && opts.engine ? opts.engine === 'local' && LOC.inApp && LOC.api : isLocal()) {
+      if (LOC.gone) { toast('Glow Studio’s helper has closed — open Glow Studio again from your desktop icon. Your video waits on this PC.', 'warn', 6500); attention(el.engCard); checkLauncher(true); return; }
+      onMakeLocal(opts); return;
+    }
     // Something already paid for comes first: a paused job, or one a closed page left behind.
     var pj = pausedJob();
     if (!pj) {
@@ -5658,23 +5951,28 @@
     el.wave.addEventListener('pointercancel', dragEnd);
     el.wave.addEventListener('keydown', function (e) {
       var own = S.own; if (!own) return;
-      var b = own.beat, step = b && b.bpm ? 60 / b.bpm : 1, big = step * 4, t = own.start;
-      if (e.key === 'ArrowRight' || e.key === 'ArrowUp') t += step;
-      else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') t -= step;
-      else if (e.key === 'PageUp') t += big * 2;
-      else if (e.key === 'PageDown') t -= big * 2;
+      // a bar at a time (the start stays on a downbeat), 4 bars with Page Up/Down
+      var t, snap = false;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowUp') t = stepOwnStart(1, 1);
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') t = stepOwnStart(-1, 1);
+      else if (e.key === 'PageUp') t = stepOwnStart(1, 4);
+      else if (e.key === 'PageDown') t = stepOwnStart(-1, 4);
       else if (e.key === 'Home') t = 0;
-      else if (e.key === 'End') t = own.duration;
+      else if (e.key === 'End') { t = own.duration; snap = true; }
       else return;
       e.preventDefault();
-      setOwnStart(t, e.key === 'Home' ? false : true);
-      saveOwnStart(); updateCost();
+      setOwnStart(t, snap);
+      saveOwnStart(); updateAll();
     });
   }
   window.addEventListener('resize', function () { drawWave(); });
+  if (window.matchMedia) { var nq = window.matchMedia('(max-width: 480px)'); var onNq = function () { updateCost(); }; if (nq.addEventListener) nq.addEventListener('change', onNq); else if (nq.addListener) nq.addListener(onNq); }
   // Sync to the song
   if (el.syncSeg) Array.prototype.forEach.call(el.syncSeg.querySelectorAll('.opt'), function (b) {
-    b.addEventListener('click', function () { S.sync = b.getAttribute('data-sync') === 'lips' ? 'lips' : 'beat'; savePrefs(); updateAll(); });
+    b.addEventListener('click', function () {
+      if (b.getAttribute('aria-disabled') === 'true') { toast(ownShortText(), 'warn', 5500); return; }
+      S.sync = b.getAttribute('data-sync') === 'lips' ? 'lips' : 'beat'; savePrefs(); updateAll();
+    });
   });
   // Preview sheet
   if (el.pvSheet) {
@@ -5691,7 +5989,19 @@
   // See yourself in every scene
   if (el.seeGo) el.seeGo.addEventListener('click', seeStart);
   if (el.seeStop) el.seeStop.addEventListener('click', function () { seePause('Previews paused — tap “Resume previews” to go on.'); });
-  if (el.seeClear) el.seeClear.addEventListener('click', function () { SEE.queue = []; seeSave(); renderSee(); });
+  if (el.seeClear) el.seeClear.addEventListener('click', function () { SEE.queue = []; SEE.resumeAfter = false; seeSave(); renderSee(); });
+  if (el.seeTopGo) el.seeTopGo.addEventListener('click', seeStart);
+  if (el.seeTopMore) el.seeTopMore.addEventListener('click', function () { attention(el.see); try { el.see.scrollIntoView({ block: 'center', behavior: REDUCED ? 'auto' : 'smooth' }); } catch (e) { /* ignore */ } });
+  if (el.seeRemove) el.seeRemove.addEventListener('click', function () {
+    if (!el.seeRemove.dataset.armed) {
+      el.seeRemove.dataset.armed = '1'; el.seeRemove.textContent = 'Tap again to remove them';
+      setTimeout(function () { el.seeRemove.dataset.armed = ''; el.seeRemove.textContent = 'Remove my previews'; }, 3500);
+      return;
+    }
+    el.seeRemove.dataset.armed = ''; el.seeRemove.textContent = 'Remove my previews';
+    removePreviews();
+  });
+  if (el.pvsDel) el.pvsDel.addEventListener('click', function () { var id = PV.id; closeScenePreview(); if (id) removePreviews(id); });
   // AI engine: free on this PC | fal.ai cloud (a radio group: arrows move the choice)
   if (el.engSeg) Array.prototype.forEach.call(el.engSeg.querySelectorAll('.ai-eng-opt'), function (b, i, all) {
     b.addEventListener('click', function () { chooseEngine(b.getAttribute('data-engine'), true); });
@@ -5863,7 +6173,10 @@
   function fitStage() {
     if (!el.stage) return;
     var wide = window.matchMedia && window.matchMedia('(min-width: 980px)').matches;
-    el.ai.classList.toggle('stage-free', !!wide && el.stage.offsetHeight > window.innerHeight - 32);
+    var free = !!wide && el.stage.offsetHeight > window.innerHeight - 32;
+    el.ai.classList.toggle('stage-free', free);
+    // (sticky with a negative top: the column scrolls until its bottom, with "Make my video", is in the window)
+    el.ai.style.setProperty('--stage-top', free ? Math.min(16, window.innerHeight - el.stage.offsetHeight - 16) + 'px' : '16px');
   }
   window.addEventListener('resize', fitStage);
   if (window.ResizeObserver && el.stage) { try { new ResizeObserver(function () { fitStage(); }).observe(el.stage); } catch (e) { /* ignore */ } }
@@ -5936,7 +6249,12 @@
         retry: S.retryJob ? (S.retryJob.resume ? 'resume' : 'still') : null, pill: el.pill.hidden ? null : UI.pill,
         monitor: UI.mon ? UI.mon.gain.value : null, capture: UI.capture || null, captureFrames: UI.captureFrames == null ? null : UI.captureFrames, localElsewhere: LOC.elsewhere,
         sync: S.sync, effSync: effSync(sceneById(S.sceneId), effSound()), storyOk: storyOk(), lengths: lengthsFor(sceneById(S.sceneId)),
-        own: S.own ? { id: S.own.id, name: S.own.name, duration: S.own.duration, start: S.own.start, bpm: S.own.beat ? S.own.beat.bpm : 0, firstDownbeat: S.own.beat ? S.own.beat.firstDownbeat : null } : null,
+        own: S.own ? (function () {
+          var pb = ownPartBeat(S.own, Math.min(S.own.start, ownMaxStart()), S.duration, true) || {};
+          return { id: S.own.id, name: S.own.name, duration: S.own.duration, start: S.own.start, bpm: S.own.beat ? S.own.beat.bpm : 0, firstDownbeat: S.own.beat ? S.own.beat.firstDownbeat : null,
+            partBpm: pb.bpm || 0, partDownbeats: (pb.downbeats || []).slice(0, 64), partBeats: (pb.beats || []).slice(0, 128), maxStart: ownMaxStart() };
+        })() : null,
+        gone: LOC.gone, title: document.title, seeTop: el.seeTop ? !el.seeTop.hidden : false, seeKept: el.seeKept ? !el.seeKept.hidden : false,
         timeline: UI.timeline || null, cardDraws: CARD.draws, cardVisible: Object.keys(CARD.vis).filter(function (k) { return CARD.vis[k]; }),
         cardMedia: Object.keys(sceneBtns).filter(function (k) { return !!sceneBtns[k].vid; }), preview: el.pvSheet && !el.pvSheet.hidden ? { id: PV.id, muted: PV.muted, music: !!PV.src, video: !!PV.video } : null,
         see: { running: SEE.running, queue: SEE.queue.slice(), done: SEE.done.slice(), failed: SEE.failed.slice(), cur: SEE.cur, saved: Object.keys(SEE.saved) },

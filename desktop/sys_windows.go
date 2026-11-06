@@ -23,6 +23,8 @@ var (
 	procCreateJobObjectW         = kernel32.NewProc("CreateJobObjectW")
 	procSetInformationJobObject  = kernel32.NewProc("SetInformationJobObject")
 	procAssignProcessToJobObject = kernel32.NewProc("AssignProcessToJobObject")
+	procOpenProcess              = kernel32.NewProc("OpenProcess")
+	procQueryFullProcessImageW   = kernel32.NewProc("QueryFullProcessImageNameW")
 )
 
 const (
@@ -279,4 +281,31 @@ func isPathTooLong(err error) bool {
 		return en == errorFilenameExcedRange
 	}
 	return false
+}
+
+// processName is the full path of process pid's program ("" when unknown).
+func processName(pid int) string {
+	const queryLimitedInformation = 0x1000
+	h, _, _ := procOpenProcess.Call(queryLimitedInformation, 0, uintptr(pid))
+	if h == 0 {
+		return ""
+	}
+	defer syscall.CloseHandle(syscall.Handle(h))
+	buf := make([]uint16, 1024)
+	n := uint32(len(buf))
+	r, _, _ := procQueryFullProcessImageW.Call(h, 0, uintptr(unsafe.Pointer(&buf[0])), uintptr(unsafe.Pointer(&n)))
+	if r == 0 || n == 0 {
+		return ""
+	}
+	return syscall.UTF16ToString(buf[:n])
+}
+
+// stopProcess ends an older launcher (its ComfyUI ends with it: the job object
+// it put ComfyUI in is closed when it exits).
+func stopProcess(pid int) error {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return p.Kill()
 }

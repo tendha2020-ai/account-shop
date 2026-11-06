@@ -473,10 +473,26 @@ body[data-mode="photo"] .modes-thumb { transform: translateX(100%); }
 }
 .ai-scene-pv svg { width: 14px; height: 14px; fill: #fff; margin-left: 2px; flex: 0 0 auto; }
 .ai-scene-pv span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-.ai-scene-pv:hover { background: rgba(164, 87, 255, .55); transform: scale(1.08); }
+.ai-scene-pv:hover { background: rgba(164, 87, 255, .55); }
 .ai-scene-pv:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
-.ai-you { position: absolute; left: 7px; bottom: auto; top: 34px; z-index: 3; padding: 2px 7px; border-radius: 999px; font-size: 10.5px; font-weight: 700; letter-spacing: .03em; color: #032a20; background: linear-gradient(115deg, #6ff5c8, #22d3ee); box-shadow: 0 4px 10px -3px rgba(34, 211, 238, .6); }
+/* with a mouse: the word "Preview" slides out when the card is hovered or the button has focus */
+@media (hover: hover) and (pointer: fine) {
+  .ai-scene-w:hover .ai-scene-pv, .ai-scene-pv:focus-visible { width: auto; padding: 0 12px 0 10px; }
+  .ai-scene-w:hover .ai-scene-pv span, .ai-scene-pv:focus-visible span { position: static; width: auto; height: auto; clip: auto; overflow: visible; font-size: 12px; font-weight: 700; letter-spacing: .01em; }
+}
+/* on touch screens: a full 44 px target */
+@media (pointer: coarse) {
+  .ai-scene-pv { width: 44px; height: 44px; right: 4px; bottom: 4px; }
+  .ai-scene-pv svg { width: 16px; height: 16px; }
+  .ai-scene-txt { right: 52px; }
+}
+/* a card that plays the user's own AI video: "Your video" + the AI label take the badges' place */
+.ai-you { position: absolute; left: 7px; top: 7px; right: 36px; z-index: 3; display: flex; flex-wrap: wrap; gap: 4px; pointer-events: none; }
+.ai-you b, .ai-you i { padding: 3px 7px; border-radius: 999px; font-size: 10.5px; font-weight: 700; letter-spacing: .03em; font-style: normal; line-height: 1.2; box-shadow: 0 4px 10px -3px rgba(0, 0, 0, .55); }
+.ai-you b { color: #032a20; background: linear-gradient(115deg, #6ff5c8, #22d3ee); }
+.ai-you i { color: #fff; background: rgba(8, 6, 16, .72); border: 1px solid rgba(255, 255, 255, .28); }
 .ai-you[hidden] { display: none; }
+.ai-scene.has-you .ai-badges { display: none; }
 
 /* ---------- 3. Sound: three choices ---------- */
 .ai-sound { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -523,6 +539,9 @@ body[data-mode="photo"] .modes-thumb { transform: translateX(100%); }
 .ai-sync .seg[hidden] { display: none; }
 .ai-sync-note { margin: 0 2px; font-size: 12px; line-height: 1.45; color: var(--muted); }
 .ai-sync-note:empty { display: none; }
+.ai-sync .glabel[hidden] { display: none; }
+.ai-sync.ai-sync-hint { gap: 0; }
+.ai-sync .opt.locked { opacity: .5; cursor: not-allowed; }
 
 /* ---------- Progress: the shots of a story ---------- */
 .ai-shots { list-style: none; margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
@@ -564,6 +583,24 @@ body[data-mode="photo"] .modes-thumb { transform: translateX(100%); }
 .ai-pvs-shots li.on { color: var(--text); background: linear-gradient(115deg, rgba(255, 79, 163, .14), rgba(164, 87, 255, .14)); border-color: rgba(201, 166, 255, .45); }
 .ai-pvs-shots li.on::before { background: var(--grad); }
 .ai-pvs-note { margin: 10px 0 0; font-size: 12.5px; color: var(--faint); }
+.ai-pvs-cap { white-space: pre-line; }
+.ai-pvs-acts .btn[hidden] { display: none; }
+/* phones: a smaller picture, and "Use this scene" always in reach at the bottom of the sheet */
+@media (max-width: 759px) {
+  .ai-pvs-stage { --pvh: min(44vh, 520px); }
+  @supports (height: 1svh) { .ai-pvs-stage { --pvh: min(44svh, 520px); } }
+  .ai-pvs-acts { position: sticky; bottom: calc(-18px - env(safe-area-inset-bottom)); z-index: 3; margin: 12px calc(-1 * var(--gutter)) calc(-18px - env(safe-area-inset-bottom)); padding: 10px var(--gutter) calc(12px + env(safe-area-inset-bottom)); background: linear-gradient(180deg, rgba(13, 10, 24, .7), #0d0a18 30%); }
+}
+/* "See yourself" in one line above the scene cards, and the kept previews' line under them */
+.ai-see-top { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin: 0 0 12px; padding: 8px 8px 8px 14px; border-radius: 14px; background: linear-gradient(135deg, rgba(34, 211, 238, .1), rgba(164, 87, 255, .12)); border: 1px solid rgba(139, 232, 247, .26); }
+.ai-see-top[hidden] { display: none; }
+.ai-see-top-t { flex: 1 1 200px; min-width: 0; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ai-see-top-go { min-height: 40px; padding: 0 16px; font-size: 13.5px; }
+.ai-see-top-go[hidden] { display: none; }
+.ai-see-top .link-btn { min-height: 40px; }
+.ai-see-kept { margin: 10px 2px 0; font-size: 12px; color: var(--muted); }
+.ai-see-kept[hidden] { display: none; }
+.ai-see-kept .link-btn { font-size: 12px; }
 
 /* ---------- See yourself in every scene ---------- */
 .ai-see { margin-top: 14px; padding: 14px; border-radius: 16px; background: linear-gradient(135deg, rgba(34, 211, 238, .08), rgba(164, 87, 255, .1)); border: 1px solid rgba(139, 232, 247, .26); }
@@ -636,7 +673,8 @@ body[data-mode="photo"] .modes-thumb { transform: translateX(100%); }
   .modes { padding-top: 0; padding-bottom: 18px; }
   .ai { grid-template-columns: minmax(0, 1fr) minmax(440px, 540px); gap: 28px; align-items: start; }
   .ai-stage { position: sticky; top: 16px; }
-  .ai.stage-free .ai-stage { position: static; }
+  /* a selfie column taller than the window scrolls with the page until its bottom (the button) is in view, then stays */
+  .ai.stage-free .ai-stage { top: var(--stage-top, 16px); }
   /* The button always stays on screen: it sticks to the bottom of the window while the selfie column is taller. */
   .ai-cta-bar { position: sticky; bottom: 16px; z-index: 3; }
   .ai-cta-bar::before { content: ""; position: absolute; inset: -14px -8px -16px; z-index: -1; border-radius: 26px; background: linear-gradient(180deg, rgba(7, 6, 13, 0), rgba(7, 6, 13, .75) 40%); pointer-events: none; }

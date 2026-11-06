@@ -813,6 +813,8 @@ func (h *harness) start() {
 	mux := http.NewServeMux()
 	mux.Handle("/__glow/engine/", h.e.apiHandler())
 	mux.Handle("/__glow/comfy/", h.e.proxyHandler())
+	mux.HandleFunc("/__glow/version", handleVersion(h.e))
+	mux.HandleFunc("/__glow/quit", handleQuit(h.e))
 	h.srv = httptest.NewUnstartedServer(logRequests(mux)) // as in main.go (the proxy's WebSocket must pass through it)
 	h.srv.Listener.Close()
 	h.srv.Listener = ln
@@ -923,7 +925,7 @@ func (h *harness) installCore() {
 func TestInstallFlow(t *testing.T) {
 	h := newHarness(t)
 	s := h.status()
-	if s.Launcher != "1.2.0" || s.OS != runtime.GOOS || s.Engine.State != "not-installed" || s.Job != nil || s.Packs["core"].Installed {
+	if s.Launcher != launcherVersion || s.OS != runtime.GOOS || s.Engine.State != "not-installed" || s.Job != nil || s.Packs["core"].Installed {
 		t.Fatalf("initial status %+v", s)
 	}
 	if s.GPU == nil || s.GPU.VramMB != 8151 || s.GPU.DriverOk || s.GPU.MinDriver != "580.00" {

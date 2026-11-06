@@ -49,6 +49,7 @@ import (
 
 type Engine struct {
 	mu         sync.Mutex
+	prepMu     sync.Mutex // one install is prepared at a time (outside e.mu)
 	cat        *Catalog
 	dl         *downloader
 	defaultDir string
@@ -245,6 +246,41 @@ func instancePath() string { return filepath.Join(filepath.Dir(engineDefaultDir(
 
 const lockName = ".glow-lock"
 
+// lockDir takes the install-folder lock without holding e.mu while it touches
+// the disk (creating the folder and the lock file can be slow).
+func (e *Engine) lockDir(dir string) error {
+	e.mu.Lock()
+	have := e.dirUnlock != nil && samePath(e.lockedDir, dir)
+	e.mu.Unlock()
+	if have {
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return dirError(err, dir)
+	}
+	release, err := lockFile(filepath.Join(dir, lockName))
+	if errors.Is(err, errLocked) {
+		return friendly(err, "Glow Studio is already running in the background and is using this AI folder. Close this window and open Glow Studio again: it opens the copy that is running.")
+	}
+	if err != nil {
+		e.logs.addf("[launcher] could not lock %s: %v", dir, err)
+		return nil // an odd file system: carry on without the lock
+	}
+	e.mu.Lock()
+	if e.dirUnlock != nil && samePath(e.lockedDir, dir) {
+		e.mu.Unlock()
+		release() // (taken meanwhile by another caller)
+		return nil
+	}
+	old := e.dirUnlock
+	e.dirUnlock, e.lockedDir = release, dir
+	e.mu.Unlock()
+	if old != nil {
+		old()
+	}
+	return nil
+}
+
 // lockDirLocked takes the install-folder lock (see Engine.dirUnlock).
 func (e *Engine) lockDirLocked(dir string) error {
 	if e.dirUnlock != nil && samePath(e.lockedDir, dir) {
@@ -312,10 +348,19 @@ func newEngine(port int) *Engine {
 	return e
 }
 
-func (e *Engine) saveConfigLocked() {
+func (e *Engine) saveConfigLocked() { e.configWriterLocked()() }
+
+// configWriterLocked (e.mu held) returns the function that writes launcher.json
+// with the current install folder; call it after e.mu is unlocked.
+func (e *Engine) configWriterLocked() func() {
 	data, _ := json.MarshalIndent(map[string]string{"installDir": e.installDir}, "", "  ")
-	os.MkdirAll(filepath.Dir(e.configPath), 0o755)
-	os.WriteFile(e.configPath, data, 0o644)
+	path := e.configPath
+	return func() {
+		e.saveMu.Lock()
+		defer e.saveMu.Unlock()
+		os.MkdirAll(filepath.Dir(path), 0o755)
+		os.WriteFile(path, data, 0o644)
+	}
 }
 
 // ---- files and packs ----
@@ -906,10 +951,13 @@ func (e *Engine) activeHoldsLocked() []string {
 	return out
 }
 
-func (e *Engine) releaseHold(job string) {
+// releaseHold forgets a job's hold; had reports whether it was held.
+func (e *Engine) releaseHold(job string) (had bool) {
 	e.mu.Lock()
+	_, had = e.holds[job]
 	delete(e.holds, job)
 	e.mu.Unlock()
+	return had
 }
 
 // handleHold: POST {"job":"<id>"} while a page makes a video or story (renewed
@@ -972,6 +1020,7 @@ func (e *Engine) Shutdown() {
 			e.dirUnlock = nil
 		}
 		e.mu.Unlock()
+		e.logs.sync()
 	})
 }
 
@@ -1080,21 +1129,28 @@ func (e *Engine) handleInstall(w http.ResponseWriter, r *http.Request) {
 		e.stopEngine()
 	}
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.job != nil && e.job.state() == "running" {
-		errJSON(w, http.StatusConflict, "An install is already running.")
-		return
-	}
-	if err := e.lockDirLocked(dir); err != nil {
+	// Everything that touches the disk (the folder lock, another folder's
+	// manifest, the size of every model file, free space, launcher.json, the
+	// log file) happens outside e.mu: on a slow, antivirus-scanned or sleeping
+	// drive it can take seconds, and the status must never wait for it. e.prepMu
+	// keeps two presses of Install from preparing at the same time.
+	e.prepMu.Lock()
+	defer e.prepMu.Unlock()
+	if err := e.lockDir(dir); err != nil {
 		errJSON(w, http.StatusConflict, userMsg(err))
 		return
 	}
-	man := e.man
-	if !samePath(dir, e.installDir) {
+	e.mu.Lock()
+	sameDir := samePath(dir, e.installDir)
+	var man *Manifest
+	if sameDir {
+		man = e.man.clone()
+	}
+	e.mu.Unlock()
+	if !sameDir {
 		man = loadManifest(dir)
 	}
-	_, need := e.planLocked(dir, man, packs)
+	_, need := e.planLocked(dir, man, packs) // (reads only its arguments and the catalog)
 	if need > 0 {
 		free := e.freeBytes(dir)
 		if free >= 0 && free < need+int64(diskMarginBytes) {
@@ -1110,10 +1166,18 @@ func (e *Engine) handleInstall(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if !samePath(dir, e.installDir) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.job != nil && e.job.state() == "running" {
+		errJSON(w, http.StatusConflict, "An install is already running.")
+		return
+	}
+	newDir := !samePath(dir, e.installDir)
+	if newDir {
 		e.installDir, e.man = dir, man
-		e.saveConfigLocked()
 		e.state, e.engErr = "stopped", ""
+		cfg := e.configWriterLocked()
+		defer goSafe("save launcher.json", cfg) // (after e.mu is unlocked)
 	}
 	e.man.Pending, e.man.PendingRepair = packs, req.Repair
 	// Written by the job itself (outside e.mu): a slow disk must not hold up
@@ -1158,10 +1222,15 @@ func (e *Engine) handleCancel(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "idle": true})
 		return
 	}
+	e.mu.Lock()
+	if e.job != nil {
+		e.job.markPausing()
+	}
+	e.mu.Unlock()
 	cancel()
-	select { // let the job save its progress so the next status shows "cancelled"
+	select { // let the job save its progress so the next status usually shows "cancelled" (the status says "Pausing…" meanwhile)
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(1500 * time.Millisecond):
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -1196,6 +1265,7 @@ type Job struct {
 	Packs        []string
 	InstallDir   string
 	Repair       bool             // a "Check & repair files" run
+	pausing      bool             // Pause/Cancel was pressed: the job is saving its progress
 	done         map[string]int64 // bytes on disk (or checked) per file of this job
 	net          atomic.Int64
 }
@@ -1215,10 +1285,19 @@ type jobJSON struct {
 	Packs        []string `json:"packs"`
 	InstallDir   string   `json:"installDir"`
 	Repair       bool     `json:"repair"`
+	Pausing      bool     `json:"pausing,omitempty"`
 }
 
 func newJob(packs []string, dir string) *Job {
 	return &Job{Kind: "install", State: "running", Packs: append([]string{}, packs...), InstallDir: dir, done: map[string]int64{}}
+}
+
+func (j *Job) markPausing() {
+	j.mu.Lock()
+	if j.State == "running" {
+		j.pausing = true
+	}
+	j.mu.Unlock()
 }
 
 func (j *Job) state() string {
@@ -1255,7 +1334,15 @@ func (j *Job) snapshot() jobJSON {
 		m := j.Err
 		s.Error = &m
 	}
-	if j.State == "running" && j.SpeedBps > 1000 && j.OverallTotal > j.OverallDone {
+	if j.pausing && j.State == "running" {
+		s.Pausing, s.SpeedBps = true, 0
+		if j.Repair {
+			s.Step = "Pausing the check…"
+		} else {
+			s.Step = "Pausing… (what is downloaded is kept)"
+		}
+	}
+	if j.State == "running" && !j.pausing && j.SpeedBps > 1000 && j.OverallTotal > j.OverallDone {
 		eta := math.Round(float64(j.OverallTotal-j.OverallDone) / j.SpeedBps)
 		s.EtaSec = &eta
 	}

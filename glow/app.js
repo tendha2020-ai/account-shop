@@ -867,23 +867,43 @@
       var beat = null;
       try { beat = BEAT ? await BEAT.analyze(buf) : null; } catch (e) { beat = null; }
       if (seq !== ownSeq) return;
-      var own = { name: (file.name || 'My song').replace(/\.[a-z0-9]+$/i, ''), buffer: buf, beat: beat, bpm: beat && beat.bpm > 0 ? beat.bpm : 120, start: 0, offset: 0 };
-      own.start = liveliestStart(own);
-      own.offset = downbeatAt(own, own.start);
+      var own = { name: (file.name || 'My song').replace(/\.[a-z0-9]+$/i, ''), buffer: buf, beat: beat, bpm: beat && beat.bpm > 0 ? beat.bpm : 120, start: 0, offset: 0, part: null };
+      placeOwn(own, liveliestStart(own));
       S.own = own;
       stopTrackPreview();
       selectTrack('own');
-      toast(beat && beat.bpm ? 'Your song: about ' + Math.round(beat.bpm) + ' BPM — the template cuts on its beat.' : 'Your song is ready. No steady beat was found, so cuts follow 120 BPM.', 'ok', 4000);
+      toast(own.part && own.part.bpm ? 'Your song: about ' + Math.round(own.bpm) + ' BPM — the template cuts on its beat.' : 'Your song is ready. No steady beat was found, so cuts follow 120 BPM.', 'ok', 4000);
     } catch (e) {
       console.warn('[glow] song decode failed', e);
       if (seq === ownSeq) toast('That song couldn’t be opened in this browser. Try an MP3 or M4A file.', 'warn', 6000);
     }
   }
   // the first downbeat at or after t (beat 0 of the template lands on it)
-  function downbeatAt(own, t) {
-    var d = own.beat && own.beat.downbeats ? own.beat.downbeats : [];
+  function downbeatAt(beat, t) {
+    var d = beat && beat.downbeats ? beat.downbeats : [];
     for (var i = 0; i < d.length; i++) if (d[i] >= t - 0.02) return d[i];
     return Math.max(0, t);
+  }
+  // Start the song near t, on a downbeat of the part that plays. That part is analysed on its own (the whole song's
+  // analysis has one tempo, so a song that speeds up or slows down would cut off the beat there): its tempo is the
+  // one the template cuts on, and its downbeat is beat 0 of the video.
+  function placeOwn(own, t) {
+    var dur = own.buffer.duration, b = null;
+    t = Math.max(0, Math.min(Math.max(0, dur - 2), t || 0));
+    var from = Math.max(0, t - 2), secs = Math.min(dur - from, 36);
+    if (BEAT && typeof BEAT.analyzeSync === 'function') { try { b = BEAT.analyzeSync(own.buffer, { start: from, seconds: secs }); } catch (e) { b = null; } }
+    if (!b || !(b.bpm > 0) || !b.downbeats || !b.downbeats.length) b = own.beat && own.beat.bpm > 0 ? own.beat : null;
+    var at = t;
+    if (b && b.downbeats && b.downbeats.length) {
+      // the nearest downbeat (within half a bar), else the first one after t
+      var near = null, half = 2 * 60 / b.bpm;
+      b.downbeats.forEach(function (d) { if (Math.abs(d - t) <= half && (near === null || Math.abs(d - t) < Math.abs(near - t))) near = d; });
+      at = near !== null ? near : downbeatAt(b, t);
+    }
+    own.part = b;
+    own.bpm = b && b.bpm > 0 ? b.bpm : 120;
+    own.start = own.offset = Math.max(0, at);
+    return own;
   }
   // the liveliest 20 seconds (loudest beats) — usually the chorus — as the default start
   function liveliestStart(own) {
@@ -900,13 +920,9 @@
   }
   function moveOwn(bars) {
     var own = S.own; if (!own) return;
-    var d = own.beat && own.beat.downbeats && own.beat.downbeats.length ? own.beat.downbeats : null, at = own.offset;
-    if (d) {
-      var i = d.indexOf(at); if (i < 0) i = 0;
-      i = Math.max(0, Math.min(d.length - 1, i + bars));
-      at = d[i];
-    } else at = Math.max(0, Math.min(own.buffer.duration - 4, at + bars * 4 * 60 / own.bpm));
-    own.start = own.offset = at;
+    // bars of the part that plays now, then onto the downbeat of the part there
+    var at = Math.max(0, Math.min(own.buffer.duration - 4, own.offset + bars * 4 * 60 / own.bpm));
+    placeOwn(own, at);
     stopTrackPreview();
     renderOwnBar();
     if (S.photos.length) scheduleRebuild({ autoplay: S.playing });
@@ -918,7 +934,7 @@
     if (!on) return;
     var t = S.own.offset, m = Math.floor(t / 60), sec = Math.floor(t - m * 60);
     el.ownName.textContent = S.own.name;
-    el.ownMeta.textContent = (S.own.beat && S.own.beat.bpm ? 'about ' + Math.round(S.own.bpm) + ' BPM' : 'no steady beat found') + ' · starts on a downbeat';
+    el.ownMeta.textContent = (S.own.part && S.own.part.bpm ? 'about ' + Math.round(S.own.bpm) + ' BPM' : 'no steady beat found') + ' · starts on a downbeat';
     el.ownAt.textContent = 'Starts at ' + m + ':' + (sec < 10 ? '0' : '') + sec;
   }
   function stopTrackPreview() {

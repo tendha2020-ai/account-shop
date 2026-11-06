@@ -361,13 +361,15 @@
         '<p class="eg-note">You can keep using your PC. <b>Closing this window does not stop the download</b>: it keeps going in the background, and Glow Studio closes by itself when it is finished. To stop it, press Cancel. If the internet drops, it carries on by itself. If the PC restarts, open Glow Studio and press “Resume download” — nothing already downloaded is lost.</p>'
       : '';
     var actions = st === 'running'
-      ? '<button type="button" class="eg-btn glass" data-act="cancel" data-primary' + (ui.busy ? ' disabled' : '') + '>Cancel</button><span class="eg-small">Cancelling keeps what is already downloaded.</span>'
+      ? (j.pausing
+        ? '<button type="button" class="eg-btn glass" data-act="cancel" data-primary disabled><span class="eg-spin" aria-hidden="true"></span>Pausing…</button><span class="eg-small">Saving what is downloaded — this takes a moment.</span>'
+        : '<button type="button" class="eg-btn glass" data-act="cancel" data-primary' + (ui.busy ? ' disabled' : '') + '>Cancel</button><span class="eg-small">Cancelling keeps what is already downloaded.</span>')
       : '<button type="button" class="eg-btn primary" data-act="resume" data-primary' + (ui.busy ? ' disabled' : '') + '>' + (ui.busy === 'resume' ? '<span class="eg-spin" aria-hidden="true"></span>' : '') + (st === 'cancelled' ? (rep ? 'Continue the check' : 'Resume download') : 'Try again') + '</button>' +
         (wantsFolder(errText) ? '<button type="button" class="eg-btn glass" data-act="changeDir">Choose another folder</button>' : '') +
         '<button type="button" class="eg-btn text" data-act="changePacks">Change packs or folder</button>' +
         (installed('core') ? '<button type="button" class="eg-btn text" data-act="notNow">Not now</button>' : '');
     return {
-      shape: 'install:' + st + ':' + (rep ? 1 : 0) + ':' + errText + ':' + (ui.busy || '') + ':' + (ui.err || ''),
+      shape: 'install:' + st + ':' + (rep ? 1 : 0) + ':' + errText + ':' + (ui.busy || '') + ':' + (ui.err || '') + ':' + (j.pausing ? 'p' : ''),
       say: head,
       html: '<section class="eg-card" aria-labelledby="egH"><p class="eg-kicker">Step 3 of 5</p><h2 id="egH">' + head + '</h2>' + intro +
         '<div class="eg-prog"><div class="eg-prog-h"><b>Overall</b><span><span data-f="overallTxt"></span> · <span class="eg-pct" data-f="pct"></span></span></div>' +

@@ -137,7 +137,10 @@ func (e *Engine) handleCleanup(w http.ResponseWriter, r *http.Request) {
 			prompts = append(prompts, p)
 		}
 	}
-	e.releaseHold(req.Job)
+	if e.releaseHold(req.Job) {
+		// (a cancelled video's cleanup can arrive before its own release)
+		e.logs.addf("[launcher] video %s is no longer in progress", req.Job)
+	}
 	e.mu.Lock()
 	dir := e.installDir
 	port := 0

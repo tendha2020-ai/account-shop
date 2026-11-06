@@ -67,14 +67,17 @@ func main() {
 	if v, err := strconv.Atoi(os.Getenv("GLOW_PORT")); err == nil && v > 0 {
 		ports = []int{v}
 	}
-	ln, running, err := listen(ports)
+	ln, running, note, err := listen(ports)
 	if err != nil {
 		fatal("Glow Studio could not start its local server.", err)
 	}
 	if running != "" {
-		// Already running: open another window on it.
+		// Already running (as new as this copy, or busy): open another window on it.
 		launcherLog.printf("[launcher] Glow Studio is already running at %s: opening a window on it; this copy exits", running)
 		openApp(running)
+		if note != "" {
+			showInfo(note)
+		}
 		launcherLog.close()
 		return
 	}
@@ -100,8 +103,12 @@ func main() {
 	mux.HandleFunc("/__glow/ping", func(w http.ResponseWriter, r *http.Request) {
 		lastPing.Store(time.Now().UnixNano())
 		w.Header().Set("Cache-Control", "no-store")
-		w.Write([]byte("glow-studio"))
+		w.Header().Set("X-Glow-Version", launcherVersion)
+		w.Write([]byte("glow-studio")) // (exactly this: older copies look for it)
 	})
+	// Updates (takeover.go): which version runs, and "quit, a newer one takes over".
+	mux.HandleFunc("/__glow/version", handleVersion(engine))
+	mux.HandleFunc("/__glow/quit", handleQuit(engine))
 	// Free local AI engine (see engine.go and proxy.go). A page using it counts as alive.
 	api, comfy := engine.apiHandler(), engine.proxyHandler()
 	mux.HandleFunc("/__glow/engine/", func(w http.ResponseWriter, r *http.Request) {
@@ -149,7 +156,9 @@ func main() {
 		for range time.Tick(tick) {
 			now := time.Now()
 			busy, why := engine.BusyReason()
-			if busy {
+			if busy || wasBusy != "" {
+				// (the tick that sees the work has ended counts too, so the
+				// idle time is always counted from after the end)
 				lastBusy = now
 			}
 			if why != wasBusy {
@@ -217,30 +226,45 @@ func exitApp(code int, reason string) {
 
 // listen picks the launcher's port: the first of ports that is free, unless a
 // Glow Studio is already answering on one of them (running is then its URL).
-// When every fixed port is taken by other programs, the port recorded in
-// instance.json is checked (a copy that had to use a random port), and a random
-// port is used otherwise. A copy that is gone (crashed, killed) leaves nothing
-// that blocks a fresh start: its port is free again, and a stale instance.json
-// is ignored because nothing answers the ping there.
-func listen(ports []int) (ln net.Listener, running string, err error) {
+// An older Glow Studio there is replaced by this one when it is idle
+// (takeover.go); note is then set when the user has to wait for it. When every
+// fixed port is taken by other programs, the port recorded in instance.json is
+// checked (a copy that had to use a random port), and a random port is used
+// otherwise. A copy that is gone (crashed, killed) leaves nothing that blocks
+// a fresh start: its port is free again, and a stale instance.json is ignored
+// because nothing answers the ping there.
+func listen(ports []int) (ln net.Listener, running, note string, err error) {
+	found := func(p int) (net.Listener, string, string, bool) {
+		if !alreadyRunning(p) {
+			return nil, "", "", false
+		}
+		if l, why := takeOver(p); l != nil {
+			return l, "", "", true
+		} else if alreadyRunning(p) {
+			return nil, fmt.Sprintf("http://127.0.0.1:%d/", p), why, true
+		}
+		return nil, "", "", false // it closed after all: try the next port
+	}
 	for _, p := range ports {
 		l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p))
 		if err == nil {
-			return l, "", nil
+			return l, "", "", nil
 		}
-		if alreadyRunning(p) {
-			return nil, fmt.Sprintf("http://127.0.0.1:%d/", p), nil
+		if l, url, why, ok := found(p); ok {
+			return l, url, why, nil
 		}
 		launcherLog.printf("[launcher] port %d is used by another program", p)
 	}
-	if p := readInstancePort(); p > 0 && alreadyRunning(p) {
-		return nil, fmt.Sprintf("http://127.0.0.1:%d/", p), nil
+	if p := readInstancePort(); p > 0 {
+		if l, url, why, ok := found(p); ok {
+			return l, url, why, nil
+		}
 	}
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
-	return l, "", nil
+	return l, "", "", nil
 }
 
 func withHeartbeat(page []byte) []byte {

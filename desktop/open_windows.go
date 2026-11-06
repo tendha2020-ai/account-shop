@@ -48,3 +48,12 @@ func showError(msg string) {
 	title, _ := syscall.UTF16PtrFromString("Glow Studio")
 	box.Call(0, uintptr(unsafe.Pointer(text)), uintptr(unsafe.Pointer(title)), 0x10)
 }
+
+// showInfo shows a message with the information icon (MB_ICONINFORMATION).
+func showInfo(msg string) {
+	user32 := syscall.NewLazyDLL("user32.dll")
+	box := user32.NewProc("MessageBoxW")
+	text, _ := syscall.UTF16PtrFromString(msg)
+	title, _ := syscall.UTF16PtrFromString("Glow Studio")
+	box.Call(0, uintptr(unsafe.Pointer(text)), uintptr(unsafe.Pointer(title)), 0x40)
+}

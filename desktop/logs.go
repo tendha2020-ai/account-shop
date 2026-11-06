@@ -82,12 +82,16 @@ func (l *fileLog) printf(format string, a ...any) {
 	l.line(fmt.Sprintf(format, a...))
 }
 
-func (l *fileLog) line(msg string) {
+func (l *fileLog) line(msg string) { l.lineAt(time.Now(), msg) }
+
+// lineAt writes msg stamped with the time it happened (lines that reach the
+// file later through the engine log's writer keep their own time).
+func (l *fileLog) lineAt(at time.Time, msg string) {
 	msg = strings.TrimRight(msg, "\r\n")
 	if msg == "" {
 		return
 	}
-	stamp := time.Now().Format("2006-01-02 15:04:05.000")
+	stamp := at.Format("2006-01-02 15:04:05.000")
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.f == nil {

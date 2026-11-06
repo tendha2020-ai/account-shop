@@ -121,3 +121,15 @@ func isPathTooLong(err error) bool { return errors.Is(err, syscall.ENAMETOOLONG)
 
 // isTransientFSErr: other systems do not refuse renames of open files.
 func isTransientFSErr(err error) bool { return errors.Is(err, errTransientTest) }
+
+// processName is the program of process pid ("" when unknown; Linux only).
+func processName(pid int) string {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
+	if err != nil {
+		return ""
+	}
+	return strings.SplitN(string(b), "\x00", 2)[0]
+}
+
+// stopProcess asks an older launcher to quit (SIGTERM: it stops its engine first).
+func stopProcess(pid int) error { return syscall.Kill(pid, syscall.SIGTERM) }
