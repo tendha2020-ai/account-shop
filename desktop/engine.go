@@ -94,8 +94,12 @@ type Engine struct {
 	port         int // the launcher's own port, for Origin/Host checks
 	shutdownOnce sync.Once
 
-	// Videos and stories a page is making (job id -> until when), see handleHold.
-	holds map[string]time.Time
+	// Videos and stories a page is making, see handleHold.
+	holds map[string]*holdInfo
+
+	// shareBusy (main.go) reports "sharing with friends is on": no idle exit
+	// and no update takeover while friends use this PC.
+	shareBusy func() (bool, string)
 
 	// Manifest writes happen outside e.mu (status must never wait for the
 	// disk, which antivirus scans or rename retries can make slow): a snapshot
@@ -917,6 +921,11 @@ func (e *Engine) Busy() bool { b, _ := e.BusyReason(); return b }
 
 // BusyReason is Busy with a few words for the log.
 func (e *Engine) BusyReason() (bool, string) {
+	if e.shareBusy != nil { // (called without e.mu: sharing asks the engine under its own lock)
+		if busy, why := e.shareBusy(); busy {
+			return true, why
+		}
+	}
 	e.mu.Lock()
 	installing := e.job != nil && e.job.state() == "running"
 	jobs := e.activeHoldsLocked()
@@ -937,11 +946,18 @@ func (e *Engine) BusyReason() (bool, string) {
 // every step of a video; no single step takes this long.
 var holdTTL = 2 * time.Hour
 
+// holdInfo is one video or story a page is making.
+type holdInfo struct {
+	until     time.Time   // lapses then (holdTTL after the last renewal)
+	renewedAt time.Time   // last renewal: friends' videos wait while the host's is this fresh
+	eta       *[2]float64 // the page's remaining minutes, for friends' waiting times
+}
+
 func (e *Engine) activeHoldsLocked() []string {
 	var out []string
 	now := time.Now()
-	for id, until := range e.holds {
-		if now.After(until) {
+	for id, h := range e.holds {
+		if now.After(h.until) {
 			delete(e.holds, id)
 			continue
 		}
@@ -960,27 +976,34 @@ func (e *Engine) releaseHold(job string) (had bool) {
 	return had
 }
 
-// handleHold: POST {"job":"<id>"} while a page makes a video or story (renewed
-// at every step), {"job":"<id>","release":true} when it is over. Cleanup of a
-// job releases it too.
+// handleHold: POST {"job":"<id>","etaMin"?:[lo,hi]} while a page makes a video
+// or story (renewed at every step), {"job":"<id>","release":true} when it is
+// over. Cleanup of a job releases it too. etaMin (the page's remaining
+// minutes) is only used for friends' waiting times.
 func (e *Engine) handleHold(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Job     string `json:"job"`
-		Release bool   `json:"release"`
+		Job     string    `json:"job"`
+		Release bool      `json:"release"`
+		EtaMin  []float64 `json:"etaMin"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil || !cleanupJobRe.MatchString(req.Job) {
 		errJSON(w, http.StatusBadRequest, "The request was not understood.")
 		return
 	}
+	var eta *[2]float64
+	if len(req.EtaMin) == 2 && req.EtaMin[0] >= 0 && req.EtaMin[1] >= req.EtaMin[0] && req.EtaMin[1] <= 600 {
+		eta = &[2]float64{req.EtaMin[0], req.EtaMin[1]}
+	}
 	e.mu.Lock()
 	if e.holds == nil {
-		e.holds = map[string]time.Time{}
+		e.holds = map[string]*holdInfo{}
 	}
 	_, had := e.holds[req.Job]
 	if req.Release {
 		delete(e.holds, req.Job)
 	} else if had || len(e.holds) < 16 {
-		e.holds[req.Job] = time.Now().Add(holdTTL)
+		now := time.Now()
+		e.holds[req.Job] = &holdInfo{until: now.Add(holdTTL), renewedAt: now, eta: eta}
 	}
 	e.mu.Unlock()
 	if req.Release && had {

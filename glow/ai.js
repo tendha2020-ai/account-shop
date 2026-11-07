@@ -22,6 +22,9 @@
  */
 (function () {
   'use strict';
+  // The scene texts come from scenes.json (scenes.js loads it); everything below starts once they are here.
+  function boot(SD) {
+  var GS = window.GlowScenes;
 
   /* ------------------------------------------------------------------ *
    * Basics
@@ -118,219 +121,12 @@
   /* ------------------------------------------------------------------ *
    * Scenes (preset prompts only — there is deliberately no free-text prompt)
    * ------------------------------------------------------------------ */
-  var STILL_RULES =
-    ' Keep the exact same person from the reference photo: the same face and facial features, eye shape, nose, lips,' +
-    ' skin tone, hairstyle, hair color, body type and apparent age, so it is clearly them and not a look-alike.' +
-    ' Do not beautify, slim or restyle their face. Keep their outfit from the photo if it is visible and suits the scene;' +
-    ' otherwise dress them in a tasteful, casual party outfit that fits the scene. Everyone in the image is fully and' +
-    ' appropriately dressed. Photorealistic candid vertical smartphone photo (9:16), natural skin texture, realistic hands' +
-    ' and proportions, natural depth of field, no text, no captions, no logos, no watermark, no borders.';
-  var MOTION_RULES =
-    ' Natural, realistic human motion. The main person keeps exactly the same face, hairstyle and outfit as in the first' +
-    ' frame for the whole video.';
-  var NEGATIVE = 'blur, distortion, low quality, warped face, face morphing, different person, identity change, extra limbs,' +
-    ' extra fingers, deformed hands, flicker, text, subtitles, watermark, logo';
-
-  var SCENES = [
-    {
-      id: 'party-hall', name: 'Party Hall Dance', line: 'Dance toward the camera at a glam party', badges: ['Trending'],
-      audio: 'optional', defaultTrack: 'glow', length: 5,
-      stillPrompt: 'Place this person in the middle of a big, elegant party hall at night, dancing toward the camera with a big joyful smile. Full-body to three-quarter shot from a phone held at chest height a few steps away, the person centered. Round tables with white cloths, glowing fairy-light trees, warm string lights across the ceiling, pastel balloons and a shiny dance floor. Other guests in nice party clothes dance and laugh all around them, slightly out of focus. Warm pink, violet and golden party lighting with a soft glow.',
-      motion: 'Handheld smartphone video at an elegant party hall. The person in the center dances toward the camera with a big happy smile, moving their shoulders, hips and arms to the beat with playful, confident dance moves, hair swinging, stepping closer to the lens. Guests around them dance, laugh and clap. Fairy lights and balloons twinkle in the background. The camera moves slowly backward with a gentle handheld sway.',
-      soundPrompt: 'Audio: upbeat dance-pop music filling the hall, guests cheering and laughing, the warm buzz of a big party, no dialogue.',
-      // On this PC (Qwen-Image-Edit-2511 + Wan 2.2): the scene part of the photo prompt, a short motion + camera line
-      local: { still: 'dancing toward the camera with a big joyful smile in the middle of an elegant party hall at night: round tables with white cloths, glowing fairy-light trees, warm string lights, pastel balloons and a shiny dance floor, other guests dancing around them slightly out of focus, warm pink, violet and golden party lighting', motion: 'The person dances happily toward the camera, smiling, shoulders, arms and hips moving to the beat, hair swaying; guests dance and clap around them; fairy lights twinkle; the handheld smartphone camera slowly moves backward; realistic natural motion.' }
-    },
-    /* Story scenes: a few ~5 s shots made from the SAME selfie, cut together on the beat with one soundtrack.
-     * shots[].still/motion/motionStd/lyric = the cloud prompts (Nano Banana Pro still, Kling or Happy Horse video);
-     * shots[].local = this PC's wording (Qwen-Image-Edit still, Wan 2.2 motion, Wan2.2-S2V lip-sync line);
-     * pick = which shots make a 5, 10 or 20 s video; lipSync = the shot sung in sync with the song (this PC). */
-    {
-      id: 'famous-street', name: 'Famous on the Street', line: 'Fans, flashes & high-fives on the way out', badges: ['Trending'],
-      audio: 'optional', defaultTrack: 'hype', length: 20, story: true, transition: 'flash',
-      soundPrompt: 'Audio: an excited, friendly crowd cheering and whooping, phone camera shutter sounds, upbeat club music spilling from the doorway, no dialogue.',
-      shots: [
-        { id: 'stairs', title: 'Down the red stairs',
-          still: 'Place this person walking down a wide staircase outside a nightclub at night, smiling in happy surprise. The stairs and walls glow in deep red neon light. A friendly crowd of fans lines both sides of the stairs, holding up their phones to film them, cheering and smiling. Three-quarter shot from a phone at chest height a few steps below, the person centered and sharp. Glowing phone screens, light haze, vivid red and magenta light with warm highlights on their face.',
-          motion: 'Handheld smartphone video. The person walks down the red-lit stairs toward the camera, smiling in happy disbelief, while the crowd on both sides cheers and films them with their phones. The camera moves slowly backward down the stairs.',
-          local: { still: 'walking down wide nightclub stairs at night, smiling in happy surprise: deep red neon light on the stairs and walls, a friendly crowd of fans on both sides holding up glowing phones to film them, light haze, warm highlights on their face', motion: 'The person walks down the red-lit stairs toward the camera, smiling; fans on both sides cheer and film with their phones; the handheld camera moves slowly backward; realistic natural motion.' } },
-        { id: 'highfive', title: 'High-fives & selfies',
-          still: 'Place this person at the bottom of red-lit nightclub stairs at night, laughing as friendly fans reach out to give them high-fives and take selfies with them. Medium shot from a phone at chest height, the person centered, one hand raised for a high-five. Fans hold up glowing phones, a few camera flashes, deep red neon light and light haze.',
-          motion: 'Handheld smartphone video. The person laughs and gives high-fives to the fans reaching toward them, leans in for a quick selfie with one fan, and keeps smiling while phone screens glow all around.',
-          local: { still: 'laughing with one hand raised for a high-five at the bottom of red-lit nightclub stairs at night: friendly fans reaching out for high-fives and selfies, glowing phone screens, a few camera flashes, deep red light and haze', motion: 'The person laughs and gives high-fives to the fans reaching toward them; phone screens glow; camera flashes twinkle; the handheld camera sways gently; realistic natural motion.' } },
-        { id: 'wave', title: 'Smile & wave',
-          still: 'Place this person in a close-up outside a nightclub at night, smiling warmly and waving at the camera, with red neon lights and a blurred, cheering crowd holding up phones behind them. Head-and-shoulders shot from a phone at face height, the face large, sharp and well lit.',
-          motion: 'Handheld smartphone video, close-up. The person smiles warmly, waves at the camera and laughs, while the cheering crowd behind them films with their phones and camera flashes twinkle.',
-          local: { still: 'in a close-up, smiling warmly and waving at the camera outside a nightclub at night: red neon lights and a blurred cheering crowd with phone screens behind them', motion: 'Close-up: the person smiles, waves at the camera and laughs; the blurred crowd behind cheers and films; camera flashes twinkle; slow handheld push-in; realistic natural motion.', framing: 'Head-and-shoulders close-up, the face large and centered' } },
-        { id: 'escort', title: 'Through the crowd',
-          still: 'Place this person walking along a city sidewalk at night outside a club, smiling and waving, while a friendly security guard in a black suit walks beside them and gently clears the way through a cheering crowd of fans holding up phones. Camera flashes, red and white city lights, wet street reflections. Three-quarter shot from a phone at chest height, the person centered.',
-          motion: 'Handheld smartphone video. The person walks forward along the sidewalk, waving to the cheering fans, while a friendly security guard walks beside them and gently guides the way. Camera flashes pop all around. The camera tracks slowly backward.',
-          local: { still: 'walking along a city sidewalk at night outside a club, smiling and waving, a friendly security guard in a black suit beside them clearing the way through a cheering crowd of fans holding up phones, camera flashes, red city lights, wet street reflections', motion: 'The person walks forward waving to cheering fans while a friendly security guard walks beside them; camera flashes pop; the handheld camera tracks slowly backward; realistic natural motion.' } }
-      ],
-      pick: { 5: ['stairs'], 10: ['stairs', 'wave'], 20: ['stairs', 'highfive', 'wave', 'escort'] }
-    },
-    {
-      id: 'club-exit-sing', name: 'Leaving the Club', alt: 'Sing in Spanish', line: 'Sing out the door with your friends', badges: ['With singing', 'New'],
-      audio: 'required', defaultTrack: 'sun', length: 20, story: true, transition: 'whip',
-      soundPrompt: 'Audio: an upbeat Spanish rumba-pop song sung by the person and their friends, acoustic guitar strumming, handclaps and happy cheering on a city street at night, no other music.',
-      shots: [
-        { id: 'door', title: 'Out the club door',
-          still: 'Place this person walking out of a nightclub door at night with their arms around two friends, all laughing. Behind them a glowing pink and blue neon sign above the door and a friendly bouncer in a black jacket holding the door open. Three-quarter shot from a phone at chest height on the sidewalk, the person centered and sharp. Night city street, warm streetlights, neon reflections on the pavement.',
-          motion: 'Handheld smartphone video outside a nightclub at night. The person walks out of the club door arm in arm with their friends, laughing and starting to sing, while the bouncer smiles and holds the door. Neon lights glow above them.',
-          motionStd: 'Handheld smartphone video outside a nightclub at night. The person walks out of the club door arm in arm with their friends, laughing and cheering with big smiles, while the bouncer smiles and holds the door. Neon lights glow above them.',
-          lyric: { who: 'The person and their friends laugh and start singing in Spanish', line: '¡Se cierra la puerta, se enciende la calle!' },
-          local: { still: 'walking out of a nightclub door at night with their arms around two friends, all laughing: a glowing pink and blue neon sign above the door, a friendly bouncer holding the door, a night street with warm streetlights and neon reflections', motion: 'The person walks out of the club door toward the camera arm in arm with laughing friends; the bouncer smiles; neon lights glow; the handheld camera moves slowly backward; realistic natural motion.' } },
-        { id: 'street', title: 'Arm in arm, singing',
-          still: 'Place this person on a lively city street at night just outside a nightclub, arm in arm with a group of friends, everyone singing loudly together with happy faces, one friend clapping. Three-quarter shot from a phone at chest height, the person centered. Neon signs, warm streetlights, a few passers-by smiling.',
-          motion: 'Handheld smartphone video on a city street at night. The person and their friends walk arm in arm, singing loudly together and swaying to the rhythm, one friend clapping along.',
-          motionStd: 'Handheld smartphone video on a city street at night. The person and their friends walk arm in arm, laughing, swaying to the rhythm and clapping along with big smiles.',
-          lyric: { who: 'Everyone sings together in Spanish', line: '¡Salimos cantando, que nadie se calle!' },
-          local: { still: 'arm in arm with a group of friends on a lively city street at night outside a nightclub, everyone singing together with happy faces: neon signs, warm streetlights, a friend clapping', motion: 'The person and friends walk arm in arm, swaying to the rhythm and clapping, friends singing along; neon lights glow; the handheld camera moves slowly backward; realistic natural motion.' } },
-        { id: 'chorus', title: 'The chorus', lipSync: true,
-          still: 'Place this person in a close-up on a city street at night, singing joyfully with the mouth open mid-song, friends around them singing along with their arms raised. Head-and-shoulders shot from a phone at face height, the face large and sharp, neon pink and blue light with warm streetlight.',
-          motion: 'Handheld smartphone video, close-up. The person sings the chorus with joy, eyes bright, while the friends around them sing along and raise their arms.',
-          motionStd: 'Handheld smartphone video, close-up. The person laughs and cheers with a big smile, swaying to the rhythm, while the friends around them raise their arms.',
-          lyric: { who: 'The person sings the chorus in Spanish', line: '¡Oé, oé, oé, cantamos hasta el sol!' },
-          local: { still: 'in a close-up, singing joyfully with the mouth open mid-song on a city street at night: friends around them singing along with raised arms, neon pink and blue light', motion: 'Close-up: the person smiles widely and sways to the music while friends raise their arms; neon lights glow; slow handheld push-in; realistic natural motion.', sing: 'The person sings the chorus joyfully in Spanish to the camera on a city street at night, friends singing along with raised arms around them, neon lights, realistic.', framing: 'Head-and-shoulders close-up, the face large and centered' } },
-        { id: 'jump', title: 'Everyone jumps',
-          still: 'Place this person in the middle of a group of friends jumping and cheering on a city street at night outside a nightclub, arms in the air, huge smiles, phone flashes from people filming. Full-body to three-quarter shot from a phone at chest height, the person centered. Neon lights and warm streetlights.',
-          motion: 'Handheld smartphone video. The person and their friends jump and cheer together with arms in the air, singing the last line, while phone flashes go off around them.',
-          motionStd: 'Handheld smartphone video. The person and their friends jump and cheer together with arms in the air, laughing, while phone flashes go off around them.',
-          lyric: { who: 'Everyone sings and cheers in Spanish', line: '¡Oé, oé, oé, la calle es de todos!' },
-          local: { still: 'jumping and cheering with arms in the air in the middle of a group of friends on a city street at night outside a nightclub: huge smiles, phone flashes from people filming, neon lights', motion: 'The person and friends jump and cheer with arms in the air; phone flashes go off; neon lights glow; the handheld camera bobs with the crowd; realistic natural motion.' } }
-      ],
-      pick: { 5: ['chorus'], 10: ['street', 'chorus'], 20: ['door', 'street', 'chorus', 'jump'] },
-      // Original Spanish rumba-pop song (written for Glow Studio) for the free Singing add-on: a short verse, then the chorus
-      song: { style: 'rumba pop, flamenco rumba guitar strumming, handclaps, cajon, festive group chorus, male and female vocals, upbeat, Spanish', lyrics: "[Verse]\nSe cierra la puerta, se enciende la calle,\nsalimos cantando, ¡que nadie se calle!\n\n[Chorus]\n¡Oé, oé, oé, cantamos hasta el sol!\n¡Oé, oé, oé, con palmas y con voz!\nQue suene la guitarra, que baile el corazón,\n¡oé, oé, oé, la calle es de todos!" }
-    },
-    {
-      id: 'club', name: 'Club Night', line: 'Center of a packed dance floor', badges: ['Trending'],
-      audio: 'optional', defaultTrack: 'hype', length: 5,
-      stillPrompt: 'Place this person in the middle of a packed dance floor in a stylish nightclub, dancing with both hands in the air and a huge smile. Three-quarter shot from a phone at head height, the person centered and sharp. A big crowd of people dancing around them, a DJ booth glowing in the background, neon lights and colorful laser beams cutting through light haze. Vivid magenta, cyan and violet club lighting with bright highlights on their face.',
-      motion: 'Handheld smartphone video in a packed nightclub. The person in the center dances energetically to the beat, hands up, bouncing and turning toward the camera with a big smile, while the crowd around them jumps and cheers. Laser beams sweep through the haze and the lights pulse with the music. The camera bobs gently with the crowd and pushes in slightly.',
-      soundPrompt: 'Audio: pounding upbeat club music with a heavy bass beat, the crowd cheering and whistling, no dialogue.',
-      // On this PC (Qwen-Image-Edit-2511 + Wan 2.2): the scene part of the photo prompt, a short motion + camera line
-      local: { still: 'dancing with both hands in the air and a huge smile in the middle of a packed nightclub dance floor: a crowd dancing around them, a glowing DJ booth behind, neon lights and colourful laser beams in light haze, vivid magenta, cyan and violet light on their face', motion: 'The person dances energetically to the beat with hands up, bouncing and turning toward the camera with a big smile; the crowd jumps around them; laser beams sweep through the haze; the handheld camera bobs gently and pushes in slightly; realistic natural motion.' }
-    },
-    {
-      id: 'spanish', name: 'Canta en Español', alt: 'Singing in Spanish', line: 'Sing a fiesta song with friends', badges: ['With singing', 'New'],
-      audio: 'required', defaultTrack: 'sun', length: 10,
-      stillPrompt: 'Place this person in the middle of a joyful backyard fiesta at night, singing happily with a group of friends around them; one friend plays an acoustic guitar. Three-quarter shot from a phone at chest height, the person centered, mouth open mid-song, eyes bright. Warm string lights, colorful papel picado banners overhead and a long table with food and flowers. Warm golden and orange festive lighting.',
-      motion: 'Handheld smartphone video at a warm backyard fiesta at night. The person in the center sings joyfully toward the camera while their friends around them sing along, clap and sway; one friend strums an acoustic guitar.',
-      lyrics: [
-        { from: 0, to: 5, who: 'The person in the center smiles and sings in Spanish', line: '¡Esta noche brilla, ven y canta conmigo!' },
-        { from: 5, to: 10, who: 'The friends join in and everyone sings together in Spanish', line: '¡Con mis amigos, la vida es una fiesta!' }
-      ],
-      tail: 'Lips matched to the Spanish words, natural happy expressions. The camera slowly circles with a gentle handheld sway.',
-      soundPrompt: 'Audio: a cheerful Latin acoustic song sung in Spanish by the person and their friends, acoustic guitar strumming, hand claps and happy laughter, no other music.',
-      // On this PC (Qwen-Image-Edit-2511 + Wan 2.2): the scene part of the photo prompt, a short motion + camera line, the lip-sync line
-      local: { still: 'singing happily with the mouth open mid-song at a joyful backyard fiesta at night: friends singing around them, one friend playing an acoustic guitar, warm string lights, colourful papel picado banners, warm golden festive lighting', motion: 'The person sings joyfully toward the camera while friends clap and sway around them; one friend strums an acoustic guitar; string lights glow; the handheld camera slowly circles; realistic natural motion.', sing: 'The person sings joyfully in Spanish to the camera at a warm backyard fiesta at night, friends clapping and swaying around them, a friend strumming an acoustic guitar, string lights, realistic.' },
-      // Original Spanish song for the free Singing add-on (ACE-Step 1.5), built on the lines above
-      song: { style: 'latin acoustic pop, fiesta, acoustic guitar strumming, hand claps, joyful group chorus, female and male vocals, Spanish', lyrics: "[Verse]\n¡Esta noche brilla, ven y canta conmigo!\nLas luces del patio bailan con la guitarra\n\n[Chorus]\n¡Con mis amigos, la vida es una fiesta!\nCanta, canta, que la noche es nuestra\n¡Con mis amigos, la vida es una fiesta!" }
-    },
-    {
-      id: 'karaoke', name: 'Karaoke Night', line: 'Take the mic, friends cheer you on', badges: ['With singing'],
-      audio: 'required', defaultTrack: 'disco', length: 10,
-      stillPrompt: 'Place this person on a small karaoke stage in a cozy karaoke bar, singing into a microphone with a big smile while friends cheer right in front of them. Three-quarter shot from a phone at chest height, the person centered. A lyrics screen glowing behind them, colorful stage lights and disco-ball sparkles. Purple, pink and blue lighting.',
-      motion: 'Handheld smartphone video in a fun karaoke bar. The person in the center sings into the microphone with confidence, swaying and pointing at their friends, who cheer, wave their arms and sing along.',
-      lyrics: [
-        { from: 0, to: 5, who: 'The person sings into the microphone', line: 'Tonight we’re shining, turn the music up!' },
-        { from: 5, to: 10, who: 'Their friends cheer and sing along with them', line: 'Sing it louder, we’re the stars tonight!' }
-      ],
-      tail: 'Lips matched to the words. The camera moves with a gentle handheld sway.',
-      soundPrompt: 'Audio: the person singing an upbeat pop melody through the karaoke speakers over a backing track with drums and synths, friends cheering and clapping.',
-      // On this PC (Qwen-Image-Edit-2511 + Wan 2.2): the scene part of the photo prompt, a short motion + camera line, the lip-sync line
-      local: { still: 'singing into a microphone with a big smile on a small karaoke stage in a cozy karaoke bar: friends cheering right in front of them, a glowing lyrics screen behind, colourful stage lights and disco-ball sparkles, purple, pink and blue lighting', motion: 'The person sings into the microphone and sways, pointing at friends who cheer and wave; disco lights sparkle; the handheld camera sways gently; realistic natural motion.', sing: 'The person sings confidently into a microphone on a small karaoke stage, swaying to the music, friends cheering in front of them, colourful stage lights, realistic.' },
-      // Original Spanish song for the free Singing add-on (ACE-Step 1.5): the lines above, in Spanish
-      song: { style: 'upbeat pop, karaoke backing track, drums, synths, catchy chorus, solo female vocal, Spanish', lyrics: "[Verse]\n¡Esta noche brillamos, sube la música!\nTomo el micrófono y canto para ti\n\n[Chorus]\n¡Canta más fuerte, somos las estrellas!\nTodos cantan conmigo esta noche\n¡Canta más fuerte, somos las estrellas!" }
-    },
-    {
-      id: 'concert', name: 'Concert Star', line: 'Perform for a huge crowd', badges: ['New'],
-      audio: 'recommended', defaultTrack: 'epic', length: 5,
-      stillPrompt: 'Place this person performing on a big concert stage, holding a microphone and reaching toward a huge cheering crowd with a joyful, confident expression. Three-quarter shot from the front of the stage, the person centered and lit by bright spotlights. Thousands of fans with raised hands and phone lights, a giant light rig with beams overhead, light haze. Deep blue and violet stage lighting with warm white spotlights.',
-      motion: 'Smartphone video from the front of a huge concert. The person on stage performs with energy, singing into the microphone, raising one arm to the crowd and walking toward the edge of the stage, while thousands of fans jump and wave their hands and phone lights. Spotlights sweep across the stage.',
-      // Silent tier (built-in music is mixed in later): no singing, so the mouth never moves out of sync with the track.
-      motionStd: 'Smartphone video from the front of a huge concert. The person on stage soaks up the moment, holding the microphone out toward the cheering crowd, dancing to the beat with a big closed-mouth smile, raising one arm and walking toward the edge of the stage, while thousands of fans jump and wave their hands and phone lights. Spotlights sweep across the stage.',
-      lyrics: [
-        { from: 0, to: 5, who: 'The person sings into the microphone', line: 'Hands up high, this is our night!' },
-        { from: 5, to: 10, who: 'The crowd sings back as the person smiles and points at them', line: 'This is our night!' }
-      ],
-      tail: 'Lips matched to the words. The camera slowly pushes in.',
-      soundPrompt: 'Audio: a live pop-rock performance with drums, bass and guitar, the person singing, a huge crowd roaring and singing along.',
-      // On this PC (Qwen-Image-Edit-2511 + Wan 2.2): the scene part of the photo prompt, a short motion + camera line, the lip-sync line
-      local: { still: 'performing on a big concert stage, holding a microphone and reaching toward a huge cheering crowd with a joyful, confident expression: bright spotlights on them, thousands of fans with raised hands and phone lights, a giant light rig with beams, light haze, deep blue and violet stage lighting', motion: 'The person on stage dances to the beat with a big closed-mouth smile, holding the microphone out toward the crowd and raising one arm; fans jump and wave their phone lights; spotlights sweep across the stage; the camera slowly pushes in; realistic natural motion.', sing: 'The person sings passionately into a microphone on a big concert stage, raising one arm to a huge cheering crowd, bright spotlights sweeping, realistic.' },
-      // Original Spanish song for the free Singing add-on (ACE-Step 1.5): the lines above, in Spanish
-      song: { style: 'pop rock anthem, live concert, drums, bass, electric guitar, crowd chanting, male vocal, Spanish', lyrics: "[Verse]\nLas luces se encienden, el público grita\n¡Manos arriba, esta es nuestra noche!\n\n[Chorus]\n¡Esta es nuestra noche!\nCantamos todos juntos bajo las luces\n¡Esta es nuestra noche!" }
-    },
-    {
-      id: 'wedding', name: 'Wedding Dance', line: 'Own the reception dance floor', badges: [],
-      audio: 'optional', defaultTrack: 'dream', length: 5,
-      stillPrompt: 'Place this person on the dance floor of a beautiful wedding reception, dancing happily with a radiant smile. Three-quarter shot from a phone at chest height, the person centered. Guests around them clap and dance, round tables with flowers and candles, hanging string lights and soft drapery. Warm champagne, blush and golden lighting with soft bokeh.',
-      motion: 'Handheld smartphone video at a wedding reception. The person in the center dances joyfully toward the camera with graceful, happy moves and one twirl, while guests around them clap, cheer and dance. String lights twinkle overhead.',
-      soundPrompt: 'Audio: a joyful upbeat wedding dance song, guests clapping along and cheering, no dialogue.',
-      // On this PC (Qwen-Image-Edit-2511 + Wan 2.2): the scene part of the photo prompt, a short motion + camera line
-      local: { still: 'dancing happily with a radiant smile on the dance floor of a beautiful wedding reception: guests clapping and dancing around them, round tables with flowers and candles, hanging string lights, warm champagne, blush and golden lighting with soft bokeh', motion: 'The person dances joyfully toward the camera with graceful, happy moves and one twirl; guests clap and cheer around them; string lights twinkle overhead; the handheld camera moves slowly backward; realistic natural motion.' }
-    },
-    {
-      id: 'birthday', name: 'Birthday Party', line: 'Cake, confetti & your crew', badges: [],
-      audio: 'optional', defaultTrack: 'glow', length: 5,
-      stillPrompt: 'Place this person at a fun birthday party at home, standing behind a birthday cake with lit candles and laughing, with friends around them cheering and throwing confetti. Three-quarter shot from a phone at chest height, the person centered. Colorful balloons and streamers, confetti in the air. Warm, bright party lighting.',
-      motion: 'Handheld smartphone video at a birthday party. The person in the center laughs, leans in and blows out the candles on the cake, then throws their arms up as their friends cheer, clap and toss confetti.',
-      soundPrompt: 'Audio: friends shouting "Make a wish!", then cheering, clapping and laughing, party poppers popping, light happy background music.',
-      // On this PC (Qwen-Image-Edit-2511 + Wan 2.2): the scene part of the photo prompt, a short motion + camera line
-      local: { still: 'laughing behind a birthday cake with lit candles at a fun birthday party at home: friends around them cheering and throwing confetti, colourful balloons and streamers, warm, bright party lighting', motion: 'The person laughs, leans in and blows out the candles, then throws their arms up; friends cheer, clap and toss confetti; the handheld camera sways gently; realistic natural motion.' }
-    },
-    {
-      id: 'beach', name: 'Beach Party', line: 'Sunset dancing by the sea', badges: [],
-      audio: 'optional', defaultTrack: 'sun', length: 5,
-      stillPrompt: 'Place this person at a beach party at sunset, dancing barefoot on the sand with a carefree smile while friends dance around them. Three-quarter shot from a phone at chest height, the person centered. A golden sun low over the sea, gentle waves, a small bonfire and string lights between palm trees. Warm orange, pink and gold sunset light with a soft rim light on their hair.',
-      motion: 'Handheld smartphone video at a sunset beach party. The person in the center dances happily on the sand, swaying and spinning toward the camera, while friends dance around them and waves roll in behind. Their hair moves in the sea breeze.',
-      soundPrompt: 'Audio: summery upbeat tropical house music, waves on the shore, friends laughing and cheering, no dialogue.',
-      // On this PC (Qwen-Image-Edit-2511 + Wan 2.2): the scene part of the photo prompt, a short motion + camera line
-      local: { still: 'dancing barefoot on the sand with a carefree smile at a sunset beach party: friends dancing around them, a golden sun low over the sea, gentle waves, a small bonfire and string lights between palm trees, warm orange, pink and gold sunset light', motion: 'The person dances happily on the sand, swaying and spinning toward the camera; friends dance around them; waves roll in behind; hair moves in the sea breeze; the handheld camera moves slowly backward; realistic natural motion.' }
-    },
-    {
-      id: 'rooftop', name: 'Rooftop Party', line: 'City lights, night vibes', badges: [],
-      audio: 'optional', defaultTrack: 'neon', length: 5,
-      stillPrompt: 'Place this person at a stylish rooftop party at night, dancing with a big smile with friends around them. Three-quarter shot from a phone at chest height, the person centered. A glittering city skyline behind them, warm string lights, lounge seating and plants. Deep blue night sky with warm golden lights and city bokeh.',
-      motion: 'Handheld smartphone video at a rooftop party at night. The person in the center dances with smooth, happy moves and turns toward the camera, while friends dance and laugh around them and the city skyline glitters behind.',
-      soundPrompt: 'Audio: smooth upbeat house music, friends laughing and chatting, a light city breeze, no dialogue.',
-      // On this PC (Qwen-Image-Edit-2511 + Wan 2.2): the scene part of the photo prompt, a short motion + camera line
-      local: { still: 'dancing with a big smile at a stylish rooftop party at night: friends around them, a glittering city skyline behind, warm string lights, lounge seating and plants, a deep blue night sky with golden city bokeh', motion: 'The person dances with smooth, happy moves and turns toward the camera; friends dance and laugh around them; the city lights glitter behind; the handheld camera drifts slowly sideways; realistic natural motion.' }
-    },
-    {
-      id: 'street', name: 'Street Dance', line: 'Dance with a crew downtown', badges: [],
-      audio: 'optional', defaultTrack: 'hype', length: 5,
-      stillPrompt: 'Place this person in the middle of a city street at golden hour, dancing with a crew of street dancers around them, mid-move in a confident pose. Full-body shot from a phone at waist height, the person centered. Colorful murals, shop fronts and a few passers-by watching and filming. Warm golden-hour sunlight with long shadows.',
-      motion: 'Handheld smartphone video on a city street. The person in the center dances a confident, energetic street-dance routine with sharp, rhythmic moves while the crew behind them dances in sync and passers-by cheer. The camera moves slightly backward, low and steady.',
-      soundPrompt: 'Audio: a punchy hip-hop beat from a portable speaker, the crew cheering and clapping, city ambience, no dialogue.',
-      // On this PC (Qwen-Image-Edit-2511 + Wan 2.2): the scene part of the photo prompt, a short motion + camera line
-      local: { still: 'mid-move in a confident dance pose in the middle of a city street at golden hour: a crew of street dancers around them, colourful murals and shop fronts, a few passers-by watching, warm golden-hour sunlight with long shadows', motion: 'The person dances a confident, energetic street-dance routine with sharp, rhythmic moves; the crew behind them dances in sync and passers-by cheer; the low handheld camera moves slowly backward; realistic natural motion.' }
-    },
-    {
-      id: 'festival', name: 'Festival', line: 'Colors, confetti, big crowd', badges: ['New'],
-      audio: 'optional', defaultTrack: 'disco', length: 5,
-      stillPrompt: 'Place this person in a big outdoor music festival crowd in the afternoon, dancing with arms up and a huge smile while colorful confetti falls. Three-quarter shot from a phone at head height, the person centered. Happy festival-goers around them, colorful flags and a big stage in the distance. Bright, warm sunlight with vivid colors.',
-      motion: 'Handheld smartphone video in a sunny festival crowd. The person in the center dances and jumps with arms raised, laughing as colorful confetti rains down, while the crowd around them dances and cheers.',
-      soundPrompt: 'Audio: an energetic festival dance track from the main stage, the crowd cheering, confetti cannons popping, no dialogue.',
-      // On this PC (Qwen-Image-Edit-2511 + Wan 2.2): the scene part of the photo prompt, a short motion + camera line
-      local: { still: 'dancing with arms up and a huge smile in a big outdoor music festival crowd in the afternoon: colourful confetti falling, happy festival-goers around them, colourful flags and a big stage in the distance, bright warm sunlight and vivid colours', motion: 'The person dances and jumps with arms raised, laughing as colourful confetti rains down; the crowd dances and cheers around them; the handheld camera bobs with the crowd; realistic natural motion.' }
-    },
-    {
-      id: 'redcarpet', name: 'Red Carpet', line: 'Pose for the cameras', badges: [],
-      audio: 'optional', defaultTrack: 'golden', length: 5,
-      stillPrompt: 'Place this person on a red carpet at a glamorous premiere at night, posing confidently with a warm smile while photographers take pictures. Full-body to three-quarter shot, the person centered on the red carpet. Velvet ropes, a softly lit backdrop and a row of photographers with bright camera flashes. Glamorous warm lighting with flash highlights.',
-      motion: 'Smartphone video at a red carpet premiere. The person in the center walks forward along the red carpet with confident style, stops, turns to pose and waves at the photographers, smiling as camera flashes pop all around.',
-      soundPrompt: 'Audio: rapid camera shutter clicks, an excited crowd cheering, soft glamorous background music, no dialogue.',
-      // On this PC (Qwen-Image-Edit-2511 + Wan 2.2): the scene part of the photo prompt, a short motion + camera line
-      local: { still: 'posing confidently with a warm smile on a red carpet at a glamorous premiere at night: velvet ropes, a softly lit backdrop, a row of photographers with bright camera flashes, glamorous warm lighting', motion: 'The person walks forward along the red carpet with confident style, stops, turns to pose and waves at the photographers; camera flashes pop all around; the handheld camera tracks slowly backward; realistic natural motion.' }
-    }
-  ];
-  // The two story scenes lead the grid (the trend people come for); Party Hall stays the default scene.
-  ['club-exit-sing', 'famous-street'].forEach(function (id) {
-    for (var i = 0; i < SCENES.length; i++) if (SCENES[i].id === id) { SCENES.unshift(SCENES.splice(i, 1)[0]); return; }
-  });
-  var DEFAULT_SCENE = 'party-hall';
+  // All preset texts live in scenes.json (cloud: the fal.ai photo/video rules; local: this PC's wording), in display order.
+  var STILL_RULES = SD.cloud.stillRules;
+  var MOTION_RULES = SD.cloud.motionRules;
+  var NEGATIVE = SD.cloud.negative;
+  var SCENES = SD.scenes;
+  var DEFAULT_SCENE = SD.defaultScene;
   function sceneById(id) {
     for (var i = 0; i < SCENES.length; i++) if (SCENES[i].id === id) return SCENES[i];
     for (var j = 0; j < SCENES.length; j++) if (SCENES[j].id === DEFAULT_SCENE) return SCENES[j];
@@ -369,18 +165,10 @@
    *    keeps a face best when it is told plainly what to keep and when the face is large: knees-up framing.
    *  - Wan 2.2 follows a short motion + camera sentence better than a long paragraph; the negative prompt is added to
    *    the official Chinese Wan negative by the engine. */
-  var LOCAL_RULES =
-    ' Keep the same person’s face, hairstyle and skin tone: identical facial features, eye shape, hair colour and age, so it is clearly them and not a look-alike.' +
-    ' Knees-up framing, the person centered, face large in frame and in sharp focus. Keep their outfit if it suits the scene, otherwise a tasteful casual party outfit;' +
-    ' everyone is fully and appropriately dressed. Candid vertical smartphone photo, natural skin texture, realistic hands, no text, no logos, no watermark.';
-  var LOCAL_NEGATIVE = 'blurry, distorted face, face morphing, different person, identity change, extra limbs, extra fingers, deformed hands, flicker, static frame, text, subtitles, watermark, logo';
+  var LOCAL_NEGATIVE = SD.local.negative;
   var SONG_SECONDS = 20, SONG_OFFSET = 5; // a 20 s song; the 5 s lip-sync chunk starts 5 s in (the chorus)
-  function localStillText(model, text, framing) {
-    var who = model === 'klein' ? 'image 1 is a selfie. Create a realistic vertical photo of the exact same person from image 1, '
-      : 'Create a realistic vertical smartphone photo of the exact same person from Picture 1, ';
-    var rules = framing ? LOCAL_RULES.replace('Knees-up framing, the person centered', framing) : LOCAL_RULES;
-    return who + text + '.' + rules;
-  }
+  // the photo prompt: who (Picture 1 / image 1) + the scene + the rules, with the framing of the shot
+  function localStillText(model, text, framing) { return GS.stillText(model, text, framing); }
   function localStillPrompt(sc, model) { return localStillText(model, sc.local.still); }
   // The request for GlowLocalAI.generate() (without photo and signal). sound 'ai' locally = the Singing add-on's song.
   // shot: one shot of a story scene (a 5 s story video made the single-clip way); hint: the tempo line ("Dance to the beat").
@@ -390,7 +178,7 @@
       stillPrompt: localStillText(quality === 'fast' && fastPack ? 'klein' : 'qwen', loc.still, loc.framing),
       motionPrompt: loc.motion + (hint || ''), negativePrompt: LOCAL_NEGATIVE, quality: quality === 'fast' ? 'fast' : 'best', singing: null
     };
-    if (sound === 'ai' && sc.song) r.singing = { lyrics: sc.song.lyrics, style: sc.song.style, language: 'es', seconds: SONG_SECONDS, offset: SONG_OFFSET, prompt: loc.sing || singLine(sc, shot) };
+    if (sound === 'ai' && sc.song) r.singing = { lyrics: sc.song.lyrics, style: sc.song.style, language: SD.local.songLanguage, seconds: SONG_SECONDS, offset: SONG_OFFSET, prompt: loc.sing };
     return r;
   }
 
@@ -400,12 +188,7 @@
   var SHOT_SEC = 5;
   var LIP_SEC = 77 / 16;   // Wan2.2-S2V on this PC: one verified 77-frame chunk at 16 fps per lip-synced shot (4.8 s)
   // A scene that is not a story gets the same scene in a few framings when it is longer than one shot.
-  var VARIANTS = [
-    { id: 'main', title: 'The scene', still: '', motion: '' },
-    { id: 'closer', title: 'Closer', still: ' Closer framing, from the waist up.', lstill: ', closer, from the waist up', motion: ' The camera moves in a little closer.', framing: 'Waist-up framing, the person centered' },
-    { id: 'angle', title: 'Another angle', still: ' Seen from a slightly different angle, a little to the side.', lstill: ', seen from a slightly different angle', motion: ' The camera slowly circles around them.' },
-    { id: 'closeup', title: 'Close-up', still: ' A head-and-shoulders close-up, the face large and sharp.', lstill: ', in a head-and-shoulders close-up', motion: ' Close-up, they smile right into the camera.', framing: 'Head-and-shoulders close-up, the face large and centered' }
-  ];
+  var VARIANTS = SD.variants;
   function shotCount(dur) { return dur >= 20 ? 4 : dur >= 10 ? 2 : 1; }
   function shotById(sc, id) { for (var i = 0; i < sc.shots.length; i++) if (sc.shots[i].id === id) return sc.shots[i]; return sc.shots[0]; }
   function variantShot(sc, v, i) {
@@ -413,7 +196,7 @@
     return {
       id: v.id, title: v.title, still: sc.stillPrompt + v.still, motion: sc.motion + v.motion, motionStd: (sc.motionStd || sc.motion) + v.motion,
       lyric: lyr ? { who: lyr.who, line: lyr.line } : null, lipSync: !!sc.song,
-      local: { still: sc.local.still + (v.lstill || ''), motion: sc.local.motion.replace(/; realistic natural motion\.$/, '') + (v.motion ? ';' + v.motion.replace(/\.$/, '').replace(/^ The/, ' the') : '') + '; realistic natural motion.', sing: sc.local.sing, framing: v.framing }
+      local: GS.variantLocal(sc, v)
     };
   }
   // The shots of a video of this length (story scenes: their own shots; others: the scene in different framings).
@@ -427,18 +210,10 @@
   }
   // The shot a story scene shows when it is made as one 5 s clip
   function keyShot(sc) { return sc.story ? shotsFor(sc, 5)[0] : null; }
-  function singLine(sc, shot) {
-    var where = (shot && shot.local ? shot.local.still : sc.local.still).split(':')[0].replace(/^(dancing|singing|walking|laughing|posing|performing|jumping|in a close-up,?)\b[^,]*,?\s*/i, '');
-    return 'The person sings the song with feeling right to the camera, ' + (where ? where.replace(/\s+$/, '') + ', ' : '') + 'moving to the music, realistic.';
-  }
   // "Dance to the beat": one line about the tempo for the motion prompts.
   function beatHint(t) {
-    if (!t) return '';
-    if (!(t.bpm > 0)) return t.feel ? ' Everyone moves in time with ' + t.feel + '.' : '';
-    var b = Math.round(t.bpm);
-    if (t.bpm >= 118 || (t.energy || 0) > 0.85) return ' Everyone moves in time with a fast ' + b + ' BPM beat, big energetic moves right on the beat.';
-    if (t.bpm < 96 || (t.energy || 1) < 0.45) return ' Everyone moves in time with a slow ' + b + ' BPM groove, smooth and relaxed.';
-    return ' Everyone moves in time with an upbeat ' + b + ' BPM beat, bouncy moves on the beat.';
+    if (!t || !(t.bpm > 0)) return '';
+    return GS.tempoHint(GS.tempoFeel(t.bpm, t.energy), Math.round(t.bpm));
   }
   // fal: the scene photo and the clip of one shot (cloud)
   function shotStillInput(shot, imageUrl) {
@@ -1579,8 +1354,16 @@
     }
   }
   function updateSceneUI() {
+    var needHost = GUEST && LOC.s && !singingOk();
     SCENES.forEach(function (sc) {
       var on = sc.id === S.sceneId, b = sceneBtns[sc.id].btn;
+      // a friend's page: the singing scenes need the host's Singing add-on
+      var off = !!needHost && sc.audio === 'required', w = sceneBtns[sc.id];
+      if (w.wrap.classList.contains('needs') !== off) {
+        w.wrap.classList.toggle('needs', off);
+        if (off && !w.need) { w.need = document.createElement('span'); w.need.className = 'ai-scene-need'; w.art.appendChild(w.need); }
+        if (w.need) { w.need.hidden = !off; w.need.textContent = off ? 'Needs ' + guestHostName() + '’s Singing add-on' : ''; }
+      }
       b.setAttribute('aria-checked', on ? 'true' : 'false');
       b.tabIndex = on ? 0 : -1;
       sceneBtns[sc.id].pv.tabIndex = on ? 0 : -1; // Tab goes from the chosen scene to its Preview
@@ -1715,7 +1498,8 @@
     var engine = o.engine || S.engine, sound = o.sound || effSound(sc), dur = o.duration || S.duration;
     var sync = o.sync || effSync(sc, sound, engine), n = shotCount(dur);
     var plan = { sc: sc, engine: engine, sound: sound, duration: dur, sync: sync, n: n, shots: null, lips: 0, local: '' };
-    var many = engine === 'local' ? (sc.story || n > 1 || sync === 'lips') : sc.story;
+    // (a friend's video on the host's PC is always made the story way, 1, 2 or 4 shots: DESIGN a.5)
+    var many = GUEST ? true : engine === 'local' ? (sc.story || n > 1 || sync === 'lips') : sc.story;
     if (many) {
       var src = engine === 'local' && singingOk() && ((sound === 'ai' && !!sc.song) || (sound === 'own' && ownLipsFit(dur, sync === 'lips')));
       plan.shots = shotsFor(sc, dur).map(function (sh) {
@@ -1732,7 +1516,7 @@
     }
     if (engine === 'local') {
       // one clip without the user's song under its lips is made the proven single-clip way (works without stories)
-      var one = !plan.shots || (plan.shots.length === 1 && !(plan.shots[0].lip && sound === 'own'));
+      var one = !GUEST && (!plan.shots || (plan.shots.length === 1 && !(plan.shots[0].lip && sound === 'own')));
       plan.local = one ? 'single' : 'story';
       if (one && plan.shots) plan.single = plan.shots[0];
     }
@@ -1781,7 +1565,7 @@
       return;
     }
     if (isLocal() && s === 'ai' && !sc.song) {
-      toast('On this PC, AI sound is the Singing add-on’s song, so it’s only for the singing scenes. This scene uses built-in music or your own song.', 'info', 5500);
+      toast('On ' + PCN + ', AI sound is the Singing add-on’s song, so it’s only for the singing scenes. This scene uses built-in music or your own song.', 'info', 5500);
       return;
     }
     S.sound = s === 'ai' ? 'ai' : 'music';
@@ -1815,7 +1599,7 @@
     });
     el.soundLock.hidden = !aiOff || sound === 'own';
     el.soundLock.className = 'ai-lock soft';
-    if (aiOff) el.soundLock.textContent = 'On this PC, AI sound means an AI-made song, so it’s only for the singing scenes. Built-in music and your own song work for every scene.';
+    if (aiOff) el.soundLock.textContent = 'On ' + PCN + ', AI sound means an AI-made song, so it’s only for the singing scenes. Built-in music and your own song work for every scene.';
     var music = sound === 'music';
     el.music.hidden = !music;
     el.aiNote.hidden = sound !== 'ai';
@@ -1828,7 +1612,11 @@
       el.aiNote.dataset.k = noteKey;
       el.aiNote.innerHTML = '';
       var b = document.createElement('b');
-      if (local && !singingOk()) {
+      if (GUEST && !singingOk()) {
+        b.textContent = 'Needs ' + guestHostName() + '’s Singing add-on.';
+        el.aiNote.appendChild(b);
+        el.aiNote.appendChild(document.createTextNode(' The AI song is made by an add-on that isn’t installed on ' + PCN + '. Pick “My song” to use your own music, or another scene.'));
+      } else if (local && !singingOk()) {
         b.textContent = 'Needs the Singing add-on (free).';
         el.aiNote.appendChild(b);
         el.aiNote.appendChild(document.createTextNode(' It writes a short Spanish party song and makes you sing it, all on this PC: a one-time download of ' + singingSize() + ', then ' + localMinutes('ai', 'best') + ' per singing video. Or use your own song, or fal.ai cloud for this scene.'));
@@ -1839,7 +1627,7 @@
         acts.appendChild(go); acts.appendChild(alt);
         el.aiNote.appendChild(acts);
       } else if (local) {
-        b.textContent = 'AI song, made on this PC.';
+        b.textContent = 'AI song, made on ' + PCN + '.';
         el.aiNote.appendChild(b);
         el.aiNote.appendChild(document.createTextNode(sc.story
           ? ' The free AI writes an original Spanish song for this scene; you sing the chorus in sync, and the song plays under the whole video. It takes a few minutes longer.'
@@ -1861,7 +1649,7 @@
       }
     }
     if (sound !== 'ai') el.aiNote.dataset.k = '';
-    if (local) el.soundHint.textContent = sound === 'own' ? 'Your own song' : music ? 'Music is free' : (singingOk() ? 'Free on this PC' : 'Needs a free add-on');
+    if (local) el.soundHint.textContent = sound === 'own' ? 'Your own song' : music ? 'Music is free' : (singingOk() ? 'Free on ' + PCN : GUEST ? 'Needs an add-on' : 'Needs a free add-on');
     else el.soundHint.textContent = sound === 'own' ? 'Your own song' : music ? 'Music is free' : (sc.audio === 'required' ? 'Required for this scene' : (sc.audio === 'recommended' ? 'Recommended' : 'Premium'));
     Object.keys(trackCards).forEach(function (id) {
       var c = trackCards[id], sel = id === S.trackId;
@@ -1883,7 +1671,7 @@
       var n = shotCount(d), multi = local ? n > 1 || sc.story : sc.story;
       var t = local ? rangeText(localRange(planFor(sc, { duration: d, sound: sound }))) : 'about ' + money(falCost(sc, sound, d));
       b.querySelector('.ai-len-cost').textContent = t;
-      b.setAttribute('aria-label', d + ' seconds' + (multi && n > 1 ? ', ' + n + ' shots' : '') + ', ' + t + (local ? ' on this PC' : ''));
+      b.setAttribute('aria-label', d + ' seconds' + (multi && n > 1 ? ', ' + n + ' shots' : '') + ', ' + t + (local ? ' on ' + PCN : ''));
     });
     el.len.className = 'seg ' + (L.length === 3 ? 'seg-3' : 'seg-2');
     // Quality (this PC). A singing or lip-synced video has one speed: the lip-sync step decides, so Best/Fast would read the same.
@@ -1899,12 +1687,12 @@
         b.setAttribute('aria-label', (q === 'fast' ? 'Fast' : 'Best') + ' quality, ' + m);
       });
       el.qualNote.textContent = S.quality === 'fast'
-        ? (fastPack ? 'Fast uses a lighter photo step and a smaller video. Your face can look a little less like you.' : 'Fast makes a smaller video. Add “Fast mode” (free) in Free AI on this PC for a quicker photo step too.')
+        ? (fastPack ? 'Fast uses a lighter photo step and a smaller video. Your face can look a little less like you.' : GUEST ? 'Fast makes a smaller video.' : 'Fast makes a smaller video. Add “Fast mode” (free) in Free AI on this PC for a quicker photo step too.')
         : 'Best keeps your face most like you. Every shot is about 5 seconds.';
     }
     var k1, k2, k3, n2 = plan.shots ? plan.shots.length : 1, shotsTxt = n2 > 1 ? n2 + ' shots, each from your selfie · ' : '';
     if (local) {
-      k1 = 'Made on this PC';
+      k1 = 'Made on ' + PCN;
       k2 = sound === 'ai' ? 'Free · song by ACE-Step, singing by Wan 2.2' : plan.lips ? 'Free · video & lip-sync by Wan 2.2 + your song' : 'Free · video by Wan 2.2 + ' + (sound === 'own' ? 'your song' : 'your music');
       k3 = shotsTxt + 'Scene photo by ' + (plan.quality === 'fast' && localPack('fast') ? 'FLUX.2 klein' : 'Qwen Image Edit') + ' · finished at 720×1248';
     } else {
@@ -2266,7 +2054,7 @@
       // the time per shot, from the engine's own estimate for this plan (about 5½–8½ min on an RTX 5060)
       var lp = planFor(sc, { sound: sound, sync: 'lips' }), lm = localRange(lp), k = Math.max(1, lp.shots ? lp.shots.length : 1);
       var per0 = Math.max(0.5, Math.round(lm[0] / k * 2) / 2), per1 = Math.max(per0 + 0.5, Math.round(lm[1] / k * 2) / 2);
-      t = 'Every shot is lip-synced to the song, one after another from ' + (sound === 'own' && S.own ? fmtP(Math.min(S.own.start, ownMaxStart())) : 'its start') + ' — slow but fun: each 5 s shot takes about ' + half(per0) + '–' + half(per1) + ' min on this PC.';
+      t = 'Every shot is lip-synced to the song, one after another from ' + (sound === 'own' && S.own ? fmtP(Math.min(S.own.start, ownMaxStart())) : 'its start') + ' — slow but fun: each 5 s shot takes about ' + half(per0) + '–' + half(per1) + ' min on ' + PCN + '.';
     }
     else if (allLip) t = 'Every shot sings the song in sync (lip-sync), and the cuts follow its beat.';
     else if (sound === 'music') t = tr ? 'Moves and cuts follow the beat of ' + tr.name + ' (' + tr.bpm + ' BPM).' : 'Moves and cuts follow the beat.';
@@ -2289,10 +2077,16 @@
   /* ------------------------------------------------------------------ *
    * AI engine: free on this PC (GlowLocalAI, only inside the Glow Studio app) or fal.ai cloud
    * ------------------------------------------------------------------ */
+  /* A friend's page ("Share with friends"): the host's Glow Studio app serves this page from its guest server and the
+   * video is made on the HOST's PC (guest.js talks to it). The engine is fixed to that PC: no fal.ai, no setup, no
+   * engine controls, no "See yourself in every scene", no share card. See the "Friend's page" section below. */
+  var GUEST = !!(window.GlowGuest && window.GlowGuest.active);
+  var GG = GUEST ? window.GlowGuest : null;
+  var PCN = 'this PC'; // where the free AI runs, in words ("Ana’s PC" on a friend's page)
   var LOC = {
-    api: window.GlowLocalAI || null,
+    api: GUEST ? guestApi() : (window.GlowLocalAI || null),
     // The Windows launcher injects a keep-alive ping into the pages it serves; the website has none (and is never asked).
-    inApp: Array.prototype.some.call(document.scripts, function (sc) { return /__glow\/ping/.test(sc.textContent || ''); }),
+    inApp: !GUEST && Array.prototype.some.call(document.scripts, function (sc) { return /__glow\/ping/.test(sc.textContent || ''); }),
     s: null, checked: false, // last launcher status from detect() (null: no answer)
     resume: null,            // GlowLocalAI.resume() handle of a video that was being made when the page closed
     retry: null,             // a finished clip whose finishing (label + sound) failed: kept in memory, finishing again is free
@@ -2385,6 +2179,7 @@
   }
   // The main button while the free engine is chosen: what tapping it does next, in plain words.
   function localCta(sound) {
+    if (GUEST && !LOC.retry) return guestCta(sound);
     if (LOC.gone) return { main: 'Open Glow Studio again', sub: 'Its helper has closed — use your desktop icon' };
     if (LOC.retry) return { main: 'Finish my video', sub: 'Your video is made — finishing it is free' };
     if (LOC.resume) return LOC.resume.made ? { main: 'Finish my video', sub: 'Your video is made — finishing it is free' } : { main: 'Continue your video', sub: 'Free · picks up where it left off on this PC' };
@@ -2405,6 +2200,7 @@
   }
   function NARROW() { return !!(window.matchMedia && window.matchMedia('(max-width: 480px)').matches); }
   function decideEngine() {
+    if (GUEST) return 'local';
     if (!LOC.inApp || !LOC.api) return 'fal';
     var pref = lsGet(LS.engine);
     if (pref === 'local' || pref === 'fal') return pref;
@@ -2412,7 +2208,7 @@
     return 'local';
   }
   function chooseEngine(e, user) {
-    S.engine = e === 'local' && LOC.inApp && LOC.api ? 'local' : 'fal';
+    S.engine = GUEST || (e === 'local' && LOC.inApp && LOC.api) ? 'local' : 'fal';
     if (user) lsSet(LS.engine, S.engine);
     S.duration = fitLen(sceneById(S.sceneId)); // each engine has its own lengths; the user's pick comes back where it can
     if (S.engine === 'fal') stopTrackPreview();
@@ -2425,6 +2221,7 @@
   // Ask the launcher how free AI is doing: when the page opens, whenever the window gets focus again, and every few
   // seconds only while something is changing by itself (graphics card check, download, engine start).
   function refreshLocal() {
+    if (GUEST) return guestRefresh();
     if (!LOC.inApp || !LOC.api) return Promise.resolve(null);
     if (detecting) return detecting;
     detecting = LOC.api.detect().catch(function () { return null; }).then(function (s) {
@@ -2606,8 +2403,10 @@
     var app = !!(LOC.inApp && LOC.api), local = isLocal();
     if (el.engCard) el.engCard.hidden = !app;
     el.ai.classList.toggle('in-app', app);
-    if (el.engWeb) el.engWeb.hidden = app;
+    if (el.engWeb) el.engWeb.hidden = app || GUEST;
     el.keyChip.hidden = local; // no key is needed on this PC
+    if (GUEST) { renderGuest(); return; }
+    renderShareCard(app);
     if (el.footNote) {
       el.footNote.innerHTML = local
         ? 'Your selfie stays on this PC: the free AI runs on your own graphics card and nothing is uploaded. The working copies the AI makes are deleted after each video. Use only your own photo, or one you have permission to use, of an adult. Every video gets a small &ldquo;AI-generated&rdquo; label.'
@@ -2702,6 +2501,17 @@
     }
   }
 
+  // "Share with friends" (share.js): the host's card, in the Windows app once free AI is set up
+  var SHARE = null;
+  function renderShareCard(app) {
+    var card = document.getElementById('aiShareCard');
+    if (!card) return;
+    var show = !!(app && window.GlowShare && localPack('core'));
+    if (show && !SHARE) SHARE = window.GlowShare.mount(card, { where: 'ai' }); // (the card appears once the launcher answers)
+    if (!show) { card.hidden = true; if (SHARE) { SHARE.unmount(); SHARE = null; } }
+  }
+  // the host's own video goes first; while a friend's step finishes, the share status says so
+  function hostShareNote() { var s = window.GlowShare && window.GlowShare.status; return s && s.state !== 'off' && s.hostPriorityNote ? String(s.hostPriorityNote) : ''; }
   // Where a story stands after the window was closed: the PC finishes only the step it was on, then the story
   // pauses until it is continued. r.state is that one step's state, so the line is built from the shots done.
   function storyWhere(r, m) {
@@ -2717,6 +2527,403 @@
   }
 
   /* ------------------------------------------------------------------ *
+   * Friend's page ("Share with friends"): the video is made on the HOST's PC
+   *
+   * guest.js (window.GlowGuest) joins with the link's token, keeps the session and talks to the host's guest server.
+   * Here it stands in for GlowLocalAI (LOC.api), so the usual free-AI flow runs: the same plan (planFor, always the
+   * story path), the same progress sheet, the same finishing in this browser (music + "AI-generated" label) and
+   * "My AI videos" on this device. What goes to the host is only a job request (preset scene + choices), the selfie
+   * (re-encoded here) and, for lip-sync to the friend's own song, a short WAV of that part of it. The host's app builds
+   * the AI steps from scenes.json itself and labels every picture and clip before this page can download it.
+   * ------------------------------------------------------------------ */
+  function guestApi() {
+    return {
+      packs: [], driverUrl: '', vcRedistUrl: '',
+      detect: function () { return Promise.resolve(guestStatus()); },
+      estimateStory: function (o) { return GG.estimateStory(o); },
+      estimate: function (o) {
+        o = o || {};
+        var m = GG.estimateStory({ shots: 1, quality: o.quality, song: !!o.singing, lipSync: o.singing ? 1 : 0 }).minutes;
+        return { minutes: m };
+      },
+      generateStory: function (req, onP) { return GG.submit({ request: req.request, photo: req.photo, audio: req.audio, ownStart: req.ownStart }, onP, req.signal); },
+      generate: function () { return Promise.reject(new Error('not on a friend’s page')); },
+      // "Try finishing again" after the shots were dropped: fetch them again from the host while it still has them
+      resume: function () {
+        return GG.current().then(function (sj) {
+          if (!sj || (sj.state !== 'done' && sj.state !== 'running' && sj.state !== 'queued' && sj.state !== 'waiting-approval')) return null;
+          return guestHandle(sj);
+        });
+      },
+      release: function (id) { if (id) GG.done(id).then(refreshGuestSession); },
+      isBusy: function () { return false; },
+      diskNeededGB: function () { return 0; },
+      explainEngineError: function () { return { code: '', message: '', detail: '' }; },
+      isPlainMessage: function () { return true; }
+    };
+  }
+  function guestHandle(sj) {
+    var m = localMeta();
+    var own = m && m.engineJob === sj.id && m.own ? m.own : null;
+    return {
+      kind: 'story', job: sj.id, state: sj.state, made: sj.state === 'done', canAttach: true, shots: sj.plan && sj.plan.shots ? sj.plan.shots.length : 1,
+      attach: function (onP, o) { return GG.attach(sj, onP, o && o.signal, { ownStart: own ? own.start : 0 }); },
+      cancel: function () { return GG.cancel(sj.id); }, discard: function () { return GG.done(sj.id); }
+    };
+  }
+  // the host's PC, as the rest of the page sees an engine: ready, with the add-ons the host has
+  function guestStatus() {
+    var ses = GG.session, h = (ses && ses.host) || {};
+    if (!ses) return null;
+    return { engine: { state: 'ready' }, gpu: { name: h.laptop ? 'Laptop GPU' : 'GPU', vramMB: 8192, driverOk: true },
+      packs: { core: { installed: true }, singing: { installed: !!h.singing }, fast: { installed: !!h.fast } }, job: null };
+  }
+  function guestHostName() { return GG.hostName(); }
+  function guestRefresh() {
+    LOC.s = guestStatus(); LOC.checked = true;
+    PCN = (GG.session ? guestHostName() : 'your friend') + '’s PC';
+    S.engine = 'local';
+    renderEngine(); updateAll();
+    return Promise.resolve(LOC.s);
+  }
+  function guestLeftText(ses) {
+    var L = ses && ses.limits;
+    if (!L) return '';
+    if (L.left <= 0) return 'No videos left today — you can make more after ' + guestResetText(L.resetAt) + '.';
+    return L.left + ' of ' + L.daily + ' video' + (L.daily === 1 ? '' : 's') + ' left today';
+  }
+  function guestResetText(at) {
+    var d = at ? new Date(at) : null;
+    if (!d || isNaN(d)) return 'midnight';
+    var hh = d.getHours(), mm = d.getMinutes();
+    return hh === 0 && mm === 0 ? 'midnight' : (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
+  }
+  // The card at the top of a friend's page: whose PC, how many videos are left today, who you are.
+  var GV = { gate: 'connecting', tried: false, codeOpen: false, nameOpen: false };
+  function renderGuest() {
+    var ses = GG.session, host = guestHostName();
+    if (el.footNote) {
+      el.footNote.textContent = 'Your selfie goes to ' + host + '’s PC only to make your video, and is deleted afterwards' +
+        (ses && ses.mode === 'wifi' ? ' (over the Wi-Fi you share).' : ' (through an encrypted link via Cloudflare).') +
+        ' Use only your own photo, or one you have permission to use, of an adult. Every video gets a small “AI-generated” label.';
+    }
+    if (el.gPrivacy) {
+      el.gPrivacy.textContent = ses ? 'Your photo goes to ' + host + '’s PC only to make this video and is deleted afterwards.' + (ses.approve ? ' ' + host + ' approves each video and sees your photo.' : '') : '';
+      el.gPrivacy.hidden = !ses;
+    }
+    if (!el.gCard) return;
+    var named = !!(ses && ses.guest && ses.guest.name);
+    el.gCard.hidden = !named;
+    renderGate();
+    if (!named) return;
+    el.gBadgeT.textContent = 'Made on ' + host + '’s PC · free';
+    el.gLeft.textContent = guestLeftText(ses);
+    el.gLeft.classList.toggle('none', !!(ses.limits && ses.limits.left <= 0));
+    var notes = [];
+    if (ses.state === 'closing') notes.push(host + ' has stopped sharing. Videos already being made still finish, but no new ones can start.');
+    else if (ses.approve) notes.push(host + ' approves each video before it starts.');
+    if (ses.mode === 'wifi' && !GG.secure) notes.push('You’re on ' + host + '’s Wi-Fi link.');
+    el.gNote.textContent = notes.join(' ');
+    el.gNote.hidden = !notes.length;
+    el.gMe.textContent = 'You: ' + ses.guest.name;
+    el.gCodeBox.hidden = !GV.codeOpen;
+    el.gNameBox.hidden = !GV.nameOpen;
+  }
+  // Connecting / no link / your name: shown instead of the scene controls until the friend is in.
+  function renderGate() {
+    var ses = GG.session, g = !ses ? (GV.tried ? 'nolink' : 'connecting') : !ses.guest.name ? 'name' : '';
+    if (GV.gate === g && el.gate.dataset.k === g + (ses ? ses.host.name : '') + (GG.error ? GG.error.code : '')) return;
+    GV.gate = g;
+    el.gate.dataset.k = g + (ses ? ses.host.name : '') + (GG.error ? GG.error.code : '');
+    el.ai.classList.toggle('guest-gate', !!g);
+    el.gate.hidden = !g;
+    el.gate.textContent = '';
+    if (!g) return;
+    var h = document.createElement('h2'), p = document.createElement('p'), host = ses ? guestHostName() : 'your friend';
+    h.id = 'aiGateH'; h.tabIndex = -1;
+    el.gate.setAttribute('aria-labelledby', 'aiGateH');
+    var ico = document.createElement('span'); ico.className = 'ai-gate-ico'; ico.setAttribute('aria-hidden', 'true');
+    el.gate.appendChild(ico);
+    if (g === 'connecting') {
+      ico.classList.add('wait');
+      h.textContent = 'Connecting to your friend’s PC…';
+      p.textContent = 'One moment.';
+      el.gate.appendChild(h); el.gate.appendChild(p);
+      return;
+    }
+    if (g === 'nolink') {
+      var code = GG.error && GG.error.code;
+      ico.classList.add('link');
+      h.textContent = code === 'not-accepting' ? 'Sharing has stopped' : code === 'full' ? 'This share is full' : code === 'too-many-attempts' ? 'Too many tries' : code === 'network' ? 'Can’t reach your friend’s PC' : 'Ask your friend for a new link';
+      p.textContent = code === 'not-accepting' ? 'Your friend has stopped sharing their PC for now. Ask them to share again and send you the new link.'
+        : code === 'network' ? 'Check your connection, then try again. If it still doesn’t work, ask your friend whether sharing is still on.'
+        : code === 'full' ? 'Too many people are using this link right now. Ask your friend to send you a new link later.'
+        : code === 'too-many-attempts' ? 'Wait a few minutes, then open the link your friend sent you again.'
+        : 'This link has expired or was replaced. Ask the friend who sent it for a new one — links only work while they are sharing.';
+      el.gate.appendChild(h); el.gate.appendChild(p);
+      var tip = document.createElement('p'); tip.className = 'ai-gate-tip';
+      tip.textContent = 'Were you making a video? Open the new link, then tap “I have a code” and enter the code from your video.';
+      el.gate.appendChild(tip);
+      var acts = document.createElement('div'); acts.className = 'ai-gate-acts';
+      var pv = document.createElement('button'); pv.type = 'button'; pv.className = 'btn primary'; pv.textContent = 'Make a photo video instead';
+      pv.addEventListener('click', function () { setMode('photo', { user: true }); });
+      var again = document.createElement('button'); again.type = 'button'; again.className = 'btn glass'; again.textContent = 'Try again';
+      again.addEventListener('click', function () { GG.refresh().then(function (s) { if (!s) toast('This link still doesn’t work — ask your friend for a new one.', 'warn', 5000); afterSession(); }, function () { toast('Can’t reach your friend’s PC right now.', 'warn'); }); });
+      acts.appendChild(pv); acts.appendChild(again);
+      el.gate.appendChild(acts);
+      return;
+    }
+    // the friend's name (the host sees it, and can block anyone they don't know)
+    ico.classList.add('hi');
+    h.textContent = 'Hi! What should ' + host + ' call you?';
+    p.textContent = host + ' shared their PC’s free AI with you. Your name shows up on ' + host + '’s screen, so they know who’s making a video.';
+    el.gate.appendChild(h); el.gate.appendChild(p);
+    var form = document.createElement('form'); form.className = 'ai-gate-form'; form.noValidate = true;
+    var lab = document.createElement('label'); lab.htmlFor = 'aiGuestName'; lab.className = 'sr-only'; lab.textContent = 'Your name';
+    var inp = document.createElement('input'); inp.id = 'aiGuestName'; inp.type = 'text'; inp.maxLength = 24; inp.autocomplete = 'given-name'; inp.placeholder = 'Your name'; inp.enterKeyHint = 'go';
+    var go = document.createElement('button'); go.type = 'submit'; go.className = 'btn primary'; go.textContent = 'Continue';
+    var msg = document.createElement('p'); msg.className = 'ai-gate-msg'; msg.setAttribute('role', 'status');
+    form.appendChild(lab); form.appendChild(inp); form.appendChild(go); form.appendChild(msg);
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var v = inp.value.trim();
+      if (!v) { msg.textContent = 'Type your name first.'; inp.focus(); return; }
+      go.disabled = true; msg.textContent = '';
+      GG.setName(v).then(function () { go.disabled = false; afterSession(); announce('Welcome, ' + ((GG.session && GG.session.guest.name) || v)); }, function (er) {
+        go.disabled = false;
+        msg.textContent = er && er.code === 'bad-name' ? 'Please use letters, numbers and simple punctuation (up to 24 characters).' : er && er.code === 'no-session' ? 'This link stopped working — ask your friend for a new one.' : 'That didn’t work — try again.';
+        if (er && er.code === 'no-session') afterSession();
+      });
+    });
+    el.gate.appendChild(form);
+    var note = document.createElement('p'); note.className = 'ai-gate-tip';
+    note.textContent = 'Your photo goes to ' + host + '’s PC only to make your video and is deleted afterwards. Your finished videos are saved on this device.';
+    el.gate.appendChild(note);
+    setTimeout(function () { try { inp.focus({ preventScroll: true }); } catch (x) { /* ignore */ } }, 50);
+  }
+  // A new session (joined, named, renamed, blocked, sharing stopped …): redraw, and pick up a video already on the way.
+  function afterSession() {
+    GV.tried = true;
+    guestRefresh();
+    var ses = GG.session;
+    if (!ses || !ses.guest.name || running() || RUN.starting) return;
+    GG.current().then(function (sj) { if (sj) guestAttachJob(sj, {}); }, function () { /* nothing to pick up */ });
+  }
+  // A video this friend already has on the host's PC (a reload, another tab closed, or a claimed code): follow it here.
+  function guestAttachJob(sj, opts) {
+    opts = opts || {};
+    if (!sj || !sj.plan || running() || RUN.starting) return false;
+    if (['waiting-approval', 'queued', 'running', 'done'].indexOf(sj.state) < 0) return false;
+    var m = localMeta(); if (m && m.engineJob !== sj.id) m = null;
+    var p = sj.plan, sc = sceneById(p.sceneId);
+    var track = m && trackById(m.trackId) ? m.trackId : (trackById(sc.defaultTrack) ? sc.defaultTrack : S.trackId);
+    var job = localJob(sc, p.sound, track, p.quality, (m && m.thumb) || '');
+    job.engineJob = sj.id; job.story = true; job.duration = p.duration; job.sync = p.sync || 'beat';
+    job.minutes = Array.isArray(p.estimateMin) ? p.estimateMin : null;
+    job.shots = (p.shots || []).map(function (x) { return { id: x.id, title: x.title, lip: !!x.lip, audioStart: null }; });
+    job.guest = true; job.host = guestHostName(); job.guestCode = sj.code || '';
+    job.createdAt = Date.parse(sj.createdAt) || (m && m.createdAt) || Date.now();
+    if (m && m.own) job.own = m.own;
+    if (p.sound === 'own' && !job.own && S.own) job.own = { id: S.own.id, name: S.own.name, start: S.own.start };
+    startLocalRun(job, { attach: guestHandle(sj), resumed: true, background: !!opts.background });
+    return true;
+  }
+  // What the main button says on a friend's page
+  function guestCta(sound) {
+    var ses = GG.session, host = guestHostName();
+    if (!ses) return { main: 'Make my video', sub: GV.tried ? 'Ask your friend for a new link' : 'Connecting to your friend’s PC…' };
+    if (!ses.guest.name) return { main: 'Make my video', sub: 'Tell ' + host + ' your name first' };
+    if (ses.state === 'closing') return { main: 'Make my video', sub: host + ' has stopped sharing' };
+    if (ses.limits && ses.limits.left <= 0) return { main: 'Make my video', sub: 'No videos left today · more after ' + guestResetText(ses.limits.resetAt) };
+    if (sound === 'ai' && !singingOk()) return { main: 'Make my video', sub: 'This scene needs ' + host + '’s Singing add-on' };
+    var sc = sceneById(S.sceneId), m = localRange(planFor(sc, { sound: sound }));
+    if (NARROW()) return { main: 'Make my video', sub: S.duration + ' s · Free · ~' + half(m[0]) + '–' + half(m[1]) + ' min on ' + host + '’s PC' };
+    return { main: 'Make my video', sub: S.duration + ' s · Free · ' + rangeText(m) + ' on ' + host + '’s PC' };
+  }
+  function guestTempo(job) {
+    if (job.sound === 'ai') return null;
+    var t = tempoOf(job.sound, job.trackId);
+    if (!t || !(t.bpm > 0)) return null;
+    return { bpm: clamp(Math.round(t.bpm), 40, 240), feel: GS.tempoFeel(t.bpm, t.energy) };
+  }
+  function guestPlanRequest(job) {
+    return { v: 1, sceneId: job.sceneId, duration: job.duration, sound: job.sound, sync: job.sync || 'beat', quality: job.quality, tempo: guestTempo(job),
+      audio: job.sound === 'own' && !!job.lipStarts && job.lipStarts.some(function (x) { return x != null; }) };
+  }
+  // the host's plan must be the one this page planned (same scenes.json, same rules); anything else is a bug
+  function guestSamePlan(job, sp) {
+    if (!sp || !Array.isArray(sp.shots) || sp.shots.length !== job.shots.length || sp.sound !== job.sound) return false;
+    for (var i = 0; i < sp.shots.length; i++) {
+      var a = sp.shots[i], b = job.shots[i];
+      if (a.id !== b.id || !!a.lip !== !!b.lip) return false;
+      // (my song's lip starts are only in the job request, so the plan answers them with null)
+      if (job.lipStarts && b.lip && typeof a.offset === 'number' && Math.abs(a.offset - job.lipStarts[i]) > 0.0015) return false;
+    }
+    return true;
+  }
+  async function onMakeGuest(opts) {
+    var ses = GG.session, host = guestHostName();
+    if (!ses && !GV.tried) { toast('Connecting to your friend’s PC — one moment.', 'info', 3000); return; }
+    if (!ses) { afterSession(); attention(el.gate); toast('This link doesn’t work any more — ask your friend for a new one.', 'warn', 5000); return; }
+    if (!ses.guest.name) { attention(el.gate); return; }
+    if (ses.state === 'closing') { toast(host + ' has stopped sharing, so no new videos can start.', 'warn', 6000); return; }
+    if (ses.limits && ses.limits.left <= 0) { toast('You’ve made all ' + ses.limits.daily + ' videos for today on ' + host + '’s PC. You can make more after ' + guestResetText(ses.limits.resetAt) + '.', 'warn', 7000); return; }
+    var sc = sceneById(S.sceneId), sound = effSound(sc);
+    if (sound === 'ai' && !singingOk()) { toast(sc.name + ' needs ' + host + '’s Singing add-on, which isn’t installed on their PC. Pick another scene, or use your own song.', 'warn', 7000); attention(el.sceneCard); return; }
+    if (sound === 'own' && !S.own) { toast('Choose your song first.', 'warn'); attention(el.soundCard); openOwnPicker(); return; }
+    if (!photoReady()) return;
+    if (!canRecord()) { refuseUnsupported(); return; }
+    RUN.starting = true;
+    var sj = null, sp = null, plan, job;
+    try {
+      // a video already on its way (another tab, or the page was closed): follow that one instead of a new one
+      try { sj = await GG.current(); } catch (e) { sj = null; }
+      if (!sj || ['waiting-approval', 'queued', 'running', 'done'].indexOf(sj.state) < 0) {
+        sj = null;
+        plan = planFor(sc, { sound: sound });
+        job = localJob(sc, sound, S.trackId, plan.quality, S.photo.thumb, plan);
+        sp = await GG.plan(guestPlanRequest(job));
+      }
+    } catch (e) {
+      RUN.starting = false;
+      var v = guestErrorView(e, null);
+      toast(v.t + (v.p ? ' — ' + v.p : ''), 'warn', 7000);
+      if (e && (e.code === 'no-session' || e.code === 'blocked')) afterSession();
+      return;
+    }
+    RUN.starting = false;
+    if (sj) { toast('You already have a video on ' + host + '’s PC — here it is.', 'info', 4500); guestAttachJob(sj, {}); return; }
+    if (!guestSamePlan(job, sp.plan)) {
+      console.warn('[glow-ai] the host planned this video differently', job.shots, sp.plan);
+      toast('Something went wrong — reload the page and try again.', 'error', 8000);
+      return;
+    }
+    if (Array.isArray(sp.plan.estimateMin)) job.minutes = sp.plan.estimateMin;
+    job.guestQueue = sp.queue || null;
+    startLocalRun(job, {});
+  }
+  // the request for the host (GlowGuest.submit): the choices, the re-encoded selfie, the WAV part of my song
+  async function guestRequest(sc, job) {
+    if (!S.photo || !S.consent) throw Object.assign(new Error('Add your selfie and tick the box first.'), { name: 'GlowGuestError', code: 'consent' });
+    var r = { v: 1, sceneId: job.sceneId, duration: job.duration, sound: job.sound, sync: job.sync || 'beat', quality: job.quality, tempo: guestTempo(job),
+      lipStarts: job.lipStarts && job.lipStarts.some(function (x) { return x != null; }) ? job.lipStarts : null, seed: null, consent: { own: true, adult: true } };
+    setStep('still', null, 'Preparing your photo…');
+    var photo = await GG.preparePhoto(S.photo.blob);
+    var audio = null, start = job.own ? job.own.start : (S.own ? S.own.start : 0);
+    if (r.lipStarts) {
+      if (!S.own || !S.own.buffer) throw Object.assign(new Error('Your song isn’t loaded any more.'), { name: 'GlowGuestError', code: 'own-missing' });
+      var maxLip = Math.max.apply(null, r.lipStarts.filter(function (x) { return x != null; }));
+      audio = GG.wavSegment(S.own.buffer, start, Math.max(job.videoSeconds || 0, maxLip + 5) + 0.1);
+    }
+    return { request: r, photo: photo.blob, audio: audio, ownStart: start };
+  }
+  function guestMade(job, res) { if (res && res.code) job.guestCode = res.code; }
+  // queue, approval and connection news from the host (the usual stages go to localProgress)
+  function guestProgress(job, p) {
+    if (p.code && p.code !== job.guestCode) { job.guestCode = p.code; guestKeepOpen(job); }
+    if (p.stage === 'accepted') { refreshGuestSession(); return true; }
+    if (p.reconnecting) { holdMsg(p.message || 'Reconnecting…', 8000); return true; }
+    if (p.stage === 'queue' || p.stage === 'approval') {
+      if (UI.stage !== 'still') enterStage('still');
+      var host = guestHostName();
+      setStep('still', null, p.stage === 'approval' ? 'Waiting for ' + host + ' to approve' : p.hostBusy && !p.ahead ? host + ' is making a video' : p.ahead ? 'In line · ' + p.ahead + ' ahead of you' : 'You’re next');
+      if (p.message && !(UI.hold > Date.now())) setMsg(p.message);
+      UI.guestWait = p.stage === 'queue' && Array.isArray(p.doneMin) ? ' · yours is ready in about ' + p.doneMin[0] + '–' + p.doneMin[1] + ' min' : '';
+      if (UI.guestStage !== p.stage) announce(p.message || '');
+      UI.guestStage = p.stage;
+      tick();
+      return true;
+    }
+    if (p.stage !== 'upload') {
+      if (!UI.guestRunAt) { UI.guestRunAt = Date.now(); if (UI.guestStage === 'queue' || UI.guestStage === 'approval') announce('Your video is being made on ' + guestHostName() + '’s PC'); }
+      UI.guestWait = ''; UI.guestStage = p.stage;
+    }
+    return false;
+  }
+  function refreshGuestSession() { GG.refresh().then(function () { renderGuest(); updateCost(); }, function () { /* next time */ }); }
+  function guestKeepOpen(job) {
+    var host = job.host || guestHostName();
+    el.keepOpen.textContent = '';
+    el.keepOpen.appendChild(document.createTextNode('It’s made on ' + host + '’s PC, so it’s free. You can leave this page — come back on this device and it picks up where it is. Keep the page on screen for the last minute so the music and the label can be added.'));
+    if (job.guestCode) {
+      var c = document.createElement('span'); c.className = 'ai-guest-code';
+      c.appendChild(document.createTextNode(' Lost the link? Ask ' + host + ' for the new one and enter this code: '));
+      var b = document.createElement('b'); b.textContent = job.guestCode; c.appendChild(b);
+      el.keepOpen.appendChild(c);
+    }
+  }
+  function guestErrorView(e, job) {
+    var host = guestHostName(), code = (e && e.code) || 'failed', srv = e && e.message && e.name === 'GlowGuestError' ? String(e.message) : '';
+    var refunded = ' It didn’t count toward your videos for today.';
+    if (e && e.kind === 'finish') return null;
+    setTimeout(refreshGuestSession, 0);
+    switch (code) {
+      case 'daily-limit': return { t: 'No videos left today', p: 'You’ve made all your videos for today on ' + host + '’s PC. You can make more after ' + guestResetText(e.resetAt) + '.', a: [] };
+      case 'active-job': return { t: 'You already have a video on its way', p: 'Close this and tap “Make my video” to follow it.', a: [] };
+      case 'blocked': return { t: host + ' stopped sharing with you', p: 'You can’t make more videos with this link.', a: [] };
+      case 'no-session': return { t: 'This link stopped working', p: 'Ask ' + host + ' for a new link. If you were making a video, open the new link and enter your code.', a: [] };
+      case 'not-accepting': return { t: host + ' has stopped sharing', p: 'No new videos can start right now. Ask ' + host + ' to share again.', a: [] };
+      case 'queue-full': case 'busy': return { t: host + '’s PC is busy', p: 'Lots of videos are waiting. Try again in a few minutes.', a: ['retry'] };
+      case 'missing-pack': return { t: 'This needs ' + host + '’s Singing add-on', p: 'It isn’t installed on their PC. Pick another scene, or use your own song.', a: ['scene'] };
+      case 'consent': return { t: 'Please confirm your photo', p: 'Tick the box under your selfie: it’s you, or you have permission, and they are 18 or older.', a: ['photo'] };
+      case 'no-name': return { t: 'Tell ' + host + ' your name first', p: '', a: [] };
+      case 'bad-photo': case 'too-large': case 'unsupported-type': return { t: 'This photo didn’t work', p: srv || 'Try another photo — a clear photo of one person.', a: ['photo', 'retry'] };
+      case 'bad-audio': case 'unexpected-audio': case 'own-missing': return { t: 'Your song didn’t work for this video', p: srv || 'Choose your song again, or try another part of it.', a: ['sound', 'retry'] };
+      case 'declined': return { t: host + ' didn’t approve this video', p: refunded.trim() + ' You can try another scene or photo.', a: ['scene'] };
+      case 'cancelled': return { t: 'This video was cancelled', p: (srv || host + ' cancelled it on their PC.') + refunded, a: ['retry'] };
+      case 'expired': return { t: 'This video expired', p: 'It wasn’t picked up within a day, so ' + host + '’s PC deleted it.', a: ['retry'] };
+      case 'engine': case 'host-stopped': case 'sharing-stopped': return { t: host + '’s PC couldn’t make this video', p: srv || (host + '’s PC had a problem making this video. Try again later — it didn’t count toward your limit.'), a: ['retry'] };
+      case 'gone': return { t: 'This video is no longer on ' + host + '’s PC', p: srv || 'It may have been saved in another tab already.', a: ['retry'] };
+      case 'network': return { t: 'Can’t reach ' + host + '’s PC', p: 'Check your connection. If ' + host + ' closed sharing, ask for a new link.', a: ['retry'] };
+      case 'slow-down': case 'too-many-attempts': return { t: 'One moment, please', p: 'Too many tries in a short time. Wait a minute, then try again.', a: ['retry'] };
+      case 'bad-request': return { t: 'Something went wrong', p: 'Reload the page and try again.', a: [] };
+      default: return { t: 'The video couldn’t be made', p: srv || 'Something went wrong on ' + host + '’s PC. Please try again.', a: ['retry'] };
+    }
+  }
+  // "I have a code" (a new link after the old one stopped working) and "Change name", in the friend's card
+  function guestCodeSubmit(e) {
+    e.preventDefault();
+    var v = el.gCodeIn.value.trim();
+    if (!/^[0-9A-Za-z]{5}-?[0-9A-Za-z]{5}$/.test(v)) { el.gCodeMsg.textContent = 'The code looks like ABCDE-12345.'; return; }
+    if (running()) { el.gCodeMsg.textContent = 'Wait until the video on screen is done.'; return; }
+    el.gCodeGo.disabled = true; el.gCodeMsg.textContent = '';
+    GG.claim(v).then(function (sj) {
+      el.gCodeGo.disabled = false; GV.codeOpen = false; el.gCodeIn.value = ''; renderGuest();
+      if (sj && guestAttachJob(sj, {})) toast('Found your video — picking it up.', 'ok', 3500);
+      else toast('That video is already done or gone.', 'info', 4000);
+    }, function (er) {
+      el.gCodeGo.disabled = false;
+      el.gCodeMsg.textContent = er && (er.code === 'bad-code' || er.status === 404) ? 'That code didn’t match a video. Check it and try again.' : er && er.code === 'too-many-attempts' ? 'Too many tries — wait a few minutes.' : 'That didn’t work — try again.';
+    });
+  }
+  function guestNameSubmit(e) {
+    e.preventDefault();
+    var v = el.gNameIn.value.trim();
+    if (!v) { el.gNameMsg.textContent = 'Type your name first.'; return; }
+    el.gNameGo.disabled = true;
+    GG.setName(v).then(function () { el.gNameGo.disabled = false; GV.nameOpen = false; el.gNameMsg.textContent = ''; renderGuest(); }, function (er) {
+      el.gNameGo.disabled = false;
+      el.gNameMsg.textContent = er && er.code === 'bad-name' ? 'Please use letters, numbers and simple punctuation (up to 24 characters).' : 'That didn’t work — try again.';
+    });
+  }
+  function guestBoot() {
+    el.gCard = $('#aiGuestCard'); el.gBadgeT = $('#aiGuestBadgeT'); el.gLeft = $('#aiGuestLeft'); el.gNote = $('#aiGuestNote'); el.gMe = $('#aiGuestMe');
+    el.gCodeBtn = $('#aiGuestCodeBtn'); el.gNameBtn = $('#aiGuestNameBtn'); el.gCodeBox = $('#aiGuestCodeBox'); el.gCodeIn = $('#aiGuestCodeIn'); el.gCodeGo = $('#aiGuestCodeGo'); el.gCodeMsg = $('#aiGuestCodeMsg');
+    el.gNameBox = $('#aiGuestNameBox'); el.gNameIn = $('#aiGuestNameIn'); el.gNameGo = $('#aiGuestNameGo'); el.gNameMsg = $('#aiGuestNameMsg');
+    el.gate = $('#aiGate'); el.gPrivacy = $('#aiGuestPrivacy');
+    document.documentElement.setAttribute('data-guest', '1');
+    if (el.gCodeBtn) el.gCodeBtn.addEventListener('click', function () { GV.codeOpen = !GV.codeOpen; GV.nameOpen = false; renderGuest(); if (GV.codeOpen) el.gCodeIn.focus(); });
+    if (el.gNameBtn) el.gNameBtn.addEventListener('click', function () { GV.nameOpen = !GV.nameOpen; GV.codeOpen = false; if (GV.nameOpen && GG.session) el.gNameIn.value = GG.session.guest.name || ''; renderGuest(); if (GV.nameOpen) el.gNameIn.focus(); });
+    if (el.gCodeBox) el.gCodeBox.addEventListener('submit', guestCodeSubmit);
+    if (el.gNameBox) el.gNameBox.addEventListener('submit', guestNameSubmit);
+    GG.onSession = function () { if (!running()) { guestRefresh(); } else renderGuest(); };
+    renderGuest();
+    GG.start().then(afterSession, afterSession);
+    // after a while in the background (phone locked), look again: blocked, sharing stopped, a new day's videos
+    document.addEventListener('visibilitychange', function () { if (!document.hidden && GG.session && !running()) GG.refresh().then(afterSession, function () { /* offline */ }); });
+  }
+
+  /* ------------------------------------------------------------------ *
    * See yourself in every scene (free AI on this PC): quick 5 s Fast previews of the ticked scenes, one at a time,
    * made from the selfie after the consent box is ticked. Each one gets the burned-in "AI-generated" label before it
    * is kept (IndexedDB, "previews") and shown on its scene card. A real video always comes first: making one pauses
@@ -2726,7 +2933,7 @@
   var SEE = { running: false, queue: [], done: [], failed: [], cur: null, pct: 0, ctl: null, photoSeq: 0, saved: {}, ticked: null, open: false, wait: 0, resumeAfter: false };
   (function () { var t = lsJSON('glow.ai.see'); SEE.ticked = t && Array.isArray(t.ticked) ? t.ticked : SEE_DEFAULT.slice(); if (t && Array.isArray(t.queue)) SEE.queue = t.queue; })();
   function seeSave() { lsSet('glow.ai.see', JSON.stringify({ ticked: SEE.ticked, queue: SEE.queue })); }
-  function seeAvailable() { return isLocal() && !!LOC.api && !LOC.gone && localState() === 'ready'; }
+  function seeAvailable() { return !GUEST && isLocal() && !!LOC.api && !LOC.gone && localState() === 'ready'; }
   // a preview already made from this same selfie (making it again would only cost the user time)
   function seeFresh(id) { var r = SEE.saved[id]; return !!(r && S.photo && r.photoKey && r.photoKey === S.photo.key); }
   // the ticked scenes that still need a preview of this selfie, in the order of the scene list
@@ -3479,11 +3686,13 @@
     if (job.story && job.shots) h = { at: Math.min.apply(null, job.shots.map(function (x) { var y = x.video || x.still; return y && y.at && !x.videoUrl ? y.at : Date.now(); })) };
     var slow = h && h.at && Date.now() - h.at > CFG.slowAfterMs;
     if (UI.stage === 'finish') el.eta.textContent = '';
-    else if (job.engine === 'local') { var lft = localLeft(job, el2), all = job.minutes ? rangeText(job.minutes) : localMinutes(job.sound, job.quality, true); el.eta.textContent = ' · ' + lft + (lft ? all.replace(/^about /, '') : all) + ' in all on this PC'; }
+    else if (GUEST && UI.guestWait) el.eta.textContent = UI.guestWait;
+    else if (job.engine === 'local') { var lft = localLeft(job, el2), all = job.minutes ? rangeText(job.minutes) : localMinutes(job.sound, job.quality, true); el.eta.textContent = ' · ' + lft + (lft ? all.replace(/^about /, '') : all) + ' in all on ' + PCN; }
     else if (slow) el.eta.textContent = ' · taking longer than usual';
     else if (job.story) el.eta.textContent = ' · usually ' + (job.sound === 'ai' ? '3–7' : '2–5') + ' min for all ' + job.shots.length + ' shots';
     else el.eta.textContent = UI.stage === 'still' ? ' · usually under a minute' : (job.sound === 'ai' ? ' · usually 2–5 min' : ' · usually 1–3 min');
     if (slow && !UI.slowSaid) { UI.slowSaid = true; holdMsg('Still working — fal.ai is busier than usual. We’ll keep checking.', 20000); }
+    if (!GUEST && job.engine === 'local' && UI.stage !== 'finish') { var sn = hostShareNote(); if (sn && sn !== UI.shareNote) { UI.shareNote = sn; holdMsg(sn, 15000); } }
     if (UI.pill === 'run') el.pillT.textContent = (UI.stage === 'finish' ? 'Finishing your video' : 'Making your video') + ' · ' + pct + '%';
     // the window's title (the taskbar shows it while the window is minimized)
     setRunTitle(UI.waitVisible ? '✓ Your video is ready to finish' : (UI.stage === 'finish' ? '● Finishing your video ' : '● Making your video ') + pct + '%');
@@ -3492,7 +3701,7 @@
   function setRunTitle(t) { var v = t ? t + ' — Glow Studio' : BASE_TITLE; if (document.title !== v) { try { document.title = v; } catch (e) { /* ignore */ } } }
   // "about 12–20 min left": the planned minutes minus the time so far, steered by the engine's own progress
   function localLeft(job, el2) {
-    var m = validRange(job.minutes) ? job.minutes : null, ov = UI.localOverall || 0, done = (Date.now() - (UI.runAt || UI.startAt)) / 60000;
+    var m = validRange(job.minutes) ? job.minutes : null, ov = UI.localOverall || 0, done = (Date.now() - (UI.guestRunAt || UI.runAt || UI.startAt)) / 60000;
     if (!m || UI.stage === 'finish') return '';
     var lo = m[0] - done, hi = m[1] - done;
     if (ov >= 0.12 && done > 1) { var proj = done / ov * (1 - ov); lo = Math.min(Math.max(lo, proj * 0.8), proj); hi = Math.max(proj * 1.25, Math.min(hi, proj * 1.6)); }
@@ -3554,6 +3763,7 @@
     el.err.hidden = true; el.errActions.textContent = '';
     el.cancel.hidden = false; el.cancel.textContent = 'Cancel'; el.cancel.dataset.armed = ''; el.tapFinish.hidden = true; el.keepOpen.hidden = false;
     UI.runAt = Date.now(); // this page's own work on it (a resumed video's createdAt can be much older)
+    UI.guestWait = ''; UI.guestRunAt = 0; UI.guestStage = '';
     el.steps.hidden = false; el.mon.hidden = true; el.elapsed.parentNode.hidden = false; el.elapsed.textContent = '0:00 elapsed';
     el.progTt.textContent = 'Making your video';
     var local = job.engine === 'local';
@@ -3564,7 +3774,8 @@
     if (el.stillName) el.stillName.textContent = nShots > 1 ? 'Placing you in ' + nShots + ' shots' : 'Placing you in the scene';
     UI.shotQ = {}; UI.shotAt = {}; UI.shotSeen = {};
     renderShots(job);
-    if (local) el.keepOpen.textContent = 'It’s made on this PC, so it’s free. You can minimize this window — bring it back for the last minute so the music and the label can be added. If you close this window, your video pauses: open Glow Studio again and press Continue — nothing is lost.';
+    if (GUEST) guestKeepOpen(job);
+    else if (local) el.keepOpen.textContent = 'It’s made on this PC, so it’s free. You can minimize this window — bring it back for the last minute so the music and the label can be added. If you close this window, your video pauses: open Glow Studio again and press Continue — nothing is lost.';
     else el.keepOpen.innerHTML = KEEP_OPEN_FAL;
     ['still', 'video', 'finish'].forEach(function (s) { setStep(s, 'todo', ''); });
     var thumb = (S.photo && S.photo.url) || job.thumb || '';
@@ -4019,7 +4230,7 @@
     if (!plan) return job;
     job.duration = plan.duration; job.sync = plan.sync; job.minutes = localRange(plan);
     if (job.sound === 'own' && S.own) job.own = ownForJob(plan.duration);
-    job.hint = job.sound === 'ai' ? (sc.story ? ' Everyone moves in time with the upbeat rhythm of the song.' : '') : beatHint(tempoOf(job.sound, trackId));
+    job.hint = job.sound === 'ai' ? (sc.story ? SD.local.songHint : '') : beatHint(tempoOf(job.sound, trackId));
     if (plan.local === 'story') {
       // where each shot's part of the soundtrack starts: shots back to back (lip-synced ones exactly 4.8 s), the
       // others ending on the song's beats where it has known beats (my song); the finishing step uses the same plan
@@ -4028,6 +4239,10 @@
       var grid = job.sound === 'own' && S.own ? gridShift(ownPartBeat(S.own, soundStart, plan.duration), soundStart, 90) : null;
       var tl = planTimeline(plan.shots.map(function (x) { return x.lip ? LIP_SEC : 5.03; }), plan.shots.map(function (x) { return x.lip; }), null, grid);
       job.shots = plan.shots.map(function (x, i) { return { id: x.shot.id, title: x.shot.title, lip: x.lip, audioStart: x.lip ? Math.round((soundStart + tl.B[i]) * 1000) / 1000 : null }; });
+      if (GUEST) {
+        job.guest = true; job.host = GG.hostName(); job.videoSeconds = tl.total;
+        if (job.sound === 'own') job.lipStarts = plan.lips ? plan.shots.map(function (x, i) { return x.lip ? Math.round(tl.B[i] * 1000) / 1000 : null; }) : null;
+      }
       job.songStart = 0;
       if (job.sound === 'ai') job.songSeconds = Math.max(10, Math.min(60, Math.ceil(tl.total + 2)));
     } else if (plan.single) job.shotId = plan.single.shot.id;
@@ -4046,13 +4261,13 @@
     var shots = job.shots.map(function (x) {
       var sh = jobShot(sc, job, x.id);
       if (x.lip) anyLip = true;
-      var o = { id: x.id, stillPrompt: localStillText(model, sh.local.still, sh.local.framing), motionPrompt: x.lip ? (sh.local.sing || singLine(sc, sh)) : sh.local.motion + (job.hint || ''), negativePrompt: LOCAL_NEGATIVE, lipSync: !!x.lip };
+      var o = { id: x.id, stillPrompt: localStillText(model, sh.local.still, sh.local.framing), motionPrompt: x.lip ? sh.local.sing : sh.local.motion + (job.hint || ''), negativePrompt: LOCAL_NEGATIVE, lipSync: !!x.lip };
       if (x.lip && x.audioStart != null) o.audioStart = x.audioStart;
       return o;
     });
     return {
       quality: job.quality, shots: shots,
-      song: job.sound === 'ai' && sc.song ? { lyrics: sc.song.lyrics, style: sc.song.style, language: 'es', seconds: job.songSeconds || 22 } : null,
+      song: job.sound === 'ai' && sc.song ? { lyrics: sc.song.lyrics, style: sc.song.style, language: SD.local.songLanguage, seconds: job.songSeconds || 22 } : null,
       audio: job.sound === 'own' && anyLip && S.own ? { blob: S.own.blob, start: job.own ? job.own.start : Math.min(S.own.start, ownMaxStart()) } : null
     };
   }
@@ -4110,7 +4325,7 @@
         enterStage(job.made ? 'finish' : 'still');
         if (job.made) { setStep('still', 'done', 'Done'); setStep('video', 'done', 'Done'); setStep('finish', null, 'Getting your clip…'); el.cancel.hidden = true; }
         else setStep('still', null, 'Getting ready…');
-        setMsg(att ? 'Reconnecting to the free AI on this PC…' : 'Getting the free AI on this PC ready…');
+        setMsg(att ? 'Reconnecting to the free AI on ' + PCN + '…' : GUEST ? 'Getting your video ready for ' + PCN + '…' : 'Getting the free AI on this PC ready…');
         var onP = function (p) { if (RUN.job === job && !RUN.cancelled) localProgress(job, p); };
         var res;
         // keep: the engine keeps the record and the files until this page has saved the labelled video (release)
@@ -4119,11 +4334,12 @@
           await localNotBusy();
           check(job);
           var req;
-          if (job.story) {
+          if (GUEST) req = await guestRequest(sc, job);
+          else if (job.story) {
             if (job.sound === 'own' && !S.own) throw finErr('own-missing');
             req = storyRequest(sc, job, localPack('fast'));
           } else req = localRequest(sc, job.sound, job.quality, localPack('fast'), job.shotId && sc.story ? shotById(sc, job.shotId) : null, job.hint);
-          req.photo = S.photo.blob;
+          if (!GUEST) req.photo = S.photo.blob;
           req.keep = true;
           if (ctl) req.signal = ctl.signal;
           res = job.story ? await LOC.api.generateStory(req, onP) : await LOC.api.generate(req, onP);
@@ -4139,6 +4355,7 @@
           if (!job.shots || job.shots.length !== job.clips.length) job.shots = job.clips.map(function (c) { return { id: c.id, lip: c.lipSync, audioStart: null }; });
           job.local = { stillModel: res.stillModel, quality: res.quality || job.quality, timings: res.timings, seed: res.seed };
           if (res.job && res.job !== job.engineJob) { job.engineJob = res.job; saveLocalMeta(job); }
+          if (GUEST) guestMade(job, res);
           var first = job.clips.filter(function (c) { return c.stillUrl; })[0];
           if (first && !job.stillUrl) { job.stillUrl = first.stillUrl; showStill(first.stillUrl, true); }
           job.clips.forEach(function (c, i) { if (c.stillUrl) shotStill(job, i, c.stillUrl); setShot(i, 'done'); });
@@ -4160,9 +4377,10 @@
     }
   }
   // GlowLocalAI stages -> the three steps on screen: starting/upload/still = 1, song/video/download = 2.
-  var LOCAL_STEP = { starting: 'still', upload: 'still', still: 'still', song: 'video', video: 'video', lipsync: 'video', download: 'video' };
+  var LOCAL_STEP = { starting: 'still', upload: 'still', still: 'still', song: 'video', video: 'video', lipsync: 'video', download: 'video', queue: 'still', approval: 'still', accepted: 'still' };
   function localProgress(job, p) {
     if (p.job && p.job !== job.engineJob) { job.engineJob = p.job; saveLocalMeta(job); }
+    if (GUEST && guestProgress(job, p)) return;
     if (job.made) {
       // only the made clip is fetched again (the engine may have to start first)
       setStep('finish', null, p.stage === 'starting' ? 'Starting the free AI…' : 'Getting your clip…');
@@ -4215,12 +4433,14 @@
     clearInterval(UI.timer); clearTimeout(UI.msgTimer);
     closeProgressSheet(); setPill(null);
     updateCost(); renderEngine();
-    toast('Cancelled — the free AI on this PC stopped this video.', 'info', 4000);
+    toast(GUEST ? 'Cancelled — ' + PCN + ' stopped your video.' : 'Cancelled — the free AI on this PC stopped this video.', 'info', 4000);
+    if (GUEST) setTimeout(refreshGuestSession, 1200);
   }
   // Errors from GlowLocalAI, routed by e.code; the engine's message is shown as it is (with the launcher's "press
   // Start" put in this panel's words), its detail under "Details".
   function localErrorView(e, job) {
     if (LOC.gone && !(e && e.kind === 'finish')) return goneView();
+    if (GUEST) { var gv = guestErrorView(e, job); if (gv) return gv; }
     var code = (e && (e.code || e.kind)) || 'failed';
     var msg = e && e.name === 'GlowLocalAIError' && e.message ? engineText(e.message, 'panel') : '';
     var det = e && e.detail ? String(e.detail) : '';
@@ -5200,6 +5420,7 @@
       story: !!job.story, shots: job.shots ? job.shots.length : 1, sync: job.sync || 'beat', ownName: job.own ? job.own.name : null
     };
     if (job.engine === 'local') { item.quality = job.quality; item.localJob = job.engineJob || null; }
+    if (GUEST) item.host = job.host || GG.hostName();
     if (!item.thumb && job.stillUrl && job.engine !== 'local') item.thumbUrl = job.stillUrl;
     // the same engine video saved by another window already (it finished it first): keep that one, never two
     var dup = job.engine === 'local' && job.engineJob ? await findLocalItem(job.engineJob) : null;
@@ -5446,6 +5667,7 @@
   }
   // Free AI on this PC
   async function onMakeLocal(opts) {
+    if (GUEST && !LOC.retry) return onMakeGuest(opts);
     if (LOC.retry) { if (!canRecord()) { refuseUnsupported(); return; } startLocalRun(LOC.retry, { resumed: true }); return; }
     if (LOC.resume) {
       // the offer may be out of date (finished or discarded in another window): then make a new video normally
@@ -5546,7 +5768,7 @@
     if (running()) { openProgress(); return; }
     if (RUN.starting) return;
     // "Try again" in an error panel goes to the engine that made that video, whatever is chosen now
-    if (opts && opts.engine ? opts.engine === 'local' && LOC.inApp && LOC.api : isLocal()) {
+    if (opts && opts.engine ? opts.engine === 'local' && (GUEST || (LOC.inApp && LOC.api)) : isLocal()) {
       if (LOC.gone) { toast('Glow Studio’s helper has closed — open Glow Studio again from your desktop icon. Your video waits on this PC.', 'warn', 6500); attention(el.engCard); checkLauncher(true); return; }
       onMakeLocal(opts); return;
     }
@@ -5715,7 +5937,7 @@
     if (item.story && item.shots > 1) bits.push(item.shots + ' shots');
     bits.push(item.sound === 'ai' ? (item.engine === 'local' ? 'AI song' : 'AI sound') : item.sound === 'own' ? 'Your song' : ((trackById(item.trackId) || {}).name || 'Music'));
     if (item.sync === 'lips') bits.push('Lip-sync');
-    if (item.engine === 'local') bits.push('Made on this PC');
+    if (item.engine === 'local') bits.push(item.host ? 'Made on ' + item.host + '’s PC' : 'Made on this PC');
     el.resMeta.textContent = bits.join(' · ');
     el.resNote.hidden = true; el.resNote.textContent = '';
     var fresh = !!(opts && opts.fresh);
@@ -5728,6 +5950,12 @@
     var canShare = false;
     try { canShare = !!(file && navigator.canShare && navigator.share && navigator.canShare({ files: [file] })); } catch (e) { canShare = false; }
     el.share.hidden = !canShare;
+    if (GUEST) {
+      // a new link from the host is a new address, and this browser keeps "My AI videos" per address
+      el.resNote.textContent = 'It’s saved in My AI videos on this device. Download it to keep it — a new link from ' + (item.host || GG.hostName()) + ' opens an empty list.' +
+        (!canShare && !GG.secure && /iPhone|iPad|iPod/.test(navigator.userAgent || '') ? ' On iPhone, Download saves it to Files; for “Save to Photos”, ask for the internet link.' : '');
+      el.resNote.hidden = false;
+    }
     el.share.onclick = function () {
       navigator.share({ files: [file], title: 'My AI video', text: 'Made with Glow Studio AI Scenes' }).catch(function (e) {
         if (e && e.name !== 'AbortError') toast('Sharing didn’t work — try Download instead.', 'warn');
@@ -5849,7 +6077,7 @@
       li.appendChild(play);
       var meta = document.createElement('div'); meta.className = 'ai-h-meta';
       var nm = document.createElement('b'); nm.textContent = item.sceneName || sc.name; meta.appendChild(nm);
-      var dt = document.createElement('small'); dt.textContent = dayLabel(item.createdAt) + (item.engine === 'local' ? ' · this PC' : ''); meta.appendChild(dt);
+      var dt = document.createElement('small'); dt.textContent = dayLabel(item.createdAt) + (item.engine === 'local' ? (item.host ? ' · ' + item.host + '’s PC' : ' · this PC') : ''); meta.appendChild(dt);
       li.appendChild(meta);
       var acts = document.createElement('div'); acts.className = 'ai-h-acts';
       var dl;
@@ -6280,9 +6508,11 @@
   setMode(mode());
   // "./#ai" (e.g. "Back to AI Scenes" on the setup page) opens AI Scenes at the top, not scrolled to the section
   if (startHash === '#ai' || startHash === '#photo') {
-    window.addEventListener('load', function () { requestAnimationFrame(function () { if (window.scrollY > 0) window.scrollTo(0, 0); }); });
+    var top0 = function () { requestAnimationFrame(function () { if (window.scrollY > 0) window.scrollTo(0, 0); }); };
+    if (document.readyState === 'complete') top0(); else window.addEventListener('load', top0, { once: true });
   }
   S.engine = decideEngine();
+  if (GUEST) guestBoot();
   renderPhoto();
   updateKeyUI();
   renderEngine();
@@ -6305,4 +6535,36 @@
     }
   })();
   if (!MU) setTimeout(function () { if (mode() === 'ai') toast('Music didn’t load — choose AI sound, or refresh the page.', 'warn', 6000); }, 400);
+  } // boot
+
+  // scenes.json couldn't be loaded (offline, a broken file): say so in plain words in AI Scenes, keep Photo Video working.
+  function bootFailed(e) {
+    console.warn('[glow-ai] AI Scenes could not start', e);
+    var ai = document.getElementById('ai');
+    if (ai && !document.getElementById('aiBootErr')) {
+      var box = document.createElement('div'); box.className = 'ai-boot-err'; box.id = 'aiBootErr'; box.setAttribute('role', 'alert');
+      var b = document.createElement('b'); b.textContent = 'AI Scenes couldn’t load.';
+      var p = document.createElement('p'); p.textContent = 'Check your connection and reload the page. Photo Video still works.';
+      var btn = document.createElement('button'); btn.type = 'button'; btn.className = 'btn primary'; btn.textContent = 'Reload';
+      btn.addEventListener('click', function () { location.reload(); });
+      box.appendChild(b); box.appendChild(p); box.appendChild(btn);
+      ai.insertBefore(box, ai.firstChild);
+      ai.classList.add('boot-failed');
+    }
+    // the mode tabs normally belong to AI Scenes: keep them working for Photo Video
+    var tabs = Array.prototype.slice.call(document.querySelectorAll('.mode-tab'));
+    function setMode(m) {
+      m = m === 'photo' ? 'photo' : 'ai';
+      if (document.body.getAttribute('data-mode') === m) return;
+      document.body.setAttribute('data-mode', m);
+      tabs.forEach(function (t) { var on = t.getAttribute('data-mode') === m; t.setAttribute('aria-selected', on ? 'true' : 'false'); t.tabIndex = on ? 0 : -1; });
+      try { localStorage.setItem('glow.mode', m); } catch (x) { /* ignore */ }
+      document.dispatchEvent(new CustomEvent('glow:mode', { detail: { mode: m } }));
+    }
+    tabs.forEach(function (t) { t.addEventListener('click', function () { setMode(t.getAttribute('data-mode')); }); });
+  }
+  var GS0 = window.GlowScenes;
+  (GS0 && GS0.ready ? GS0.ready : Promise.reject(new Error('scenes.js is missing'))).then(function (SD) {
+    try { boot(SD); } catch (e) { bootFailed(e); throw e; }
+  }, bootFailed);
 })();

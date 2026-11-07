@@ -196,6 +196,10 @@ func requestGroup(path string) string {
 		return "ping"
 	case strings.HasPrefix(path, "/__glow/engine/"):
 		return "engine/" + strings.TrimPrefix(path, "/__glow/engine/")
+	case strings.HasPrefix(path, "/__glow/guest/"), strings.HasPrefix(path, "/__glow/share/"):
+		rest := strings.TrimPrefix(path, "/__glow/")
+		parts := strings.SplitN(rest, "/", 3)
+		return parts[0] + "/" + parts[1]
 	case strings.HasPrefix(path, "/__glow/comfy/"):
 		rest := strings.TrimPrefix(path, "/__glow/comfy/")
 		if i := strings.IndexByte(rest, '/'); i >= 0 {
@@ -306,7 +310,7 @@ func logRequests(next http.Handler) http.Handler {
 		}
 		requests.add(g, code, d)
 		switch {
-		case strings.HasPrefix(g, "engine/") && r.Method == http.MethodPost:
+		case (strings.HasPrefix(g, "engine/") || strings.HasPrefix(g, "share/")) && r.Method == http.MethodPost:
 			launcherLog.printf("[http] POST %s -> %d (%s)", r.URL.Path, code, d.Round(time.Millisecond))
 		case g == "engine/status" && d > time.Second:
 			launcherLog.printf("[http] status took %s", d.Round(time.Millisecond))

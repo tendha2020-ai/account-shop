@@ -13,6 +13,8 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap">
 <link rel="stylesheet" href="engine.css">
 <script src="local-engine.js" defer></script>
+<script src="qr.js" defer></script>
+<script src="share.js" defer></script>
 <script src="engine-ui.js" defer></script>
 </head>
 <body>
@@ -62,6 +64,9 @@
       <h2>Checking this PC…</h2>
     </section>
   </div>
+
+  <!-- Share with friends (share.js; only when free AI is set up) -->
+  <section class="eg-card eg-share" id="egShare" aria-labelledby="gsH" hidden></section>
 
   <details class="eg-details" id="egDetails" hidden>
     <summary>Details</summary>

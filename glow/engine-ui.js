@@ -545,6 +545,7 @@
     renderSteps(v);
     renderBanner();
     renderDetails();
+    renderShare();
     firstRender = false;
   }
   function announce(t) { els.live.textContent = ''; setTimeout(function () { els.live.textContent = t; }, 30); }
@@ -653,6 +654,27 @@
     setInterval(ping, 15000);
   }
 
+  /* ---------------- Share with friends (share.js) ---------------- */
+  // While friends may be using the AI, stopping or repairing the engine first asks again: their videos would fail.
+  // (the launcher starts a stopped engine again for the next friend's video)
+  var shareArm = { kind: '', at: 0 };
+  function shareGuard(kind) {
+    if (!(window.GlowShare && window.GlowShare.active())) return false;
+    if (shareArm.kind === kind && Date.now() - shareArm.at < 10000) { shareArm.kind = ''; return false; }
+    shareArm = { kind: kind, at: Date.now() };
+    ui.err = 'Friends are using your AI right now — ' + (kind === 'stop' ? 'stop' : 'check the files') + ' anyway? Their videos will fail. Press the button again to go ahead.';
+    render();
+    return true;
+  }
+  var shareCtl = null;
+  function renderShare() {
+    var host = document.getElementById('egShare');
+    if (!host) return;
+    var show = !!(window.GlowShare && S && isLoopback() && installed('core'));
+    if (show && !shareCtl) shareCtl = window.GlowShare.mount(host, { where: 'setup' }); // (shown once the launcher answers)
+    if (!show) { host.hidden = true; if (shareCtl) { shareCtl.unmount(); shareCtl = null; } }
+  }
+
   /* ---------------- actions ---------------- */
   function act(name, fn) {
     ui.pendingFocus = els.view.contains(document.activeElement);
@@ -700,8 +722,9 @@
     notNow: function () { ui.dismissJob = true; render(); },
     addPacks: function () { ui.force = 'packs'; ui.err = null; render(); },
     start: function () { return act('start', function () { return L.start(); }); },
-    stop: function () { ui.finished = false; return act('stop', function () { return L.stop(); }); },
+    stop: function () { if (shareGuard('stop')) return; ui.finished = false; return act('stop', function () { return L.stop(); }); },
     repair: function () {
+      if (shareGuard('repair')) return;
       var packs = L.packs.filter(function (p) { return installed(p.id); }).map(function (p) { return p.id; });
       prefs = { packs: packs, dir: '' }; lsSet(PREF_KEY, prefs);
       return act('repair', function () { return L.install(packs, undefined, { repair: true }).then(function () { ui.intent = null; }); });

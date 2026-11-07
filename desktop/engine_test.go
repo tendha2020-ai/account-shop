@@ -40,6 +40,10 @@ func TestMain(m *testing.M) {
 		runMockComfy()
 		return
 	}
+	if os.Getenv("GLOW_FAKE_CLOUDFLARED") == "1" {
+		runFakeCloudflared() // share_helpers_test.go: never the real cloudflared
+		return
+	}
 	if mode := os.Getenv("GLOW_TEST_PROCESS"); mode != "" {
 		runTestProcess(mode) // launcher_test.go: the real main(), a crash, …
 		return

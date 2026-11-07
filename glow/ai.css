@@ -730,3 +730,63 @@ body[data-mode="photo"] .modes-thumb { transform: translateX(100%); }
    and on a busy or software-rendered screen would make the recording skip frames. */
 html.glow-rec *, html.glow-rec *::before, html.glow-rec *::after { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
 html.glow-rec .modal { background: rgba(4, 3, 10, .9); }
+
+/* ---------- Share with friends: the host's card (share.js draws the inside) ---------- */
+.ai-share { padding: 16px; }
+.ai-share[hidden] { display: none !important; }
+
+/* ---------- A friend's page (the host's guest server marks <html data-guest>) ---------- */
+[data-guest] .host-only { display: none !important; }
+html:not([data-guest]) .guest-only { display: none !important; }
+.ai-boot-err { grid-column: 1 / -1; display: grid; gap: 6px; justify-items: start; padding: 16px; border-radius: var(--r-lg); background: rgba(255, 79, 123, .1); border: 1px solid rgba(255, 79, 123, .4); }
+.ai-boot-err b { font-size: 16px; } .ai-boot-err p { margin: 0 0 6px; color: var(--muted); }
+.ai.boot-failed .ai-stage > :not(.ai-hero), .ai.boot-failed .ai-controls { display: none; }
+
+.ai-guest { padding: 14px 16px; display: grid; gap: 6px; }
+.ai-guest[hidden], .ai-gate[hidden] { display: none !important; }
+.ai-guest-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ai-guest-badge { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 6px 12px 6px 8px; border-radius: 999px; font-size: 13.5px; font-weight: 700; color: #fff; background: linear-gradient(115deg, rgba(255, 79, 163, .35), rgba(164, 87, 255, .32) 50%, rgba(34, 211, 238, .3)); border: 1px solid rgba(255, 255, 255, .16); }
+.ai-guest-badge span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-guest-badge svg { width: 18px; height: 18px; fill: none; stroke: #fff; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.ai-guest-left { margin: 2px 0 0; font-size: 15px; font-weight: 600; }
+.ai-guest-left.none { color: #ffd59a; }
+.ai-guest-note { margin: 0; font-size: 13px; color: var(--muted); }
+.ai-guest-me { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; font-size: 13px; color: var(--muted); }
+.ai-guest-links { display: inline-flex; gap: 14px; flex-wrap: wrap; }
+.ai-guest-form { display: grid; gap: 6px; margin-top: 4px; padding: 10px; border-radius: var(--r-md); background: var(--surface); border: 1px solid var(--line); }
+.ai-guest-form label { font-size: 13px; font-weight: 600; }
+.ai-guest-row { display: flex; gap: 8px; min-width: 0; }
+.ai-guest-row input, .ai-gate-form input { flex: 1 1 auto; min-width: 0; padding: 11px 12px; border-radius: 12px; border: 1px solid var(--line-2); background: rgba(0, 0, 0, .28); color: var(--text); font-size: 16px; }
+.ai-guest-row .btn { flex: 0 0 auto; }
+.ai-guest-msg { font-size: 12.5px; color: #ffd59a; min-height: 0; }
+.ai-guest-msg:empty { display: none; }
+.ai-guest-privacy { margin: 8px 2px 0; font-size: 12.5px; color: var(--muted); }
+.ai-guest-code { display: block; margin-top: 6px; }
+.ai-guest-code b { font: 700 14px/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: .06em; color: var(--text); white-space: nowrap; }
+
+/* connecting / no link / your name: the scene controls wait until the friend is in */
+.ai-gate { padding: 22px 18px; display: grid; gap: 8px; justify-items: center; text-align: center; }
+.ai-gate h2 { margin: 4px 0 0; font-size: 20px; letter-spacing: -.01em; outline: none; }
+.ai-gate p { margin: 0; max-width: 46ch; color: var(--muted); font-size: 14px; }
+.ai-gate .ai-gate-tip { font-size: 12.5px; color: var(--faint); }
+.ai-gate-ico { width: 52px; height: 52px; border-radius: 17px; background: var(--grad-soft); border: 1px solid rgba(255, 255, 255, .14); display: grid; place-items: center; }
+.ai-gate-ico::before { content: ""; width: 24px; height: 24px; background: #fff; -webkit-mask: var(--gi) center / contain no-repeat; mask: var(--gi) center / contain no-repeat; }
+.ai-gate-ico.wait::before { --gi: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M12 3a9 9 0 1 0 9 9'/%3E%3C/svg%3E"); animation: aiSpin 1s linear infinite; }
+.ai-gate-ico.link::before { --gi: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1 1M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1'/%3E%3C/svg%3E"); }
+.ai-gate-ico.hi::before { --gi: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='12' cy='8.5' r='3.6'/%3E%3Cpath d='M5 20c.8-3.6 3.6-5.6 7-5.6s6.2 2 7 5.6'/%3E%3C/svg%3E"); }
+@keyframes aiSpin { to { transform: rotate(360deg); } }
+.ai-gate-acts { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 6px; }
+.ai-gate-form { display: flex; flex-wrap: wrap; gap: 8px; width: min(100%, 400px); margin-top: 6px; }
+.ai-gate-form input { flex: 1 1 160px; }
+.ai-gate-form .btn { flex: 0 0 auto; }
+.ai-gate-form .ai-gate-msg { flex: 1 1 100%; margin: 0; font-size: 12.5px; color: #ffd59a; }
+.ai-gate-form .ai-gate-msg:empty { display: none; }
+.ai.guest-gate .ai-stage > :not(.ai-hero):not(.ai-gate), .ai.guest-gate .ai-controls > :not(.ai-hist-card):not(.ai-foot) { display: none !important; }
+
+/* singing scenes on a friend's page whose host has no Singing add-on */
+.ai-scene-w.needs .ai-scene-art canvas { filter: grayscale(.85) brightness(.55); }
+.ai-scene-need { position: absolute; left: 8px; right: 8px; top: 34%; transform: translateY(-50%); z-index: 3; padding: 6px 8px; border-radius: 10px; font-size: 11.5px; font-weight: 700; line-height: 1.25; text-align: center; color: #fff; background: rgba(8, 6, 15, .78); border: 1px solid rgba(255, 255, 255, .18); }
+.ai-scene-need[hidden] { display: none; }
+@media (prefers-reduced-motion: reduce) { .ai-gate-ico.wait::before { animation: none; } }
+/* (a friend's clips carry the host's AI label top-left: the "Finishing" badge moves out of its way) */
+[data-guest] .ai-pv .ai-rec { top: auto; bottom: 12px; }

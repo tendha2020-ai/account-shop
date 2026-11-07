@@ -309,3 +309,7 @@ h2:focus, main:focus { outline: none; }
   .eg-bar.indet > i { animation-duration: 4s; }
   .eg-spin { animation-duration: 2s; }
 }
+
+/* Share with friends (share.js draws the inside) */
+.eg-share { margin-top: 16px; }
+.eg-share[hidden] { display: none !important; }

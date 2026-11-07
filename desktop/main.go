@@ -3,7 +3,8 @@
 //
 // It quits by itself only when no app window has pinged it for 30 minutes AND
 // nothing is in flight: no install, no ComfyUI render, no video or story the
-// page is making (POST /__glow/engine/hold). After an install or a render ends,
+// page is making (POST /__glow/engine/hold), and "Share with friends" is off
+// (while sharing is on, its auto-stop timer is the limit; see share.go). After an install or a render ends,
 // the 30 minutes count from that moment, so a window that slept through a long
 // download still finds the launcher running. Every exit is logged with its
 // reason in %LOCALAPPDATA%\GlowStudio\logs\launcher.log (see logs.go).
@@ -93,7 +94,11 @@ func main() {
 	index = withHeartbeat(index)
 
 	engine := newEngine(myPort)
+	// Share with friends (share.go): while it is on, the launcher stays up.
+	share := newShare(engine, app)
+	engine.shareBusy = share.BusyReason
 	onExit = func() {
+		share.Shutdown()
 		engine.Shutdown()
 		removeInstancePort(myPort)
 	}
@@ -118,6 +123,15 @@ func main() {
 	mux.HandleFunc("/__glow/comfy/", func(w http.ResponseWriter, r *http.Request) {
 		lastPing.Store(time.Now().UnixNano())
 		comfy.ServeHTTP(w, r)
+	})
+	// The host's "Share with friends" card. Friends never reach this listener:
+	// they use the separate one in guestserver.go.
+	mux.HandleFunc("/__glow/share/", func(w http.ResponseWriter, r *http.Request) {
+		lastPing.Store(time.Now().UnixNano())
+		if !engine.guard(w, r) {
+			return
+		}
+		share.hostAPI(w, r)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-cache")
