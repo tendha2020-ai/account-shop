@@ -184,7 +184,7 @@ func main() {
 				wasBusy = why
 			}
 			if now.Sub(summary) >= 10*time.Minute {
-				requests.flush()
+				flushRequests()
 				summary = now
 			}
 			if exit, reason := idleDecision(now, time.Unix(0, lastPing.Load()), lastBusy, idle, busy); exit {
@@ -228,7 +228,7 @@ var exitOnce sync.Once
 // exitApp logs why the launcher quits, stops the engine and exits.
 func exitApp(code int, reason string) {
 	exitOnce.Do(func() {
-		requests.flush()
+		flushRequests()
 		launcherLog.printf("[launcher] exiting: %s", reason)
 		onExit()
 		launcherLog.printf("[launcher] stopped (exit code %d)", code)
@@ -328,7 +328,7 @@ func fatal(msg string, err error) {
 		err = errors.New("unknown error")
 	}
 	launcherLog.printf("[launcher] fatal: %s %v", msg, err)
-	requests.flush()
+	flushRequests()
 	onExit()
 	launcherLog.printf("[launcher] exiting: fatal error (exit code 1)")
 	launcherLog.close()

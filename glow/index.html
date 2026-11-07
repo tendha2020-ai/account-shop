@@ -62,7 +62,8 @@
     <ul class="perks for-ai" aria-label="Highlights">
       <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8.5" r="3.6"/><path d="M5 20c.8-3.6 3.6-5.6 7-5.6s6.2 2 7 5.6"/></svg>Your face, any scene</li>
       <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>Built-in music</li>
-      <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>No watermark</li>
+      <li class="host-only"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>No watermark</li>
+      <li class="guest-only"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Free for you</li>
     </ul>
     <button type="button" class="ai-keychip for-ai host-only" id="aiKeyChip" aria-haspopup="dialog">
       <i class="ai-kdot" aria-hidden="true"></i><span id="aiKeyChipT">Connect fal.ai</span>
@@ -255,6 +256,8 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16.5V20"/></svg>
         <span>Free on your own PC? <a href="./engine.html">Get the Windows app</a></span>
       </p>
+      <!-- "Share with friends" (share.js): its state near the top, and a jump to the card -->
+      <div class="ai-share-top host-only" id="aiShareTop" hidden></div>
     </div>
 
     <!-- a friend's page ("Share with friends"): connecting / no link / your name, then whose PC makes the video -->
@@ -484,7 +487,7 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 3v5c0 4.6-3 8.6-7 10-4-1.4-7-5.4-7-10V6z"/></svg>
         <span id="aiFootNote">Your selfie goes straight from this browser to <a href="https://fal.ai" target="_blank" rel="noopener">fal.ai</a>, using your own key, and nowhere else. Use only your own photo, or one you have permission to use, of an adult. Every video gets a small &ldquo;AI-generated&rdquo; label.</span>
       </p>
-      <p class="foot-links"><button type="button" class="foot-btn host-only" id="aiFootKey">fal.ai key settings</button><span class="host-only">&middot;</span><a class="more-apps host-only" href="../">More apps</a><span class="host-only">&middot;</span><span>No watermark</span></p>
+      <p class="foot-links"><button type="button" class="foot-btn host-only" id="aiFootKey">fal.ai key settings</button><span class="host-only">&middot;</span><a class="more-apps host-only" href="../">More apps</a><span class="host-only">&middot;</span><span class="host-only">No watermark</span><span class="guest-only">Every AI video carries a small “AI-generated” label</span></p>
     </footer>
   </section>
 </main>
@@ -628,6 +631,8 @@
     <p class="ai-msg" id="aiProgMsg"></p>
     <p class="sr-only" id="aiAnnounce" role="status" aria-live="polite"></p>
     <p class="ai-elapsed"><span id="aiElapsed">0:00</span><span id="aiEta"></span></p>
+    <p class="ai-share-note host-only" id="aiShareNote" hidden></p>
+    <p class="ai-share-ask host-only" id="aiShareAsk" hidden><span id="aiShareAskT"></span> <button type="button" class="link-btn" id="aiShareAskB">Show me</button></p>
     <div class="ai-err" id="aiErr" hidden role="alert">
       <span class="ai-err-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.4v.1"/></svg></span>
       <b id="aiErrT"></b>

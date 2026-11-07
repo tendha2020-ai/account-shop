@@ -85,9 +85,13 @@ func (l *fileLog) printf(format string, a ...any) {
 func (l *fileLog) line(msg string) { l.lineAt(time.Now(), msg) }
 
 // lineAt writes msg stamped with the time it happened (lines that reach the
-// file later through the engine log's writer keep their own time).
+// file later through the engine log's writer keep their own time). One call is
+// always one log entry: control characters are escaped and the lines after the
+// first (a stack trace) are indented, so no text that reaches the log (a
+// request, a friend's name, a tool's output) can forge a separate, timestamped
+// line. Very long messages are cut, so rotation keeps working.
 func (l *fileLog) lineAt(at time.Time, msg string) {
-	msg = strings.TrimRight(msg, "\r\n")
+	msg = cleanLogText(strings.TrimRight(msg, "\r\n"))
 	if msg == "" {
 		return
 	}
@@ -109,6 +113,41 @@ func (l *fileLog) lineAt(at time.Time, msg string) {
 	}
 	n, _ := fmt.Fprintf(l.f, "%s %s\n", stamp, msg)
 	l.size += int64(n)
+}
+
+// maxLogMessage caps one log entry (a request summary, a stack trace).
+const maxLogMessage = 64 << 10
+
+// cleanLogText makes msg safe to write as one entry (see lineAt).
+func cleanLogText(msg string) string {
+	cut := 0
+	if len(msg) > maxLogMessage {
+		cut = len(msg) - maxLogMessage
+		msg = strings.ToValidUTF8(msg[:maxLogMessage], "")
+	}
+	bad := func(r rune) bool { return r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) || r == 0x2028 || r == 0x2029 }
+	if strings.IndexFunc(msg, bad) >= 0 {
+		var b strings.Builder
+		b.Grow(len(msg) + 16)
+		for _, r := range msg {
+			switch {
+			case r == '\n':
+				b.WriteString("\n    ")
+			case r == '\t':
+				b.WriteByte('\t')
+			case r == '\r':
+			case bad(r):
+				fmt.Fprintf(&b, "\\x%02x", r)
+			default:
+				b.WriteRune(r)
+			}
+		}
+		msg = b.String()
+	}
+	if cut > 0 {
+		msg += fmt.Sprintf(" … (%d more bytes not logged)", cut)
+	}
+	return msg
 }
 
 // Write lets the log be used by log.Logger (http.Server's ErrorLog).
@@ -179,8 +218,11 @@ func startupLine() string {
 // ---- requests ----
 
 // reqStats counts requests per kind; a summary goes to the launcher log every
-// few minutes (never the content of a request: no prompts, no file names).
+// few minutes (never the content of a request: no prompts, no file names, no
+// paths). The kinds are a fixed list (requestGroup), so a stranger sending
+// made-up paths to the friends' page can't make the summary grow.
 type reqStats struct {
+	label  string
 	mu     sync.Mutex
 	counts map[string]int
 	errs   map[string]int
@@ -188,24 +230,79 @@ type reqStats struct {
 	since  time.Time
 }
 
-var requests = &reqStats{}
+var (
+	requests      = &reqStats{label: "requests"}
+	guestRequests = &reqStats{label: "friends' page requests"} // the guest server (guestserver.go)
+)
 
+// flushRequests writes both summaries.
+func flushRequests() {
+	requests.flush()
+	guestRequests.flush()
+}
+
+// maxRequestGroups caps the kinds in one summary (the rest are "other").
+const maxRequestGroups = 200
+
+var (
+	engineGroups = map[string]bool{"status": true, "install": true, "cancel": true, "start": true, "stop": true, "cleanup": true, "hold": true, "open-logs": true}
+	guestGroups  = map[string]bool{"hello": true, "join": true, "session": true, "name": true, "plan": true, "jobs": true, "jobs/current": true, "claim": true, "leave": true}
+	shareGroups  = map[string]bool{"status": true, "start": true, "stop": true, "settings": true, "new-link": true, "relink": true}
+	comfyGroups  = map[string]bool{"prompt": true, "history": true, "view": true, "upload": true, "queue": true, "interrupt": true, "ws": true,
+		"object_info": true, "system_stats": true, "free": true, "embeddings": true, "extensions": true, "api": true}
+)
+
+// requestGroup maps a request path to one of a fixed set of kinds.
 func requestGroup(path string) string {
 	switch {
 	case path == "/__glow/ping":
 		return "ping"
+	case path == "/__glow/version" || path == "/__glow/quit":
+		return strings.TrimPrefix(path, "/__glow/")
 	case strings.HasPrefix(path, "/__glow/engine/"):
-		return "engine/" + strings.TrimPrefix(path, "/__glow/engine/")
-	case strings.HasPrefix(path, "/__glow/guest/"), strings.HasPrefix(path, "/__glow/share/"):
-		rest := strings.TrimPrefix(path, "/__glow/")
-		parts := strings.SplitN(rest, "/", 3)
-		return parts[0] + "/" + parts[1]
+		if rest := strings.TrimPrefix(path, "/__glow/engine/"); engineGroups[rest] {
+			return "engine/" + rest
+		}
+		return "engine/other"
+	case strings.HasPrefix(path, "/__glow/guest/"):
+		rest := strings.TrimPrefix(path, "/__glow/guest/")
+		if guestGroups[rest] {
+			return "guest/" + rest
+		}
+		if p := strings.Split(rest, "/"); p[0] == "jobs" && len(p) >= 2 && p[1] != "" {
+			switch {
+			case len(p) == 2:
+				return "guest/jobs/*"
+			case len(p) == 3 && (p[2] == "cancel" || p[2] == "done"):
+				return "guest/jobs/*/" + p[2]
+			case len(p) == 4 && p[2] == "files":
+				return "guest/jobs/*/files"
+			}
+		}
+		return "guest/other"
+	case strings.HasPrefix(path, "/__glow/share/"):
+		rest := strings.TrimPrefix(path, "/__glow/share/")
+		if shareGroups[rest] {
+			return "share/" + rest
+		}
+		if p := strings.Split(rest, "/"); len(p) == 3 && p[1] != "" {
+			switch {
+			case p[0] == "guests" && p[2] == "block":
+				return "share/guests/*/block"
+			case p[0] == "jobs" && (p[2] == "approve" || p[2] == "decline" || p[2] == "cancel" || p[2] == "thumb"):
+				return "share/jobs/*/" + p[2]
+			}
+		}
+		return "share/other"
 	case strings.HasPrefix(path, "/__glow/comfy/"):
 		rest := strings.TrimPrefix(path, "/__glow/comfy/")
 		if i := strings.IndexByte(rest, '/'); i >= 0 {
 			rest = rest[:i]
 		}
-		return "comfy/" + rest
+		if comfyGroups[rest] {
+			return "comfy/" + rest
+		}
+		return "comfy/other"
 	case strings.HasPrefix(path, "/__glow/"):
 		return "other"
 	}
@@ -218,11 +315,14 @@ func (s *reqStats) add(group string, code int, d time.Duration) {
 	if s.counts == nil {
 		s.counts, s.errs, s.slow, s.since = map[string]int{}, map[string]int{}, map[string]int{}, time.Now()
 	}
+	if _, ok := s.counts[group]; !ok && len(s.counts) >= maxRequestGroups {
+		group = "other"
+	}
 	s.counts[group]++
 	if code >= 400 {
 		s.errs[group]++
 	}
-	if d > 2*time.Second && !strings.HasPrefix(group, "comfy/") { // ComfyUI downloads and uploads may take long
+	if d > 2*time.Second && !strings.HasPrefix(group, "comfy/") && !strings.HasSuffix(group, "/files") && group != "guest/jobs" { // downloads and uploads may take long
 		s.slow[group]++
 	}
 }
@@ -242,7 +342,11 @@ func (s *reqStats) flush() string {
 	}
 	sort.Strings(keys)
 	var b strings.Builder
-	fmt.Fprintf(&b, "[http] requests in the last %s:", time.Since(since).Round(time.Second))
+	label := s.label
+	if label == "" {
+		label = "requests"
+	}
+	fmt.Fprintf(&b, "[http] %s in the last %s:", label, time.Since(since).Round(time.Second))
 	for _, k := range keys {
 		fmt.Fprintf(&b, " %s %d", k, counts[k])
 		if errs[k] > 0 {
@@ -296,8 +400,13 @@ func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 }
 
 // logRequests counts every request, and writes the launcher's own actions
-// (install, start, stop, cleanup, …) and slow status answers to the log.
-func logRequests(next http.Handler) http.Handler {
+// (install, start, stop, cleanup, …) and slow status answers to the log. Only
+// the request's kind is written, never its path (the path is the sender's text).
+func logRequests(next http.Handler) http.Handler { return countRequests(requests, true, next) }
+
+// countRequests is logRequests with its own summary; host is false for the
+// friends' page (its actions are logged by share.go as [share] lines).
+func countRequests(stats *reqStats, host bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t0 := time.Now()
 		sw := &statusWriter{ResponseWriter: w}
@@ -308,14 +417,25 @@ func logRequests(next http.Handler) http.Handler {
 		if code == 0 {
 			code = http.StatusOK
 		}
-		requests.add(g, code, d)
+		stats.add(g, code, d)
+		if !host {
+			return
+		}
 		switch {
 		case (strings.HasPrefix(g, "engine/") || strings.HasPrefix(g, "share/")) && r.Method == http.MethodPost:
-			launcherLog.printf("[http] POST %s -> %d (%s)", r.URL.Path, code, d.Round(time.Millisecond))
+			launcherLog.printf("[http] POST /__glow/%s -> %d (%s)", g, code, d.Round(time.Millisecond))
 		case g == "engine/status" && d > time.Second:
 			launcherLog.printf("[http] status took %s", d.Round(time.Millisecond))
 		case strings.HasPrefix(g, "comfy/") && code >= 500:
-			launcherLog.printf("[http] %s %s -> %d", r.Method, g, code)
+			launcherLog.printf("[http] %s %s -> %d", sanitizeMethod(r.Method), g, code)
 		}
 	})
+}
+
+// sanitizeMethod: the method as sent, if it is a plain token.
+func sanitizeMethod(m string) string {
+	if len(m) > 12 || strings.IndexFunc(m, func(r rune) bool { return r < 'A' || r > 'Z' }) >= 0 {
+		return "OTHER"
+	}
+	return m
 }

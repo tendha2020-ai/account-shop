@@ -313,3 +313,5 @@ h2:focus, main:focus { outline: none; }
 /* Share with friends (share.js draws the inside) */
 .eg-share { margin-top: 16px; }
 .eg-share[hidden] { display: none !important; }
+.eg-share-top { margin: 0 0 14px; display: flex; justify-content: center; }
+.eg-share-top[hidden] { display: none !important; }

@@ -37,7 +37,9 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"reflect"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -142,10 +144,34 @@ type guestLimits struct {
 	blocked     map[string]time.Time
 	allFails    []time.Time
 	pausedUntil time.Time
+	joins       map[string][]time.Time // new sessions per address (10 min)
 }
 
 func newGuestLimits() *guestLimits {
-	return &guestLimits{static: map[string]*bucket{}, fails: map[string][]time.Time{}, blocked: map[string]time.Time{}}
+	return &guestLimits{static: map[string]*bucket{}, fails: map[string][]time.Time{}, blocked: map[string]time.Time{}, joins: map[string][]time.Time{}}
+}
+
+// joinOK counts a new session from ip: at most maxJoinsPerIP in 10 minutes
+// (0 when it may join now, else how long to wait).
+func (l *guestLimits) joinOK(ip string, now time.Time) time.Duration {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.joins == nil || len(l.joins) > 4096 {
+		l.joins = map[string][]time.Time{}
+	}
+	cut := now.Add(-10 * time.Minute)
+	keep := l.joins[ip][:0]
+	for _, t := range l.joins[ip] {
+		if t.After(cut) {
+			keep = append(keep, t)
+		}
+	}
+	if len(keep) >= maxJoinsPerIP {
+		l.joins[ip] = keep
+		return keep[0].Sub(cut) + time.Second
+	}
+	l.joins[ip] = append(keep, now)
+	return 0
 }
 
 func (l *guestLimits) staticOK(ip string, now time.Time) bool {
@@ -212,15 +238,27 @@ type guestSession struct {
 	created, lastSeen  time.Time
 	blocked            bool
 	api                bucket
+	ip                 string // where it joined from
 }
 
+// guestRec is one friend. Records the server takes for the same person (the
+// same name again from the same connection, or the same name after the old
+// session ended) share one used map, so a new cookie doesn't reset the limit.
 type guestRec struct {
 	id, name           string
 	joinedAt, lastSeen time.Time
 	blocked            bool
-	used               map[string]int // day -> videos accepted
+	used               map[string]int // day -> videos accepted (may be shared, see above)
 	ip                 string
+	ips                map[string]bool // every connection it came from
+	retired            bool            // a newer record of the same person took over its name
 }
+
+// realIP: an address that identifies a friend's connection: Cf-Connecting-Ip
+// through the tunnel, the device's address on the Wi-Fi. "tunnel" (no header)
+// and "local:…" (a program on this PC, without the tunnel) are not one, so
+// per-connection limits and blocks never apply to them.
+func realIP(ip string) bool { return ip != "" && ip != "tunnel" && !strings.HasPrefix(ip, "local:") }
 
 // reqInfo is what the gate learnt about a request.
 type reqInfo struct {
@@ -230,12 +268,15 @@ type reqInfo struct {
 	host   string
 }
 
-func setGuestHeaders(w http.ResponseWriter) {
+func setGuestHeaders(w http.ResponseWriter, kind string) {
 	h := w.Header()
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("X-Frame-Options", "DENY")
-	h.Set("Cross-Origin-Opener-Policy", "same-origin")
+	if kind != "lan" {
+		// (the Wi-Fi listener is plain http on a private address: browsers ignore COOP there and log an error)
+		h.Set("Cross-Origin-Opener-Policy", "same-origin")
+	}
 	h.Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
 }
 
@@ -248,7 +289,7 @@ func plain(w http.ResponseWriter, code int, msg string) {
 
 func (s *Share) newGuestServer(kind string) *http.Server {
 	return &http.Server{
-		Handler:           logRequests(s.guestHandler(kind)),
+		Handler:           countRequests(guestRequests, false, s.guestHandler(kind)),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       120 * time.Second,
 		IdleTimeout:       60 * time.Second,
@@ -260,9 +301,25 @@ func (s *Share) newGuestServer(kind string) *http.Server {
 // guestHandler is the whole friends' site for one listener.
 func (s *Share) guestHandler(kind string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		setGuestHeaders(w)
+		setGuestHeaders(w, kind)
 		ri, ok := s.gate(kind, w, r)
 		if !ok {
+			return
+		}
+		// (every request, also the ones that end in a 404: 30 a second per address)
+		if lim := s.limitsOf(); !lim.staticOK(ri.ip, time.Now()) {
+			w.Header().Set("Retry-After", "2")
+			plain(w, http.StatusTooManyRequests, "Too many requests")
+			return
+		}
+		if s.stoppedNow() {
+			// "Stop now" a moment ago: the page is told so (DESIGN i.4), then the listeners close
+			if strings.HasPrefix(r.URL.Path, "/__glow/guest/") {
+				host := s.hostName()
+				guestErrX(w, http.StatusGone, "sharing-stopped", host+" stopped sharing.", map[string]any{"host": map[string]any{"name": host}})
+			} else {
+				plain(w, http.StatusGone, "Sharing has stopped.")
+			}
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/__glow/guest/") {
@@ -317,7 +374,7 @@ func (s *Share) gate(kind string, w http.ResponseWriter, r *http.Request) (reqIn
 	if ip := net.ParseIP(strings.TrimSpace(r.Header.Get("Cf-Connecting-Ip"))); ip != nil {
 		ri.ip = ip.String()
 	} else if !isTun {
-		ri.ip = hostOnly(r.RemoteAddr)
+		ri.ip = "local:" + hostOnly(r.RemoteAddr) // (a program on this PC: not a friend's connection)
 	}
 	return ri, true
 }
@@ -331,11 +388,11 @@ func hostOnly(addr string) string {
 
 func (s *Share) guestStatic(ri reqInfo, w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	lim, index, csp := s.limits, s.index, s.csp
+	index, csp := s.index, s.csp
 	s.mu.Unlock()
-	if lim != nil && !lim.staticOK(ri.ip, time.Now()) {
-		w.Header().Set("Retry-After", "2")
-		plain(w, http.StatusTooManyRequests, "Too many requests")
+	name := strings.TrimPrefix(r.URL.Path, "/")
+	if _, ok := guestFiles[name]; !ok && name != "" && name != "index.html" {
+		plain(w, http.StatusNotFound, "Not found") // (any method: nothing else exists here)
 		return
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -343,7 +400,6 @@ func (s *Share) guestStatic(ri reqInfo, w http.ResponseWriter, r *http.Request) 
 		plain(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
-	name := strings.TrimPrefix(r.URL.Path, "/")
 	var data []byte
 	var ctype string
 	if name == "" || name == "index.html" {
@@ -385,6 +441,19 @@ func sameOrigin(ri reqInfo, r *http.Request) bool {
 
 func guestErr(w http.ResponseWriter, status int, code, msg string) {
 	writeAPIError(w, &apiError{Status: status, Code: code, Message: msg})
+}
+
+func guestErrX(w http.ResponseWriter, status int, code, msg string, extra map[string]any) {
+	writeAPIError(w, &apiError{Status: status, Code: code, Message: msg, Extra: extra})
+}
+
+// blockedErrLocked: the host blocked this friend (their page keeps the host's name).
+func (s *Share) blockedErrLocked() *apiError {
+	host := s.settings.HostName
+	if host == "" {
+		host = "Your friend"
+	}
+	return &apiError{Status: 403, Code: "blocked", Message: host + " has stopped sharing with you.", Extra: map[string]any{"host": map[string]any{"name": s.settings.HostName}}}
 }
 
 var errForbidden = &apiError{Status: 403, Code: "forbidden", Message: "This request isn't allowed. Reload the page and try again."}
@@ -433,8 +502,9 @@ func (s *Share) guestAPI(ri reqInfo, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if ss.blocked {
+		e := s.blockedErrLocked()
 		s.mu.Unlock()
-		guestErr(w, http.StatusForbidden, "blocked", "Your friend has stopped sharing with you.")
+		writeAPIError(w, e)
 		return
 	}
 	if r.Method == http.MethodPost && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Glow-CSRF")), []byte(ss.csrf)) != 1 {
@@ -454,6 +524,14 @@ func (s *Share) guestAPI(ri reqInfo, w http.ResponseWriter, r *http.Request) {
 	ss.lastSeen = now
 	if g != nil {
 		g.lastSeen = now
+		if realIP(ri.ip) {
+			if g.ips == nil {
+				g.ips = map[string]bool{}
+			}
+			if len(g.ips) < 16 {
+				g.ips[ri.ip] = true
+			}
+		}
 	}
 	s.mu.Unlock()
 	if g == nil {
@@ -498,7 +576,7 @@ func (s *Share) guestAPI(ri reqInfo, w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case name == "name":
-		s.guestName(g, w, r)
+		s.guestName(g, ri, w, r)
 	case name == "plan":
 		s.guestPlanAPI(g, w, r)
 	case name == "jobs":
@@ -540,10 +618,68 @@ func (s *Share) sessionLocked(r *http.Request, now time.Time, touch bool) (*gues
 		return nil, false
 	}
 	ss := s.sessions[c.Value]
-	if ss == nil || now.Sub(ss.created) > sessionTTL {
+	if ss == nil || !s.sessionValidLocked(ss, now) {
 		return nil, false
 	}
 	return ss, true
+}
+
+// sessionValidLocked: a session ends 12 h after joining, or 10 min after
+// joining while it has no name yet (asking again doesn't make it last longer).
+func (s *Share) sessionValidLocked(ss *guestSession, now time.Time) bool {
+	if now.Sub(ss.created) > sessionTTL {
+		return false
+	}
+	g := s.guests[ss.guestID]
+	if g == nil {
+		return false
+	}
+	return g.name != "" || now.Sub(ss.created) <= s.unnamedTTL
+}
+
+// liveSessionLocked: the guest has a working, unblocked session (s.mu held).
+func (s *Share) liveSessionLocked(id string, now time.Time) bool {
+	for _, ss := range s.sessions {
+		if ss.guestID == id && !ss.blocked && s.sessionValidLocked(ss, now) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasJobsLocked: the guest has a video in the list (any state).
+func (s *Share) hasJobsLocked(id string) bool {
+	for _, j := range s.order {
+		if j.guestID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// dropSessionLocked ends a session; a guest left with no session, and with no
+// name or no video, is forgotten (s.mu held).
+func (s *Share) dropSessionLocked(ss *guestSession, now time.Time) {
+	delete(s.sessions, ss.sid)
+	g := s.guests[ss.guestID]
+	if g == nil || g.blocked || s.liveSessionLocked(g.id, now) {
+		return
+	}
+	if g.name == "" || !s.hasJobsLocked(g.id) {
+		delete(s.guests, g.id)
+	}
+}
+
+// unnamedLocked: sessions without a name yet, oldest first (s.mu held).
+func (s *Share) unnamedLocked(now time.Time) []*guestSession {
+	var out []*guestSession
+	for _, ss := range s.sessions {
+		if g := s.guests[ss.guestID]; g != nil && g.name == "" && !ss.blocked && s.sessionValidLocked(ss, now) {
+			out = append(out, ss)
+		}
+	}
+	sort.Slice(out, func(a, b int) bool { return out[a].created.Before(out[b].created) })
+	return out
 }
 
 func readSmallJSON(w http.ResponseWriter, r *http.Request, limit int64, v any) *apiError {
@@ -579,14 +715,16 @@ func (s *Share) guestJoin(ri reqInfo, w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	if s.state != "on" {
+		host := s.settings.HostName
 		s.mu.Unlock()
-		guestErr(w, http.StatusServiceUnavailable, "not-accepting", "Your friend isn't sharing right now.")
+		guestErrX(w, http.StatusServiceUnavailable, "not-accepting", "Your friend isn't sharing right now.", map[string]any{"host": map[string]any{"name": host}})
 		return
 	}
 	if ss, ok := s.sessionLocked(r, now, true); ok {
 		if ss.blocked {
+			e := s.blockedErrLocked()
 			s.mu.Unlock()
-			guestErr(w, http.StatusForbidden, "blocked", "Your friend has stopped sharing with you.")
+			writeAPIError(w, e)
 			return
 		}
 		ss.lastSeen = now
@@ -605,16 +743,55 @@ func (s *Share) guestJoin(ri reqInfo, w http.ResponseWriter, r *http.Request) {
 		guestErr(w, http.StatusForbidden, "bad-token", "This link doesn't work any more. Ask your friend for a new link.")
 		return
 	}
+	if realIP(ri.ip) && s.blockedIPs[ri.ip] != "" {
+		e := s.blockedErrLocked()
+		s.mu.Unlock()
+		s.logf("join refused from %s: the host blocked a friend on this connection", ri.ip)
+		writeAPIError(w, e)
+		return
+	}
+	if wait := lim.joinOK(ri.ip, now); wait > 0 {
+		s.mu.Unlock()
+		s.logf("too many new sessions from %s (%d in 10 min)", ri.ip, maxJoinsPerIP)
+		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
+		guestErr(w, http.StatusTooManyRequests, "too-many-attempts", "Too many tries from this connection. Wait a few minutes, then open the link again.")
+		return
+	}
+	// sessions without a name yet are capped (per connection and in all): the oldest one makes room
+	unnamed := s.unnamedLocked(now)
+	var mine []*guestSession
+	for _, u := range unnamed {
+		if u.ip == ri.ip {
+			mine = append(mine, u)
+		}
+	}
+	evicted := 0
+	if len(mine) >= maxUnnamedPerIP {
+		s.dropSessionLocked(mine[0], now)
+		evicted++
+		unnamed = s.unnamedLocked(now)
+	}
+	if len(unnamed) >= maxUnnamedSessions {
+		s.dropSessionLocked(unnamed[0], now)
+		evicted++
+	}
 	if len(s.sessions) >= maxGuestSessions {
 		s.mu.Unlock()
 		guestErr(w, http.StatusConflict, "full", "Too many people are connected right now. Try again later.")
 		return
 	}
-	g := &guestRec{id: "u" + randHex(6), joinedAt: now, lastSeen: now, used: map[string]int{}, ip: ri.ip}
-	ss := &guestSession{sid: randToken(32), guestID: g.id, csrf: randToken(16), created: now, lastSeen: now}
+	g := &guestRec{id: "u" + randHex(6), joinedAt: now, lastSeen: now, used: map[string]int{}, ip: ri.ip, ips: map[string]bool{}}
+	if realIP(ri.ip) {
+		g.ips[ri.ip] = true
+	}
+	ss := &guestSession{sid: randToken(32), guestID: g.id, csrf: randToken(16), created: now, lastSeen: now, ip: ri.ip}
 	s.guests[g.id], s.sessions[ss.sid] = g, ss
 	s.mu.Unlock()
-	s.logf("guest %s joined from %s", g.id, ri.ip)
+	if evicted > 0 {
+		s.logf("guest %s joined from %s (%d older session(s) without a name ended to make room)", g.id, ri.ip, evicted)
+	} else {
+		s.logf("guest %s joined from %s", g.id, ri.ip)
+	}
 	s.setCookie(w, ri, ss)
 	writeJSON(w, http.StatusOK, map[string]any{"session": s.sessionJSON(ss, ri)})
 }
@@ -627,6 +804,7 @@ func (s *Share) setCookie(w http.ResponseWriter, ri reqInfo, ss *guestSession) {
 // sessionJSON is the guest's view of the sharing session.
 func (s *Share) sessionJSON(ss *guestSession, ri reqInfo) map[string]any {
 	_, singing, fast := s.eng.sharePacks()
+	_, estate := s.eng.shareComfy()
 	laptop := laptopRe.MatchString(s.eng.shareGPUName())
 	now := time.Now()
 	s.mu.Lock()
@@ -640,21 +818,51 @@ func (s *Share) sessionJSON(ss *guestSession, ri reqInfo) map[string]any {
 		}
 		used = g.used[s.dayKey(now)]
 	}
+	day := s.dayKey(now)
 	var job any
 	if j := s.currentJobLocked(ss.guestID); j != nil {
 		job = s.jobJSONLocked(j, s.queueViewNow())
 	}
 	daily := s.settings.DailyLimit
+	left := max(0, daily-used)
+	if realIP(ri.ip) {
+		left = min(left, max(0, s.ipCapLocked()-s.ipUsed[ri.ip][day]))
+	}
 	return map[string]any{
 		"guest": map[string]any{"id": ss.guestID, "name": name}, "csrf": ss.csrf,
-		"host":    map[string]any{"name": s.settings.HostName, "singing": singing, "fast": fast, "laptop": laptop},
-		"limits":  map[string]any{"daily": daily, "usedToday": used, "left": max(0, daily-used), "resetAt": ts(s.resetAt(now))},
+		"host":    map[string]any{"name": s.settings.HostName, "singing": singing, "fast": fast, "laptop": laptop, "ready": estate == "ready"},
+		"limits":  map[string]any{"daily": daily, "usedToday": used, "left": left, "resetAt": ts(s.resetAt(now))},
 		"approve": s.settings.Approve, "mode": s.settings.Mode, "secureContext": ri.scheme == "https",
 		"stopsAt": ts(s.stopsAt), "state": s.state, "scenesVersion": 1, "job": job,
 	}
 }
 
-func (s *Share) guestName(g *guestRec, w http.ResponseWriter, r *http.Request) {
+// shareUsage makes b count its videos in a's used map (the same friend): b's
+// own count so far is added once; nothing happens when they share one already.
+func shareUsage(a, b *guestRec) {
+	if a.used == nil {
+		a.used = map[string]int{}
+	}
+	if b.used != nil && reflect.ValueOf(a.used).UnsafePointer() == reflect.ValueOf(b.used).UnsafePointer() {
+		return
+	}
+	for day, n := range b.used {
+		a.used[day] += n
+	}
+	b.used = a.used
+}
+
+// nameBase: a name without the " (2)" the server adds to tell people apart.
+var nameSuffixRe = regexp.MustCompile(`^(.*\S) \(\d{1,2}\)$`)
+
+func nameBase(n string) string {
+	if m := nameSuffixRe.FindStringSubmatch(n); m != nil {
+		return m[1]
+	}
+	return n
+}
+
+func (s *Share) guestName(g *guestRec, ri reqInfo, w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name string `json:"name"`
 	}
@@ -667,10 +875,12 @@ func (s *Share) guestName(g *guestRec, w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, &apiError{Status: 400, Code: "bad-name", Message: "Type your name (1 to 24 letters).", Field: "name"})
 		return
 	}
+	now := time.Now()
 	s.mu.Lock()
+	// the 12 name slots count friends who are here now (not friends who left, or were blocked)
 	named := 0
 	for _, o := range s.guests {
-		if o.name != "" && o.id != g.id {
+		if o.id != g.id && o.name != "" && !o.blocked && !o.retired && s.liveSessionLocked(o.id, now) {
 			named++
 		}
 	}
@@ -679,12 +889,35 @@ func (s *Share) guestName(g *guestRec, w http.ResponseWriter, r *http.Request) {
 		guestErr(w, http.StatusConflict, "full", "Too many friends are connected right now. Try again later.")
 		return
 	}
+	// The same name again is the same friend when the earlier one has left, or when it comes from the same
+	// connection (a second browser, cleared cookies): the videos of the day and a block carry over.
+	base := nameBase(name)
+	for _, o := range s.guests {
+		if o.id == g.id || o.name == "" || o.retired || !strings.EqualFold(nameBase(o.name), base) {
+			continue
+		}
+		live := s.liveSessionLocked(o.id, now)
+		sameConn := realIP(ri.ip) && (o.ips[ri.ip] || o.ip == ri.ip)
+		if live && !sameConn {
+			continue // someone else with the same name: "Ben (2)"
+		}
+		if o.used == nil {
+			o.used = map[string]int{}
+		}
+		shareUsage(o, g)
+		if o.blocked {
+			g.blocked = true
+		}
+		if !live && !o.blocked {
+			o.retired = true // the name is this record's now
+		}
+	}
 	taken := func(n string) bool {
 		if strings.EqualFold(n, s.settings.HostName) {
 			return true
 		}
 		for _, o := range s.guests {
-			if o.id != g.id && strings.EqualFold(o.name, n) {
+			if o.id != g.id && !o.retired && strings.EqualFold(o.name, n) {
 				return true
 			}
 		}
@@ -692,13 +925,28 @@ func (s *Share) guestName(g *guestRec, w http.ResponseWriter, r *http.Request) {
 	}
 	final := name
 	for i := 2; taken(final) && i < 100; i++ {
-		final = fmt.Sprintf("%s (%d)", name, i)
+		final = fmt.Sprintf("%s (%d)", base, i)
 	}
 	first := g.name == ""
 	g.name = final
+	blocked := g.blocked
+	var be *apiError
+	if blocked {
+		for _, ss := range s.sessions {
+			if ss.guestID == g.id {
+				ss.blocked = true
+			}
+		}
+		be = s.blockedErrLocked()
+	}
 	s.mu.Unlock()
 	if first {
 		s.logf("guest %s is %q", g.id, final)
+	}
+	if blocked {
+		s.logf("guest %s %q: the host blocked this friend earlier", g.id, final)
+		writeAPIError(w, be)
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"name": final})
 }
@@ -762,14 +1010,24 @@ func terminalJob(state string) bool {
 	return false
 }
 
+// ipCapLocked: videos a day from one internet connection (people at the
+// same home share one public address; on Wi-Fi each device has its own).
+func (s *Share) ipCapLocked() int {
+	if s.lan != nil && s.tun == nil {
+		return s.settings.DailyLimit
+	}
+	return 2 * s.settings.DailyLimit
+}
+
 // admitLocked: may this guest send a new job now? (s.mu held)
-func (s *Share) admitLocked(g *guestRec, now time.Time) *apiError {
+func (s *Share) admitLocked(g *guestRec, ip string, now time.Time) *apiError {
 	if s.state != "on" {
 		return &apiError{Status: 503, Code: "not-accepting", Message: "Your friend isn't taking new videos right now."}
 	}
 	if g.blocked {
-		return &apiError{Status: 403, Code: "blocked", Message: "Your friend has stopped sharing with you."}
+		return s.blockedErrLocked()
 	}
+	// (a blocked connection can't join again; friends already here on the same connection keep going)
 	if g.name == "" {
 		return &apiError{Status: 409, Code: "no-name", Message: "Type your name first."}
 	}
@@ -786,6 +1044,10 @@ func (s *Share) admitLocked(g *guestRec, now time.Time) *apiError {
 		return &apiError{Status: 429, Code: "daily-limit", Message: "You've made all your videos for today. Try again tomorrow.",
 			Extra: map[string]any{"resetAt": ts(s.resetAt(now))}}
 	}
+	if realIP(ip) && s.ipUsed[ip][s.dayKey(now)] >= s.ipCapLocked() {
+		return &apiError{Status: 429, Code: "daily-limit", Message: "Lots of videos were made from this internet connection today. Try again tomorrow.",
+			Extra: map[string]any{"resetAt": ts(s.resetAt(now)), "connection": true}}
+	}
 	if queued >= maxQueuedJobs {
 		return &apiError{Status: 503, Code: "queue-full", Message: "Lots of videos are waiting already. Try again in a little while."}
 	}
@@ -795,7 +1057,7 @@ func (s *Share) admitLocked(g *guestRec, now time.Time) *apiError {
 func (s *Share) guestSubmit(g *guestRec, ri reqInfo, w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	s.mu.Lock()
-	if e := s.admitLocked(g, now); e != nil {
+	if e := s.admitLocked(g, ri.ip, now); e != nil {
 		s.mu.Unlock()
 		if e.Status == 503 {
 			w.Header().Set("Retry-After", "60")
@@ -860,18 +1122,24 @@ func (s *Share) guestSubmit(g *guestRec, ri reqInfo, w http.ResponseWriter, r *h
 		return
 	}
 	s.mu.Lock()
-	if e := s.admitLocked(g, now); e != nil {
+	if e := s.admitLocked(g, ri.ip, now); e != nil {
 		s.mu.Unlock()
 		writeAPIError(w, e)
 		return
 	}
 	j := &guestJob{id: "gq-" + randHex(8), code: newResumeCode(), guestID: g.id, state: "queued", createdAt: time.Now(), plan: p,
-		selfie: selfie, wav: wav, day: s.dayKey(now)}
+		selfie: selfie, wav: wav, day: s.dayKey(now), ip: ri.ip}
 	j.expiresAt = j.createdAt.Add(jobKeep)
 	if s.settings.Approve {
 		j.state, j.thumb = "waiting-approval", thumb
 	}
 	g.used[j.day]++
+	if realIP(ri.ip) {
+		if s.ipUsed[ri.ip] == nil {
+			s.ipUsed[ri.ip] = map[string]int{}
+		}
+		s.ipUsed[ri.ip][j.day]++
+	}
 	s.jobs[j.id] = j
 	s.order = append(s.order, j)
 	q := s.queueViewNow()
@@ -968,12 +1236,12 @@ func (s *Share) guestJobAction(g *guestRec, id, action string, w http.ResponseWr
 
 func (s *Share) guestLeave(ss *guestSession, w http.ResponseWriter) {
 	s.mu.Lock()
-	delete(s.sessions, ss.sid)
 	for _, j := range s.order {
 		if j.guestID == ss.guestID && (j.state == "waiting-approval" || j.state == "queued") {
 			s.finishJobLocked(j, "cancelled", "guest-cancelled", "You left, so this video wasn't made.")
 		}
 	}
+	s.dropSessionLocked(ss, time.Now()) // (their name slot is free again)
 	s.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: guestCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
 	s.kick()
@@ -1057,10 +1325,7 @@ func (s *Share) guestClaim(g *guestRec, ri reqInfo, w http.ResponseWriter, r *ht
 		}
 		old := s.guests[found.guestID]
 		if old != nil {
-			for day, n := range old.used { // the same person: their limit comes along
-				g.used[day] += n
-				old.used[day] = 0
-			}
+			shareUsage(old, g) // the same person: their limit comes along
 			if g.name == "" && old.name != "" {
 				g.name, old.name = old.name, ""
 			}
@@ -1095,6 +1360,7 @@ func (s *Share) jobJSONLocked(j *guestJob, q map[string]queueView) map[string]an
 	if j.err != nil {
 		m["error"] = j.err
 	}
+	m["sharing"] = s.state
 	return m
 }
 

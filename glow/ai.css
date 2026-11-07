@@ -785,8 +785,26 @@ html:not([data-guest]) .guest-only { display: none !important; }
 
 /* singing scenes on a friend's page whose host has no Singing add-on */
 .ai-scene-w.needs .ai-scene-art canvas { filter: grayscale(.85) brightness(.55); }
-.ai-scene-need { position: absolute; left: 8px; right: 8px; top: 41%; transform: translateY(-50%); z-index: 3; padding: 6px 8px; border-radius: 10px; font-size: 11.5px; font-weight: 700; line-height: 1.25; text-align: center; color: #fff; background: rgba(8, 6, 15, .78); border: 1px solid rgba(255, 255, 255, .18); }
+.ai-scene-need { display: block; align-self: flex-start; max-width: 100%; margin-top: 4px; padding: 4px 8px; border-radius: 9px; font-size: 11px; font-weight: 700; line-height: 1.25; color: #fff; background: rgba(8, 6, 15, .82); border: 1px solid rgba(255, 255, 255, .22); }
 .ai-scene-need[hidden] { display: none; }
+.ai-scene-w.needs .ai-scene-txt small { display: none; }
+.ai-scene-need .nowrap { white-space: nowrap; }
+/* the host's own video waits for the step of a friend's video that is being made (Share with friends) */
+.ai-share-note { margin: 8px auto 0; max-width: 34em; padding: 7px 12px; border-radius: 12px; font-size: 12.5px; line-height: 1.4; text-align: center; color: #fde68a; background: rgba(250, 204, 21, .08); border: 1px solid rgba(250, 204, 21, .3); }
+.ai-share-note[hidden] { display: none; }
+.ai-share-ask { margin: 8px auto 0; max-width: 34em; padding: 7px 12px; border-radius: 12px; font-size: 12.5px; line-height: 1.4; text-align: center; color: #a5f3fc; background: rgba(34, 211, 238, .08); border: 1px solid rgba(34, 211, 238, .32); }
+.ai-share-ask[hidden] { display: none; }
+.ai-share-ask .link-btn { font-size: 12.5px; font-weight: 700; color: #67e8f9; }
 @media (prefers-reduced-motion: reduce) { .ai-gate-ico.wait::before { animation: none; } }
 /* (a friend's clips carry the host's AI label top-left: the "Finishing" badge moves out of its way) */
 [data-guest] .ai-pv .ai-rec { top: auto; bottom: 12px; }
+
+/* "Share with friends": its chip near the top of AI Scenes (share.js draws it; host app only) */
+.ai-share-top { margin: 12px 0 0; display: flex; justify-content: center; }
+.ai-share-top[hidden] { display: none !important; }
+[data-guest] .ai-share-top { display: none !important; }
+
+/* a friend's video waiting for the host's OK or for its turn: no spinner, no percentage — it hasn't started */
+.ai-steps li[data-state="wait"] { background: rgba(250, 204, 21, .07); border-color: rgba(250, 204, 21, .32); }
+.ai-steps li[data-state="wait"] .ai-sn { border-color: rgba(250, 204, 21, .6); }
+.ai-pv[data-wait] .ai-pv-ring, .ai-pv[data-wait] .ai-pv-scan { display: none; }

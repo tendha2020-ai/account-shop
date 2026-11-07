@@ -10,7 +10,9 @@ package main
 //	POST /__glow/share/start   {mode, hostName, dailyLimit?, approve?, autoStopHours?} -> 202 ShareStatus
 //	POST /__glow/share/stop    {now?}                -> 200 ShareStatus (closing, or off at once)
 //	POST /__glow/share/settings {hostName?, dailyLimit?, approve?, autoStopHours?, mode?} -> 200 ShareStatus
-//	POST /__glow/share/new-link {}                   -> 200 ShareStatus (the old link stops admitting people)
+//	POST /__glow/share/new-link {}                   -> 200 ShareStatus (the old link stops admitting people,
+//	                                                    friends who never typed a name are disconnected)
+//	POST /__glow/share/relink  {}                    -> 200 ShareStatus (start the internet link again after it failed)
 //	POST /__glow/share/guests/<id>/block {blocked}   -> 200 ShareStatus
 //	POST /__glow/share/jobs/<id>/approve|decline|cancel {} -> 200 ShareStatus
 //	GET  /__glow/share/jobs/<id>/thumb               -> image/jpeg (only while waiting for approval)
@@ -24,7 +26,8 @@ package main
 //
 // Test hooks: GLOW_GUEST_PORT, GLOW_CLOUDFLARED_CMD, GLOW_LAN_IP,
 // GLOW_SHARE_TEST_HTTP=1, GLOW_GUEST_POLL_MS, GLOW_SHARE_AUTOSTOP (Go duration),
-// GLOW_SHARE_CLOSE_GRACE (default 30m), GLOW_SHARE_DAY_OFFSET (hours).
+// GLOW_SHARE_CLOSE_GRACE (default 30m), GLOW_SHARE_DAY_OFFSET (hours),
+// GLOW_SHARE_STOP_GRACE (default 6s; how long friends hear "stopped" after Stop now).
 
 import (
 	"context"
@@ -71,11 +74,15 @@ func defaultShareSettings() shareSettings {
 }
 
 const (
-	maxGuestSessions = 50
-	maxNamedGuests   = 12
-	maxQueuedJobs    = 8
-	unnamedTTL       = 30 * time.Minute
-	sessionTTL       = 12 * time.Hour
+	maxGuestSessions   = 50
+	maxNamedGuests     = 12 // friends with a name who are here now
+	maxUnnamedSessions = 15 // sessions that haven't typed a name yet (the oldest makes room for a new one)
+	maxUnnamedPerIP    = 4
+	maxJoinsPerIP      = 12 // new sessions per connection in 10 minutes
+	maxQueuedJobs      = 8
+	defUnnamedTTL      = 10 * time.Minute // from joining; asking again doesn't extend it
+	defStopNowGrace    = 6 * time.Second  // after "Stop now", friends' pages are told so for this long
+	sessionTTL         = 12 * time.Hour
 	jobKeep          = 24 * time.Hour
 	onlineWithin     = 45 * time.Second
 )
@@ -98,6 +105,8 @@ type Share struct {
 	testHTTP       bool
 	stepTimeout    time.Duration
 	cancelGrace    time.Duration // cleanup of a cancelled running job waits this long
+	stopGrace      time.Duration // "Stop now": friends' pages hear 410 sharing-stopped this long (GLOW_SHARE_STOP_GRACE)
+	unnamedTTL     time.Duration // a session without a name ends this long after joining
 	tunnelFactory  func(s *Share, gport int) tunnelRunner
 
 	state, lastErr     string
@@ -128,6 +137,11 @@ type Share struct {
 	lastFinished       time.Time
 	running            *guestJob
 	lastLANCheck       time.Time
+	blockedIPs         map[string]string         // connection -> the blocked friend it came from (this period)
+	ipUsed             map[string]map[string]int // connection -> day -> videos accepted
+	stoppedUntil       time.Time                 // "Stop now": friends hear 410 sharing-stopped until then
+	teardown           func()                    // the rest of a "Stop now", pending until stoppedUntil
+	stoppedAt          time.Time
 }
 
 func newShare(eng shareEngine, app fs.FS) *Share {
@@ -140,6 +154,8 @@ func newShare(eng shareEngine, app fs.FS) *Share {
 		closeGrace:     30 * time.Minute,
 		stepTimeout:    45 * time.Minute,
 		cancelGrace:    3 * time.Second,
+		stopGrace:      defStopNowGrace,
+		unnamedTTL:     defUnnamedTTL,
 		tunnelFactory:  newCloudflaredTunnel,
 	}
 	if v, err := strconv.Atoi(os.Getenv("GLOW_GUEST_PORT")); err == nil && v >= 0 {
@@ -157,6 +173,9 @@ func newShare(eng shareEngine, app fs.FS) *Share {
 	}
 	if v, err := strconv.ParseFloat(os.Getenv("GLOW_SHARE_DAY_OFFSET"), 64); err == nil {
 		s.dayOffset = time.Duration(v * float64(time.Hour))
+	}
+	if d, err := time.ParseDuration(os.Getenv("GLOW_SHARE_STOP_GRACE")); err == nil && d >= 0 {
+		s.stopGrace = d
 	}
 	s.testHTTP = os.Getenv("GLOW_SHARE_TEST_HTTP") == "1"
 	if data, err := os.ReadFile(s.settingsPath); err == nil {
@@ -333,6 +352,7 @@ func (s *Share) autoStopAfter() time.Duration {
 
 // Start turns sharing on.
 func (s *Share) Start(r startRequest) *apiError {
+	s.finishTeardown() // (a "Stop now" a few seconds ago: close its link first)
 	if core, _, _ := s.eng.sharePacks(); !core {
 		return &apiError{Status: 409, Code: "not-installed", Message: "Install the free AI engine first: friends' videos are made by it."}
 	}
@@ -399,6 +419,8 @@ func (s *Share) Start(r startRequest) *apiError {
 	s.token, s.linkChangedAt = randToken(16), now
 	s.sessions, s.guests, s.jobs, s.order = map[string]*guestSession{}, map[string]*guestRec{}, map[string]*guestJob{}, nil
 	s.ours, s.limits = map[string]bool{}, newGuestLimits()
+	s.blockedIPs, s.ipUsed = map[string]string{}, map[string]map[string]int{}
+	s.stoppedUntil, s.teardown = time.Time{}, nil
 	s.uploads, s.downloads = make(chan struct{}, 2), make(chan struct{}, 4)
 	s.wake = make(chan struct{}, 1)
 	s.gport, s.ln, s.lanLn, s.lan = port, ln, lanLn, lan
@@ -418,6 +440,9 @@ func (s *Share) Start(r startRequest) *apiError {
 	tun := s.tun
 	s.mu.Unlock()
 
+	if keepAwake(true) {
+		s.logf("this PC won't go to sleep by itself while sharing is on")
+	}
 	goSafe("guest server", func() { srv.Serve(ln) })
 	if lanSrv != nil {
 		goSafe("guest server (wifi)", func() { lanSrv.Serve(lanLn) })
@@ -491,7 +516,7 @@ func (s *Share) beginClosing(reason string) {
 	for _, j := range s.order {
 		switch j.state {
 		case "waiting-approval", "queued":
-			s.finishJobLocked(j, "cancelled", "sharing-stopped", "Sharing has stopped, so this video wasn't made. It didn't count toward your limit.")
+			s.finishJobLocked(j, "cancelled", "sharing-stopped", s.hostNameLocked()+" stopped sharing, so this video wasn't made. It didn't count toward your videos for today.")
 		case "running":
 			n++
 		}
@@ -503,13 +528,21 @@ func (s *Share) beginClosing(reason string) {
 
 // stopNow ends sharing at once: the running job is interrupted, the tunnel
 // and the friends' page close, sessions end and every friend's file is deleted.
-func (s *Share) stopNow(reason string) {
+func (s *Share) stopNow(reason string) { s.stopWith(reason, 0) }
+
+// stopWith is stopNow; with grace (the host pressed "Stop now") the friends'
+// pages are told "sharing stopped" (410) for that long before the link and the
+// listeners close, so a friend whose video was cancelled is told why. Every
+// video is cancelled and the GPU is free at once either way.
+func (s *Share) stopWith(reason string, grace time.Duration) {
 	s.mu.Lock()
 	if s.state == "off" {
 		s.mu.Unlock()
+		s.finishTeardown() // (the launcher exits during a "Stop now": no waiting)
 		return
 	}
 	s.state, s.stopReason = "off", reason
+	s.stoppedAt = time.Now()
 	cancel, done := s.cancel, s.periodDone
 	srv, lanSrv := s.srv, s.lanSrv
 	var ids []string
@@ -517,7 +550,7 @@ func (s *Share) stopNow(reason string) {
 	for _, j := range s.order {
 		switch j.state {
 		case "waiting-approval", "queued", "running":
-			s.finishJobLocked(j, "cancelled", "sharing-stopped", "Sharing has stopped, so this video wasn't finished.")
+			s.finishJobLocked(j, "cancelled", "sharing-stopped", s.hostNameLocked()+" stopped sharing, so this video wasn't finished. It didn't count toward your videos for today.")
 		}
 		if !j.cleaned {
 			ids = append(ids, j.id)
@@ -529,45 +562,101 @@ func (s *Share) stopNow(reason string) {
 	if s.running != nil {
 		curPrompt = s.running.curPrompt
 	}
-	s.sessions, s.guests = map[string]*guestSession{}, map[string]*guestRec{}
-	s.srv, s.lanSrv, s.ln, s.lanLn, s.tun = nil, nil, nil, nil, nil
+	var once sync.Once
+	td := func() {
+		once.Do(func() {
+			s.mu.Lock()
+			s.teardown, s.stoppedUntil = nil, time.Time{}
+			if s.state == "off" {
+				s.sessions, s.guests = map[string]*guestSession{}, map[string]*guestRec{}
+				s.srv, s.lanSrv, s.ln, s.lanLn, s.tun = nil, nil, nil, nil, nil
+				s.blockedIPs, s.ipUsed = map[string]string{}, map[string]map[string]int{}
+			}
+			s.mu.Unlock()
+			if cancel != nil {
+				cancel()
+			}
+			for _, sv := range []*http.Server{srv, lanSrv} {
+				if sv != nil {
+					ctx, c := context.WithTimeout(context.Background(), 5*time.Second)
+					sv.Shutdown(ctx)
+					c()
+					sv.Close()
+				}
+			}
+			if done != nil {
+				select {
+				case <-done:
+				case <-time.After(10 * time.Second):
+				}
+			}
+			port, state := s.eng.shareComfy()
+			dir := s.eng.shareInstallDir()
+			removed := 0
+			for _, id := range ids {
+				removed += removeJobFiles(dir, id)
+			}
+			if state == "ready" {
+				deleteComfyHistory(port, prompts)
+			}
+			s.mu.Lock()
+			for _, j := range s.order {
+				j.selfie, j.wav, j.thumb = nil, nil, nil
+			}
+			on := s.state != "off"
+			s.mu.Unlock()
+			if !on && keepAwake(false) {
+				s.logf("the PC may go to sleep again")
+			}
+			s.logf("sharing off (%s); %d friends' file(s) removed", reason, removed)
+		})
+	}
+	if grace > 0 {
+		s.stoppedUntil, s.teardown = time.Now().Add(grace), td
+	}
 	s.mu.Unlock()
 
 	port, state := s.eng.shareComfy()
 	if curPrompt != "" && state == "ready" {
 		interruptPrompt(port, curPrompt)
 	}
-	if cancel != nil {
-		cancel()
+	if grace > 0 {
+		s.logf("stopping at once (%s): friends' pages are told, the link closes in %s", reason, grace)
+		time.AfterFunc(grace, func() { goSafe("stop sharing", td) })
+		return
 	}
-	for _, sv := range []*http.Server{srv, lanSrv} {
-		if sv != nil {
-			ctx, c := context.WithTimeout(context.Background(), 5*time.Second)
-			sv.Shutdown(ctx)
-			c()
-			sv.Close()
-		}
-	}
-	if done != nil {
-		select {
-		case <-done:
-		case <-time.After(10 * time.Second):
-		}
-	}
-	dir := s.eng.shareInstallDir()
-	removed := 0
-	for _, id := range ids {
-		removed += removeJobFiles(dir, id)
-	}
-	if state == "ready" {
-		deleteComfyHistory(port, prompts)
-	}
+	td()
+}
+
+// finishTeardown closes the link of a "Stop now" that is still telling friends.
+func (s *Share) finishTeardown() {
 	s.mu.Lock()
-	for _, j := range s.order {
-		j.selfie, j.wav, j.thumb = nil, nil, nil
-	}
+	td := s.teardown
 	s.mu.Unlock()
-	s.logf("sharing off (%s); %d friends' file(s) removed", reason, removed)
+	if td != nil {
+		td()
+	}
+}
+
+// stoppedNow: "Stop now" a moment ago (friends' pages hear 410 sharing-stopped).
+func (s *Share) stoppedNow() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.state == "off" && !s.stoppedUntil.IsZero()
+}
+
+func (s *Share) stateNow() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.state
+}
+
+// hostNameLocked is hostName with s.mu held.
+func (s *Share) hostNameLocked() string {
+	if s.settings.HostName != "" {
+		return s.settings.HostName
+	}
+	return "Your friend"
 }
 
 // Shutdown is called when the launcher exits.
@@ -633,10 +722,9 @@ func (s *Share) tick() {
 		keep = append(keep, j)
 	}
 	s.order = keep
-	for sid, ss := range s.sessions {
-		g := s.guests[ss.guestID]
-		if now.Sub(ss.created) > sessionTTL || (g != nil && g.name == "" && now.Sub(ss.lastSeen) > unnamedTTL) {
-			delete(s.sessions, sid)
+	for _, ss := range s.sessions {
+		if !s.sessionValidLocked(ss, now) {
+			s.dropSessionLocked(ss, now) // (a name slot is free again; a guest without a name or a video is forgotten)
 		}
 	}
 	finishClosing := false
@@ -664,7 +752,8 @@ func (s *Share) tick() {
 		s.beginClosing("auto-stop")
 	}
 	if finishClosing {
-		s.stopNow("stopped; every friend has their video")
+		// (not on this goroutine: stopNow waits for the period's goroutines, this ticker among them)
+		goSafe("stop sharing", func() { s.stopNow("stopped; every friend has their video") })
 	}
 	if checkLAN {
 		s.recheckLAN()
@@ -745,8 +834,13 @@ func (s *Share) hostAPI(w http.ResponseWriter, r *http.Request) {
 		why := "stopped by the host"
 		if req.Now {
 			why = "stopped at once by the host"
+			s.mu.Lock()
+			grace := s.stopGrace
+			s.mu.Unlock()
+			s.stopWith(why, grace)
+		} else {
+			s.Stop(false, why)
 		}
-		s.Stop(req.Now, why)
 		reply(nil, http.StatusOK)
 	case path == "settings":
 		var req startRequest
@@ -757,6 +851,8 @@ func (s *Share) hostAPI(w http.ResponseWriter, r *http.Request) {
 		reply(s.UpdateSettings(req), http.StatusOK)
 	case path == "new-link":
 		reply(s.NewLink(), http.StatusOK)
+	case path == "relink":
+		reply(s.Relink(), http.StatusOK)
 	case len(parts) == 3 && parts[0] == "guests" && parts[2] == "block":
 		var req struct {
 			Blocked *bool `json:"blocked"`
@@ -813,8 +909,34 @@ func (s *Share) NewLink() *apiError {
 	if s.state != "on" && s.state != "starting" {
 		return &apiError{Status: 409, Code: "not-on", Message: "Sharing is off."}
 	}
-	s.token, s.linkChangedAt = randToken(16), time.Now()
-	s.logf("new link made; the old link no longer lets people in")
+	now := time.Now()
+	s.token, s.linkChangedAt = randToken(16), now
+	// people who opened the old link but never typed a name are disconnected: they would need the new link
+	ended := 0
+	for _, ss := range s.unnamedLocked(now) {
+		s.dropSessionLocked(ss, now)
+		ended++
+	}
+	s.logf("new link made; the old link no longer lets people in (%d session(s) without a name ended)", ended)
+	return nil
+}
+
+// Relink starts the internet link again (after it stopped working).
+func (s *Share) Relink() *apiError {
+	s.mu.Lock()
+	if s.state != "on" || s.settings.Mode != "internet" || s.ctx == nil {
+		s.mu.Unlock()
+		return &apiError{Status: 409, Code: "not-on", Message: "The internet link isn't in use right now."}
+	}
+	old, port, ctx := s.tun, s.gport, s.ctx
+	t := s.tunnelFactory(s, port)
+	s.tun, s.linkChangedAt = t, time.Now()
+	s.mu.Unlock()
+	if old != nil {
+		old.stop()
+	}
+	goSafe("tunnel", func() { t.run(ctx) })
+	s.logf("the internet link is starting again (the host asked; the link will change)")
 	return nil
 }
 
@@ -829,9 +951,21 @@ func (s *Share) Block(id string, blocked bool) *apiError {
 	}
 	g.blocked = blocked
 	if blocked {
+		// the connections it came from can't join again in this sharing period (a new cookie doesn't help)
+		for ip := range g.ips {
+			if realIP(ip) {
+				s.blockedIPs[ip] = id
+			}
+		}
+		if realIP(g.ip) {
+			s.blockedIPs[g.ip] = id
+		}
 		for _, ss := range s.sessions {
 			if ss.guestID == id {
 				ss.blocked = true
+				if realIP(ss.ip) {
+					s.blockedIPs[ss.ip] = id
+				}
 			}
 		}
 		for _, j := range s.order {
@@ -840,11 +974,23 @@ func (s *Share) Block(id string, blocked bool) *apiError {
 			}
 			switch j.state {
 			case "waiting-approval", "queued", "running":
-				s.finishJobLocked(j, "cancelled", "blocked", "This video was cancelled.")
+				s.finishJobLocked(j, "cancelled", "blocked", s.hostNameLocked()+" cancelled this video.")
 				cancelled = append(cancelled, j)
 			case "done":
 				s.finishJobLocked(j, "expired", "", "")
 				cancelled = append(cancelled, j)
+			}
+		}
+	}
+	if !blocked {
+		for ip, who := range s.blockedIPs {
+			if who == id {
+				delete(s.blockedIPs, ip)
+			}
+		}
+		for _, ss := range s.sessions {
+			if ss.guestID == id {
+				ss.blocked = false
 			}
 		}
 	}
@@ -889,12 +1035,12 @@ func (s *Share) HostJobAction(id, action string) *apiError {
 			s.mu.Unlock()
 			return &apiError{Status: 409, Code: "not-waiting", Message: "That video isn't waiting for approval."}
 		}
-		s.finishJobLocked(j, "declined", "declined", "Your friend didn't approve this video. It didn't count toward your limit.")
+		s.finishJobLocked(j, "declined", "declined", s.hostNameLocked()+" didn't approve this video. It didn't count toward your videos for today.")
 		s.logf("job %s declined by the host", j.id)
 	case "cancel":
 		switch j.state {
 		case "waiting-approval", "queued", "running":
-			s.finishJobLocked(j, "cancelled", "host-cancelled", "Your friend cancelled this video. It didn't count toward your limit.")
+			s.finishJobLocked(j, "cancelled", "host-cancelled", s.hostNameLocked()+" cancelled this video. It didn't count toward your videos for today.")
 			cleanup = j
 			s.logf("job %s cancelled by the host", j.id)
 		default:
@@ -929,6 +1075,7 @@ type shareStatusJSON struct {
 	Engine        map[string]any    `json:"engine"`
 	Guests        []map[string]any  `json:"guests"`
 	Unnamed       int               `json:"unnamed"`
+	UnnamedGuests []map[string]any  `json:"unnamedGuests"`
 	Jobs          []map[string]any  `json:"jobs"`
 	HostNote      *string           `json:"hostPriorityNote"`
 }
@@ -961,19 +1108,30 @@ func (s *Share) Status() shareStatusJSON {
 	st := shareStatusJSON{State: s.state, LastError: strp(s.lastErr), Mode: s.settings.Mode, HostName: s.settings.HostName,
 		Settings: map[string]any{"dailyLimit": s.settings.DailyLimit, "approve": s.settings.Approve, "autoStopHours": s.settings.AutoStopHours},
 		Engine:   map[string]any{"state": estate, "singing": singing, "fast": fast},
-		Guests:   []map[string]any{}, Jobs: []map[string]any{}}
+		Guests:   []map[string]any{}, Jobs: []map[string]any{}, UnnamedGuests: []map[string]any{}}
 	if s.state == "off" {
 		return st
 	}
 	st.StartedAt, st.StopsAt, st.LinkChangedAt = ts(s.startedAt), ts(s.stopsAt), ts(s.linkChangedAt)
 	if s.state == "closing" {
-		waiting := 0
+		waiting, running := 0, false
 		for _, j := range s.order {
 			if j.state == "running" || j.state == "done" {
 				waiting++
 			}
+			running = running || j.state == "running"
 		}
-		st.Closing = map[string]any{"since": ts(s.closingSince), "waitingFor": waiting}
+		// the link closes when every friend has their video, at the latest closeGrace after the last one was made
+		since := s.lastFinished
+		if since.Before(s.closingSince) {
+			since = s.closingSince
+		}
+		var by *string
+		if !running {
+			by = ts(since.Add(s.closeGrace))
+		}
+		st.Closing = map[string]any{"since": ts(s.closingSince), "waitingFor": waiting, "running": running, "closesBy": by,
+			"graceMin": int(s.closeGrace.Round(time.Minute) / time.Minute)}
 	}
 	if link := s.linkLocked(); link != "" {
 		st.Link = &link
@@ -996,15 +1154,28 @@ func (s *Share) Status() shareStatusJSON {
 	sort.Slice(ids, func(a, b int) bool { return s.guests[ids[a]].joinedAt.Before(s.guests[ids[b]].joinedAt) })
 	for _, id := range ids {
 		g := s.guests[id]
-		if g.name == "" {
-			if !g.blocked {
-				st.Unnamed++
+		if g.retired {
+			continue
+		}
+		live := s.liveSessionLocked(g.id, now)
+		if g.name == "" && !g.blocked {
+			// opened the link, no name yet: listed with an id so the host can block them
+			if live {
+				st.UnnamedGuests = append(st.UnnamedGuests, map[string]any{"id": g.id, "joinedAt": ts(g.joinedAt), "online": now.Sub(g.lastSeen) < onlineWithin})
 			}
 			continue
 		}
-		st.Guests = append(st.Guests, map[string]any{"id": g.id, "name": g.name, "online": now.Sub(g.lastSeen) < onlineWithin,
-			"lastSeenAt": ts(g.lastSeen), "joinedAt": ts(g.joinedAt), "usedToday": g.used[today], "blocked": g.blocked})
+		if !live && !g.blocked && !s.hasJobsLocked(g.id) {
+			continue // left, nothing on the way
+		}
+		var name any
+		if g.name != "" {
+			name = g.name
+		}
+		st.Guests = append(st.Guests, map[string]any{"id": g.id, "name": name, "online": live && now.Sub(g.lastSeen) < onlineWithin,
+			"lastSeenAt": ts(g.lastSeen), "joinedAt": ts(g.joinedAt), "usedToday": g.used[today], "blocked": g.blocked, "here": live})
 	}
+	st.Unnamed = len(st.UnnamedGuests)
 	q := s.queueViewLocked(hostEta, hostNoEta, hostBusy)
 	for _, j := range s.order {
 		g := s.guests[j.guestID]

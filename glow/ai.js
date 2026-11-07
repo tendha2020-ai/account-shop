@@ -268,7 +268,7 @@
     prog: $('#aiProgress'), progTt: $('#aiProgTt'), min: $('#aiMin'), pv: $('#aiPv'), pvSelfie: $('#aiPvSelfie'), pvStill: $('#aiPvStill'),
     pvCanvas: $('#aiPvCanvas'), pct: $('#aiPct'), ringBar: $('#aiRingBar'), mon: $('#aiMon'), steps: $('#aiSteps'),
     subStill: $('#aiSubStill'), subVideo: $('#aiSubVideo'), subFinish: $('#aiSubFinish'), finishName: $('#aiFinishName'),
-    msg: $('#aiProgMsg'), elapsed: $('#aiElapsed'), eta: $('#aiEta'),
+    msg: $('#aiProgMsg'), elapsed: $('#aiElapsed'), eta: $('#aiEta'), shareNote: $('#aiShareNote'), shareAsk: $('#aiShareAsk'), shareAskT: $('#aiShareAskT'), shareAskB: $('#aiShareAskB'),
     err: $('#aiErr'), errT: $('#aiErrT'), errP: $('#aiErrP'), errActions: $('#aiErrActions'),
     tapFinish: $('#aiTapFinish'), cancel: $('#aiCancel'), keepOpen: $('#aiKeepOpen'),
     res: $('#aiResult'), resTt: $('#aiResTt'), resClose: $('#aiResClose'), resVideo: $('#aiResVideo'), labelOv: $('#aiLabelOv'),
@@ -1361,8 +1361,12 @@
       var off = !!needHost && sc.audio === 'required', w = sceneBtns[sc.id];
       if (w.wrap.classList.contains('needs') !== off) {
         w.wrap.classList.toggle('needs', off);
-        if (off && !w.need) { w.need = document.createElement('span'); w.need.className = 'ai-scene-need'; w.art.appendChild(w.need); }
-        if (w.need) { w.need.hidden = !off; w.need.textContent = off ? 'Needs ' + guestHostName() + '’s Singing add-on' : ''; }
+        // (in the card's text, in place of the scene's one-liner: it never covers the scene's name)
+        if (off && !w.need) { w.need = document.createElement('span'); w.need.className = 'ai-scene-need'; (w.art.querySelector('.ai-scene-txt') || w.art).appendChild(w.need); }
+        if (w.need) {
+          w.need.hidden = !off; w.need.textContent = '';
+          if (off) { w.need.appendChild(document.createTextNode('Needs ' + guestHostName() + '’s Singing ')); var ao = document.createElement('span'); ao.className = 'nowrap'; ao.textContent = 'add-on'; w.need.appendChild(ao); }
+        }
       }
       b.setAttribute('aria-checked', on ? 'true' : 'false');
       b.tabIndex = on ? 0 : -1;
@@ -2507,11 +2511,44 @@
     var card = document.getElementById('aiShareCard');
     if (!card) return;
     var show = !!(app && window.GlowShare && localPack('core') && window.GlowShare.supported(LOC.s));
-    if (show && !SHARE) SHARE = window.GlowShare.mount(card, { where: 'ai' }); // (the card appears once the launcher answers)
+    if (show && !SHARE) {
+      // (the card and the chip near the top appear once the launcher answers; the window title says when a friend waits)
+      window.GlowShare.onTitle = function () { setRunTitle(UI.runTitle || ''); };
+      SHARE = window.GlowShare.mount(card, { where: 'ai', onChange: shareAsk, top: document.getElementById('aiShareTop'), onShow: function () { if (!el.prog.hidden) minimize(); } });
+    }
     if (!show) { card.hidden = true; if (SHARE) { SHARE.unmount(); SHARE = null; } }
   }
+  // A friend waits for the host's OK ("Approve each video") while the host's own progress sheet covers the card: the
+  // sheet says so, and "Show me" hides the sheet (the video keeps going) and brings the card's Approve button up.
+  function shareAsk(s) {
+    if (!el.shareAsk || GUEST) return;
+    if (document.getElementById('gsAsk')) { el.shareAsk.hidden = true; return; } // (share.js shows its banner at the top of the window)
+    var w = s && s.state !== 'off' && Array.isArray(s.jobs) ? s.jobs.filter(function (j) { return j && j.state === 'waiting-approval'; }) : [];
+    var t = !w.length ? '' : w.length === 1 ? (w[0].guestName || 'A friend') + ' is waiting for you to approve a video.' : w.length + ' friends are waiting for you to approve their videos.';
+    if (t === (el.shareAsk.hidden ? '' : el.shareAskT.textContent)) return;
+    el.shareAskT.textContent = t; el.shareAsk.hidden = !t;
+    if (t && !el.prog.hidden) announce(t);
+  }
+  function showShareAsk() {
+    if (!el.prog.hidden) minimize();
+    var card = document.getElementById('aiShareCard');
+    if (!card) return;
+    var b = card.querySelector('[data-key^="ap-"]') || card;
+    try { b.scrollIntoView({ behavior: REDUCED ? 'auto' : 'smooth', block: 'center' }); } catch (e) { /* ignore */ }
+    setTimeout(function () { try { b.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }, 350);
+  }
   // the host's own video goes first; while a friend's step finishes, the share status says so
-  function hostShareNote() { var s = window.GlowShare && window.GlowShare.status; return s && s.state !== 'off' && s.hostPriorityNote ? String(s.hostPriorityNote) : ''; }
+  function hostShareNote() { var s = window.GlowShare && window.GlowShare.status; return s && s.state !== 'off' && s.hostPriorityNote ? String(s.hostPriorityNote).replace(/'/g, '’') : ''; }
+  // Sharing: while this PC's own video waits behind the step of a friend's video that is being made right now, the
+  // line under the progress bar says so ("A friend’s video is on step 3 of 8 — yours starts after this step").
+  function shareNoteLine(job) {
+    if (!el.shareNote) return;
+    var sn = !GUEST && job && job.engine === 'local' && UI.stage !== 'finish' && UI.localWaiting ? hostShareNote() : '';
+    if (sn === (el.shareNote.hidden ? '' : el.shareNote.textContent)) return;
+    el.shareNote.textContent = sn; el.shareNote.hidden = !sn;
+    if (sn && sn !== UI.shareNote) announce(sn);
+    UI.shareNote = sn || UI.shareNote;
+  }
   // Where a story stands after the window was closed: the PC finishes only the step it was on, then the story
   // pauses until it is continued. r.state is that one step's state, so the line is built from the shots done.
   function storyWhere(r, m) {
@@ -2655,9 +2692,9 @@
     if (g === 'nolink') {
       var code = GG.error && GG.error.code;
       ico.classList.add('link');
-      h.textContent = code === 'blocked' ? Host + ' stopped sharing with you' : code === 'not-accepting' ? 'Sharing has stopped' : code === 'full' ? 'This share is full' : code === 'too-many-attempts' ? 'Too many tries' : code === 'network' ? 'Can’t reach your friend’s PC' : 'Ask your friend for a new link';
+      h.textContent = code === 'blocked' ? Host + ' stopped sharing with you' : code === 'not-accepting' || code === 'sharing-stopped' ? (host === 'your friend' ? 'Sharing has stopped' : Host + ' stopped sharing') : code === 'full' ? 'This share is full' : code === 'too-many-attempts' ? 'Too many tries' : code === 'network' ? 'Can’t reach your friend’s PC' : 'Ask your friend for a new link';
       p.textContent = code === 'blocked' ? 'You can’t make AI videos with this link any more. Photo Video still works on this device, and the videos you made are in My AI videos.'
-        : code === 'not-accepting' ? 'Your friend has stopped sharing their PC for now. Ask them to share again and send you the new link.'
+        : code === 'not-accepting' || code === 'sharing-stopped' ? Host + ' has stopped sharing their PC for now. Ask them to share again and send you the new link.'
         : code === 'network' ? 'Check your connection, then try again. If it still doesn’t work, ask your friend whether sharing is still on.'
         : code === 'full' ? 'Too many people are using this link right now. Ask your friend to send you a new link later.'
         : code === 'too-many-attempts' ? 'Wait a few minutes, then open the link your friend sent you again.'
@@ -2693,8 +2730,9 @@
       go.disabled = true; msg.textContent = '';
       GG.setName(v).then(function () { go.disabled = false; afterSession(); announce('Welcome, ' + ((GG.session && GG.session.guest.name) || v)); }, function (er) {
         go.disabled = false;
-        msg.textContent = er && er.code === 'bad-name' ? 'Please use letters, numbers and simple punctuation (up to 24 characters).' : er && er.code === 'no-session' ? 'This link stopped working — ask your friend for a new one.' : 'That didn’t work — try again.';
-        if (er && er.code === 'no-session') afterSession();
+        var dead = er && (er.code === 'no-session' || er.code === 'bad-token' || er.code === 'not-accepting' || er.code === 'sharing-stopped');
+        msg.textContent = er && er.code === 'bad-name' ? 'Please use letters, numbers and simple punctuation (up to 24 characters).' : er && er.code === 'full' ? 'Lots of friends are here right now — try again in a few minutes.' : dead ? 'This link stopped working — ask your friend for a new one.' : 'That didn’t work — try again.';
+        if (dead) afterSession();
       });
     });
     el.gate.appendChild(form);
@@ -2769,7 +2807,7 @@
     if (!ses) { afterSession(); attention(el.gate); toast('This link doesn’t work any more — ask your friend for a new one.', 'warn', 5000); return; }
     if (!ses.guest.name) { attention(el.gate); return; }
     if (ses.state === 'closing') { toast(host + ' has stopped sharing, so no new videos can start.', 'warn', 6000); return; }
-    if (ses.limits && ses.limits.left <= 0) { toast('You’ve made all ' + ses.limits.daily + ' videos for today on ' + host + '’s PC. You can make more after ' + guestResetText(ses.limits.resetAt) + '.', 'warn', 7000); return; }
+    if (ses.limits && ses.limits.left <= 0) { toast((ses.limits.usedToday >= ses.limits.daily ? (ses.limits.daily === 1 ? 'You’ve made your 1 video for today' : 'You’ve made all ' + ses.limits.daily + ' videos for today') : 'No more videos today') + ' on ' + host + '’s PC. You can make more after ' + guestResetText(ses.limits.resetAt) + '.', 'warn', 7000); return; }
     var sc = sceneById(S.sceneId), sound = effSound(sc);
     if (sound === 'ai' && !singingOk()) { toast(sc.name + ' needs ' + host + '’s Singing add-on, which isn’t installed on their PC. Pick another scene, or use your own song.', 'warn', 7000); attention(el.sceneCard); return; }
     if (sound === 'own' && !S.own) { toast('Choose your song first.', 'warn'); attention(el.soundCard); openOwnPicker(); return; }
@@ -2822,31 +2860,66 @@
   function guestMade(job, res) { if (res && res.code) job.guestCode = res.code; }
   // queue, approval and connection news from the host (the usual stages go to localProgress)
   function guestProgress(job, p) {
+    var host = guestHostName();
     if (p.code && p.code !== job.guestCode) { job.guestCode = p.code; guestKeepOpen(job); }
+    if (p.sharing && p.sharing !== UI.guestSharing) {
+      UI.guestSharing = p.sharing; guestKeepOpen(job);
+      if (p.sharing === 'closing') announce(host + ' has stopped sharing. Keep this page open until your video is saved.');
+    }
     if (p.stage === 'accepted') { refreshGuestSession(); return true; }
-    if (p.reconnecting) { holdMsg(p.message || 'Reconnecting…', 8000); return true; }
+    if (p.stage === 'made') return true;
+    if (p.reconnecting) {
+      // can't reach the PC: the wait is not counted down meanwhile (nothing is known)
+      if (p.lost) UI.guestLost = true;
+      holdMsg(p.message || 'Reconnecting…', p.lost ? 600000 : 8000);
+      tick();
+      return true;
+    }
+    if (UI.guestLost) { UI.guestLost = false; UI.hold = 0; }
     if (p.stage === 'queue' || p.stage === 'approval') {
+      // nothing is being made yet: no spinner, no countdown — where it stands and how long it takes once it starts
       if (UI.stage !== 'still') enterStage('still');
-      var host = guestHostName();
-      setStep('still', null, p.stage === 'approval' ? 'Waiting for ' + host + ' to approve' : p.hostBusy && !p.ahead ? host + ' is making a video' : p.ahead ? 'In line · ' + p.ahead + ' ahead of you' : 'You’re next');
+      UI.guestWait = { kind: p.stage, ahead: p.ahead || 0, hostBusy: !!p.hostBusy, startMin: Array.isArray(p.startMin) ? p.startMin : null,
+        est: Array.isArray(p.estimateMin) ? p.estimateMin : validRange(job.minutes) ? job.minutes : null };
+      el.pv.dataset.wait = p.stage;
+      el.progTt.textContent = p.stage === 'approval' ? 'Waiting for ' + host : 'In line on ' + host + '’s PC';
+      setStep('still', 'wait', p.stage === 'approval' ? 'Waiting for ' + host + '’s OK' : p.hostBusy && !p.ahead ? host + ' is making a video' : p.ahead ? p.ahead + ' video' + (p.ahead > 1 ? 's' : '') + ' ahead of you' : 'You’re next');
       if (p.message && !(UI.hold > Date.now())) setMsg(p.message);
-      UI.guestWait = p.stage === 'queue' && Array.isArray(p.doneMin) ? ' · yours is ready in about ' + p.doneMin[0] + '–' + p.doneMin[1] + ' min' : '';
       if (UI.guestStage !== p.stage) announce(p.message || '');
       UI.guestStage = p.stage;
       tick();
       return true;
     }
     if (p.stage !== 'upload') {
-      if (!UI.guestRunAt) { UI.guestRunAt = Date.now(); if (UI.guestStage === 'queue' || UI.guestStage === 'approval') announce('Your video is being made on ' + guestHostName() + '’s PC'); }
-      UI.guestWait = ''; UI.guestStage = p.stage;
+      if (!UI.guestRunAt) {
+        UI.guestRunAt = Math.min(Date.now(), Date.parse(p.startedAt) || Date.now());
+        if (UI.guestStage === 'queue' || UI.guestStage === 'approval') announce('Your video is being made on ' + host + '’s PC');
+      }
+      if (UI.guestWait) {
+        UI.guestWait = null; delete el.pv.dataset.wait;
+        el.progTt.textContent = 'Making your video';
+        if (UI.stage === 'still') setStep('still', 'active');
+      }
+      UI.guestStage = p.stage;
     }
     return false;
+  }
+  // the line under the steps on a friend's page while the video waits, or the PC can't be reached
+  function guestEta(job) {
+    var host = guestHostName(), w = UI.guestWait;
+    if (UI.guestLost) return ' · waiting to reach ' + host + '’s PC';
+    if (!w) return null;
+    var then = w.est ? 'about ' + half(w.est[0]) + '–' + half(w.est[1]) + ' min' : '';
+    if (w.kind === 'approval') return ' · starts when ' + host + ' says OK' + (then ? ', then ' + then : '');
+    return then ? ' · then ' + then + ' to make' : '';
   }
   function refreshGuestSession() { GG.refresh().then(function () { renderGuest(); updateCost(); }, function () { /* next time */ }); }
   function guestKeepOpen(job) {
     var host = job.host || guestHostName();
     el.keepOpen.textContent = '';
-    el.keepOpen.appendChild(document.createTextNode('It’s made on ' + host + '’s PC, so it’s free. You can leave this page — come back on this device and it picks up where it is. Keep the page on screen for the last minute so the music and the label can be added.'));
+    el.keepOpen.appendChild(document.createTextNode(UI.guestSharing === 'closing'
+      ? host + ' has stopped sharing — keep this page open until your video is saved; the link closes soon after it’s ready.'
+      : 'It’s made on ' + host + '’s PC, so it’s free. You can leave this page — come back on this device and it picks up where it is. Keep the page on screen for the last minute so the music and the label can be added.'));
     if (job.guestCode) {
       var c = document.createElement('span'); c.className = 'ai-guest-code';
       c.appendChild(document.createTextNode(' Lost the link? Ask ' + host + ' for the new one and enter this code: '));
@@ -2860,23 +2933,29 @@
     if (e && e.kind === 'finish') return null;
     setTimeout(refreshGuestSession, 0);
     switch (code) {
-      case 'daily-limit': return { t: 'No videos left today', p: 'You’ve made all your videos for today on ' + host + '’s PC. You can make more after ' + guestResetText(e.resetAt) + '.', a: [] };
+      case 'daily-limit': return { tt: 'Video not made', t: 'No videos left today', p: 'You’ve made all your videos for today on ' + host + '’s PC. You can make more after ' + guestResetText(e.resetAt) + '.', a: [] };
       case 'active-job': return { t: 'You already have a video on its way', p: 'Close this and tap “Make my video” to follow it.', a: [] };
-      case 'blocked': return { t: host + ' stopped sharing with you', p: 'You can’t make more videos with this link.', a: [] };
+      case 'blocked': return { tt: 'Video not made', t: host + ' stopped sharing with you', p: 'You can’t make more videos with this link.', a: [] };
       case 'no-session': return { t: 'This link stopped working', p: 'Ask ' + host + ' for a new link. If you were making a video, open the new link and enter your code.', a: [] };
-      case 'not-accepting': return { t: host + ' has stopped sharing', p: 'No new videos can start right now. Ask ' + host + ' to share again.', a: [] };
+      case 'not-accepting': return { tt: 'Video not made', t: host + ' has stopped sharing', p: 'No new videos can start right now. Ask ' + host + ' to share again.', a: [] };
       case 'queue-full': case 'busy': return { t: host + '’s PC is busy', p: 'Lots of videos are waiting. Try again in a few minutes.', a: ['retry'] };
       case 'missing-pack': return { t: 'This needs ' + host + '’s Singing add-on', p: 'It isn’t installed on their PC. Pick another scene, or use your own song.', a: ['scene'] };
       case 'consent': return { t: 'Please confirm your photo', p: 'Tick the box under your selfie: it’s you, or you have permission, and they are 18 or older.', a: ['photo'] };
       case 'no-name': return { t: 'Tell ' + host + ' your name first', p: '', a: [] };
       case 'bad-photo': case 'too-large': case 'unsupported-type': return { t: 'This photo didn’t work', p: srv || 'Try another photo — a clear photo of one person.', a: ['photo', 'retry'] };
       case 'bad-audio': case 'unexpected-audio': case 'own-missing': return { t: 'Your song didn’t work for this video', p: srv || 'Choose your song again, or try another part of it.', a: ['sound', 'retry'] };
-      case 'declined': return { t: host + ' didn’t approve this video', p: refunded.trim() + ' You can try another scene or photo.', a: ['scene'] };
-      case 'cancelled': return { t: 'This video was cancelled', p: (srv || host + ' cancelled it on their PC.') + refunded, a: ['retry'] };
-      case 'expired': return { t: 'This video expired', p: 'It wasn’t picked up within a day, so ' + host + '’s PC deleted it.', a: ['retry'] };
-      case 'engine': case 'host-stopped': case 'sharing-stopped': return { t: host + '’s PC couldn’t make this video', p: srv || (host + '’s PC had a problem making this video. Try again later — it didn’t count toward your limit.'), a: ['retry'] };
+      case 'declined': return { tt: 'Video not made', t: host + ' didn’t approve this video', p: refunded.trim() + ' You can try another scene or photo.', a: ['scene'] };
+      case 'cancelled': {
+        var why = e.reason === 'guest-cancelled' ? 'You cancelled this video.' : e.reason === 'sharing-stopped' ? host + ' stopped sharing, so this video wasn’t made.'
+          : e.reason === 'blocked' ? host + ' cancelled this video.' : host + ' cancelled this video on their PC.';
+        var stopped = e.reason === 'sharing-stopped' || e.reason === 'blocked';
+        return { tt: 'Video cancelled', t: stopped ? host + ' stopped sharing' : 'This video was cancelled', p: why + (e.reason === 'blocked' ? '' : refunded), a: stopped ? [] : ['retry'] };
+      }
+      case 'sharing-stopped': return { tt: 'Video not made', t: host + ' stopped sharing', p: e.made ? 'Your video was made, but ' + host + ' stopped sharing before it reached this phone. Ask ' + host + ' to share again.' : 'This video wasn’t made.' + refunded, a: [] };
+      case 'expired': return { tt: 'Video expired', t: 'This video expired', p: 'It wasn’t picked up within a day, so ' + host + '’s PC deleted it.', a: ['retry'] };
+      case 'engine': case 'host-stopped': return { t: host + '’s PC couldn’t make this video', p: host + '’s PC had a problem making this video. Try again later —' + refunded.replace(/^ It/, ' it'), a: ['retry'] };
       case 'gone': return { t: 'This video is no longer on ' + host + '’s PC', p: srv || 'It may have been saved in another tab already.', a: ['retry'] };
-      case 'network': return { t: 'Can’t reach ' + host + '’s PC', p: 'Check your connection. If ' + host + ' closed sharing, ask for a new link.', a: ['retry'] };
+      case 'network': return { t: 'Can’t reach ' + host + '’s PC', p: 'Check your connection. ' + host + ' may have stopped sharing — if so, ask for a new link.', a: ['retry'] };
       case 'slow-down': case 'too-many-attempts': return { t: 'One moment, please', p: 'Too many tries in a short time. Wait a minute, then try again.', a: ['retry'] };
       case 'bad-request': return { t: 'Something went wrong', p: 'Reload the page and try again.', a: [] };
       default: return { t: 'The video couldn’t be made', p: srv || 'Something went wrong on ' + host + '’s PC. Please try again.', a: ['retry'] };
@@ -3674,7 +3753,12 @@
     var job = RUN.job;
     if (!job) return;
     var el2 = (Date.now() - UI.startAt) / 1000;
-    el.elapsed.textContent = fmt(el2) + ' elapsed';
+    if (GUEST) {
+      // a friend's page counts from when the host's PC really started on it (not while it waits for its turn)
+      if (!UI.guestRunAt && (UI.stage === 'finish' || job.made === true)) UI.guestRunAt = Date.now();
+      el2 = UI.guestRunAt ? (Date.now() - UI.guestRunAt) / 1000 : 0;
+      el.elapsed.textContent = UI.guestRunAt ? fmt(el2) + ' elapsed' : 'Not started yet';
+    } else el.elapsed.textContent = fmt(el2) + ' elapsed';
     var order = ['still', 'video', 'finish'], W = { still: 0.18, video: 0.7, finish: 0.12 }, k = order.indexOf(UI.stage), f = 0;
     if (job.engine === 'local') f = UI.stage === 'finish' ? 0.9 + 0.1 * (UI.finishFrac || 0) : 0.9 * (UI.localOverall || 0);
     else if (job.story) f = UI.stage === 'finish' ? 0.88 + 0.12 * (UI.finishFrac || 0) : 0.88 * storyFrac(job);
@@ -3688,19 +3772,20 @@
     if (job.story && job.shots) h = { at: Math.min.apply(null, job.shots.map(function (x) { var y = x.video || x.still; return y && y.at && !x.videoUrl ? y.at : Date.now(); })) };
     var slow = h && h.at && Date.now() - h.at > CFG.slowAfterMs;
     if (UI.stage === 'finish') el.eta.textContent = '';
-    else if (GUEST && UI.guestWait) el.eta.textContent = UI.guestWait;
+    else if (GUEST && guestEta(job) != null) el.eta.textContent = guestEta(job);
     else if (job.engine === 'local') { var lft = localLeft(job, el2), all = job.minutes ? rangeText(job.minutes) : localMinutes(job.sound, job.quality, true); el.eta.textContent = ' · ' + lft + (lft ? all.replace(/^about /, '') : all) + ' in all on ' + PCN; }
     else if (slow) el.eta.textContent = ' · taking longer than usual';
     else if (job.story) el.eta.textContent = ' · usually ' + (job.sound === 'ai' ? '3–7' : '2–5') + ' min for all ' + job.shots.length + ' shots';
     else el.eta.textContent = UI.stage === 'still' ? ' · usually under a minute' : (job.sound === 'ai' ? ' · usually 2–5 min' : ' · usually 1–3 min');
     if (slow && !UI.slowSaid) { UI.slowSaid = true; holdMsg('Still working — fal.ai is busier than usual. We’ll keep checking.', 20000); }
-    if (!GUEST && job.engine === 'local' && UI.stage !== 'finish') { var sn = hostShareNote(); if (sn && sn !== UI.shareNote) { UI.shareNote = sn; holdMsg(sn, 15000); } }
+    shareNoteLine(job);
     if (UI.pill === 'run') el.pillT.textContent = (UI.stage === 'finish' ? 'Finishing your video' : 'Making your video') + ' · ' + pct + '%';
     // the window's title (the taskbar shows it while the window is minimized)
     setRunTitle(UI.waitVisible ? '✓ Your video is ready to finish' : (UI.stage === 'finish' ? '● Finishing your video ' : '● Making your video ') + pct + '%');
   }
   var BASE_TITLE = document.title;
-  function setRunTitle(t) { var v = t ? t + ' — Glow Studio' : BASE_TITLE; if (document.title !== v) { try { document.title = v; } catch (e) { /* ignore */ } } }
+  // (a friend waiting for the host's OK wins: "(1) Ben wants to make a video — Glow Studio", share.js)
+  function setRunTitle(t) { UI.runTitle = t || ''; var v = (window.GlowShare && window.GlowShare.waitTitle) || (t ? t + ' — Glow Studio' : BASE_TITLE); if (document.title !== v) { try { document.title = v; } catch (e) { /* ignore */ } } }
   // "about 12–20 min left": the planned minutes minus the time so far, steered by the engine's own progress
   function localLeft(job, el2) {
     var m = validRange(job.minutes) ? job.minutes : null, ov = UI.localOverall || 0, done = (Date.now() - (UI.guestRunAt || UI.runAt || UI.startAt)) / 60000;
@@ -3765,11 +3850,13 @@
     el.err.hidden = true; el.errActions.textContent = '';
     el.cancel.hidden = false; el.cancel.textContent = 'Cancel'; el.cancel.dataset.armed = ''; el.tapFinish.hidden = true; el.keepOpen.hidden = false;
     UI.runAt = Date.now(); // this page's own work on it (a resumed video's createdAt can be much older)
-    UI.guestWait = ''; UI.guestRunAt = 0; UI.guestStage = '';
+    UI.guestWait = null; UI.guestRunAt = 0; UI.guestStage = ''; UI.guestLost = false; UI.guestSharing = (GUEST && GG.session && GG.session.state) || '';
+    if (el.pv) delete el.pv.dataset.wait;
     el.steps.hidden = false; el.mon.hidden = true; el.elapsed.parentNode.hidden = false; el.elapsed.textContent = '0:00 elapsed';
     el.progTt.textContent = 'Making your video';
     var local = job.engine === 'local';
-    UI.localOverall = 0;
+    UI.localOverall = 0; UI.localWaiting = false; UI.shareNote = '';
+    if (el.shareNote) { el.shareNote.hidden = true; el.shareNote.textContent = ''; }
     var nShots = job.story && job.shots ? job.shots.length : 1;
     el.finishName.textContent = nShots > 1 ? 'Cutting it to the beat & finishing' : job.sound === 'ai' ? (local ? 'Adding your song & the label' : 'Adding the label & finishing') : job.sound === 'own' ? 'Adding your song & finishing' : 'Adding music & finishing';
     if (el.videoName) el.videoName.textContent = nShots > 1 ? (local && job.sound === 'ai' ? 'Making your song & ' + nShots + ' clips' : 'Bringing ' + nShots + ' shots to life') : local && job.sound === 'ai' ? 'Making your song & video' : 'Bringing it to life';
@@ -4392,17 +4479,19 @@
     var step = LOCAL_STEP[p.stage] || 'still';
     if (UI.stage !== step) enterStage(step);
     UI.localStage = p.stage;
+    UI.localWaiting = !!p.waiting; // our step waits in the engine's queue behind another one (a friend's video)
     UI.localOverall = Math.max(UI.localOverall || 0, clamp(+p.overall || 0, 0, 1));
     var pct = Math.round(clamp(+p.pct || 0, 0, 1) * 100), sub;
     var n = job.story && job.shots ? job.shots.length : 1, si = p.shot != null ? +p.shot : null, of = si != null && n > 1 ? ' ' + (si + 1) + ' of ' + n : '';
+    var pc = GUEST ? '' : ' · ' + pct + '%'; // (a friend's page: the ring is the one number, for the whole video)
     if (p.stage === 'starting') sub = 'Starting the free AI…';
-    else if (p.stage === 'upload') sub = 'Sending your photo to the AI…';
-    else if (p.stage === 'song') sub = 'Writing your song · ' + pct + '%';
+    else if (p.stage === 'upload') sub = GUEST ? 'Sending your photo…' : 'Sending your photo to the AI…';
+    else if (p.stage === 'song') sub = 'Writing your song' + pc;
     else if (p.stage === 'download') sub = n > 1 ? 'Saving the clips…' : 'Saving the clip…';
-    else if (n > 1 && p.stage === 'still') sub = 'Scene photo' + of + ' · ' + pct + '%';
-    else if (n > 1 && p.stage === 'lipsync') sub = 'Lip-sync, shot' + of + ' · ' + pct + '%';
-    else if (n > 1 && p.stage === 'video') sub = 'Shot' + of + ' · ' + pct + '%';
-    else sub = pct + '%';
+    else if (n > 1 && p.stage === 'still') sub = 'Scene photo' + of + pc;
+    else if (n > 1 && p.stage === 'lipsync') sub = 'Lip-sync, shot' + of + pc;
+    else if (n > 1 && p.stage === 'video') sub = 'Shot' + of + pc;
+    else sub = GUEST ? 'Working on it…' : pct + '%';
     setStep(step, null, sub);
     // the engine's own plain words, as they are (not its final "Done!": the finishing step comes after it)
     if (p.message && !(p.stage === 'download' && /^done!?$/i.test(String(p.message).trim()))) setMsg(p.message);
@@ -5513,7 +5602,7 @@
     }
     renderJobError(v, job);
   }
-  // The error panel in the progress sheet (cloud and this PC). v: { t: title, p: text, a: [actions], detail? }
+  // The error panel in the progress sheet (cloud and this PC). v: { t: title, p: text, a: [actions], detail?, tt?: the sheet's heading }
   function renderJobError(v, job) {
     var local = job && job.engine === 'local';
     UI.errEngine = local ? 'local' : 'fal'; // the panel's actions belong to the engine that made this video
@@ -5547,7 +5636,8 @@
     el.cancel.hidden = false; el.cancel.textContent = 'Close';
     el.min.setAttribute('aria-label', 'Close'); el.min.title = 'Close';
     el.tapFinish.hidden = true; el.keepOpen.hidden = true; el.mon.hidden = true;
-    el.progTt.textContent = 'Something went wrong';
+    if (el.shareNote) el.shareNote.hidden = true;
+    el.progTt.textContent = v.tt || 'Something went wrong';
     setMsg('');
     el.eta.textContent = '';
     ['still', 'video', 'finish'].forEach(function (s) { var li = el.steps.querySelector('[data-step="' + s + '"]'); if (li && li.dataset.state === 'active') { li.dataset.state = 'error'; setStep(s, null, 'Stopped'); } });
@@ -5659,7 +5749,7 @@
       return false;
     }
     if (!S.consent) {
-      toast('Please confirm you have permission to use this photo.', 'warn', 4200);
+      toast('Tick the box: it’s you or you have permission, and they’re 18 or older.', 'warn', 4800);
       attention(el.consentRow);
       el.consentRow.classList.add('need');
       setTimeout(function () { try { el.consent.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }, 300);
@@ -5802,7 +5892,7 @@
       return;
     }
     if (S.photo && !S.consent) {
-      toast('Please confirm you have permission to use this photo.', 'warn', 4200);
+      toast('Tick the box: it’s you or you have permission, and they’re 18 or older.', 'warn', 4800);
       attention(el.consentRow);
       el.consentRow.classList.add('need');
       setTimeout(function () { try { el.consent.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }, 300);
@@ -5953,8 +6043,12 @@
     try { canShare = !!(file && navigator.canShare && navigator.share && navigator.canShare({ files: [file] })); } catch (e) { canShare = false; }
     el.share.hidden = !canShare;
     if (GUEST) {
+      var gs = GG.session, ended = !gs || gs.state === 'closing' || UI.guestSharing === 'closing';
+      if (ended) { el.again.hidden = true; el.other.hidden = true; }
       // a new link from the host is a new address, and this browser keeps "My AI videos" per address
-      el.resNote.textContent = 'It’s saved in My AI videos on this device. Download it to keep it — a new link from ' + (item.host || GG.hostName()) + ' opens an empty list.' +
+      var hn = item.host || GG.hostName();
+      el.resNote.textContent = (ended ? hn + ' has stopped sharing — download your video to keep it. It’s in My AI videos on this device for now, but a new link from ' + hn + ' opens an empty list.'
+        : 'It’s saved in My AI videos on this device. Download it to keep it — a new link from ' + hn + ' opens an empty list.') +
         (!canShare && !GG.secure && /iPhone|iPad|iPod/.test(navigator.userAgent || '') ? ' On iPhone, Download saves it to Files; for “Save to Photos”, ask for the internet link.' : '');
       el.resNote.hidden = false;
     }
@@ -6304,6 +6398,7 @@
     el.keyEye.setAttribute('aria-label', show ? 'Hide key' : 'Show key');
   });
   el.min.addEventListener('click', minimize);
+  if (el.shareAskB) el.shareAskB.addEventListener('click', showShareAsk);
   el.prog.addEventListener('click', function (e) { if (e.target === el.prog) minimize(); });
   el.pill.addEventListener('click', function () {
     ensureAudio();

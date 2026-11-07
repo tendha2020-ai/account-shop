@@ -535,6 +535,7 @@ func newShareHarness(t *testing.T) *shareHarness {
 	s.pollEvery, s.hostCheckEvery = 15*time.Millisecond, 15*time.Millisecond
 	s.engineWait = 5 * time.Second
 	s.cancelGrace = 30 * time.Millisecond
+	s.stopGrace = 0 // (TestShareStopNowTellsFriends sets one)
 	s.tunnelFactory = func(s *Share, port int) tunnelRunner {
 		return &fakeTunnel{host: fakeTunnelHost, state: "starting", s: s}
 	}

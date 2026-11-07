@@ -784,7 +784,8 @@
         shown = p;
         var msg = pending ? 'Waiting for the engine to finish another job…' : st.message;
         if (!pending && current && graph[current] && /Loader/.test(graph[current].class_type) && st.loadingMessage) msg = st.loadingMessage;
-        ctx.stage(st.stage, p, msg);
+        // (waiting: our prompt is in ComfyUI's queue behind another one, e.g. a friend's video while sharing)
+        ctx.stage(st.stage, p, msg, pending ? { waiting: true } : null);
       }
       function onMsg(m) {
         if (finished) return;
@@ -968,12 +969,23 @@
   // Ask the launcher not to quit while this job is in flight, even when the window is hidden or asleep and stops
   // pinging (renewed at every step; it lapses by itself after 2 hours). release: the job is over. An older launcher
   // without this endpoint answers 404, which is fine.
+  // eta: [lo, hi] minutes this video still needs (from holdEta); the launcher uses it only for the waiting times it
+  // tells friends while sharing is on ("Share with friends": the host's own videos go first).
   var noHold = false;
-  function holdJob(id, release) {
+  function holdJob(id, release, eta) {
     if (!id || noHold || !isLoopbackPage()) return;
-    request('POST', ENGINE + '/hold', { job: safeJob(id), release: !!release }, { timeout: 8000 }).then(function (res) {
+    var body = { job: safeJob(id), release: !!release };
+    if (!release && eta && eta.length === 2 && eta[0] >= 0 && eta[1] >= eta[0] && eta[1] <= 600) body.etaMin = eta;
+    request('POST', ENGINE + '/hold', body, { timeout: 8000 }).then(function (res) {
       if (res.status === 404) noHold = true; // a launcher from before holds: it never quits while ComfyUI renders anyway
     }, function () { /* best effort */ });
+  }
+  // The minutes the steps not done yet usually take (the progress weights, in seconds), as a [lo, hi] range.
+  function holdEta(list, weights, done) {
+    var s = 0;
+    (list || []).forEach(function (k) { if (k !== 'starting' && !(done && done[k])) s += +weights[k] || 0; });
+    var lo = Math.round(s / 60 * 0.8 * 10) / 10;
+    return [lo, Math.min(600, Math.round(Math.max(s / 60 * 1.4, lo + 0.5) * 10) / 10)];
   }
   // Forget a job (and delete the engine's files for it). For a record kept with {keep: true} once the page is done.
   function release(job) {
@@ -1064,7 +1076,7 @@
     function stageRun(stage) {
       if (rec.done[stage]) return Promise.resolve();
       var spec = graphFor(rec, stage);
-      holdJob(rec.id);
+      holdJob(rec.id, false, holdEta(stageList, weights, rec.done));
       var t0 = now();
       var resumeId = (rec.stage === stage && rec.promptId) ? rec.promptId : null;
       var promptId = null;
@@ -1103,7 +1115,7 @@
       });
     }
 
-    holdJob(rec.id);
+    holdJob(rec.id, false, holdEta(stageList, weights, rec.done));
     var p = ensureReady(ctx).then(function () {
       socket = openSocket(rec.clientId);
       ctx.socket = socket;
@@ -1448,7 +1460,7 @@
     }, signal);
     var stills = {};   // shot index -> { blob, url }
     var socket = null;
-    holdJob(rec.id);
+    holdJob(rec.id, false, holdEta(stageList, weights, rec.done));
 
     function stepRun(key) {
       if (rec.done[key]) return Promise.resolve();
@@ -1457,7 +1469,7 @@
       var t0 = now();
       var resumeId = (rec.stage === key && rec.promptId) ? rec.promptId : null;
       var promptId = null;
-      holdJob(rec.id);
+      holdJob(rec.id, false, holdEta(stageList, weights, rec.done));
       var check = resumeId ? promptState(resumeId, signal) : Promise.resolve(null);
       return check.then(function (state) {
         // still queued, running or finished in ComfyUI: re-attach to it (a prompt that failed is made again)

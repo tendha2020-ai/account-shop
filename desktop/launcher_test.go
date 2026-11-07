@@ -38,10 +38,16 @@ func runTestProcess(mode string) {
 		time.Sleep(5 * time.Second)
 		os.Exit(0)
 	case "recovered":
-		launcherLog.open(filepath.Join(os.Getenv("GLOW_TEST_LOGDIR"), "launcher.log"), logRotateBytes)
-		done := make(chan struct{})
-		goSafe("test worker", func() { defer close(done); var m map[string]int; m["x"] = 1 })
-		<-done
+		lp := filepath.Join(os.Getenv("GLOW_TEST_LOGDIR"), "launcher.log")
+		launcherLog.open(lp, logRotateBytes)
+		goSafe("test worker", func() { var m map[string]int; m["x"] = 1 })
+		// (the worker's own defers run before goSafe's recover: wait for the logged panic itself)
+		for i := 0; i < 500; i++ {
+			if b, _ := os.ReadFile(lp); strings.Contains(string(b), "PANIC in test worker") {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
 		launcherLog.printf("[launcher] still running after the panic")
 		launcherLog.close()
 		os.Exit(0)

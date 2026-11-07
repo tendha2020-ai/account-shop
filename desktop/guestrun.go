@@ -101,7 +101,8 @@ type guestJob struct {
 	stepIdx           int
 	stepTotal         int
 	cleaned           bool
-	cold              bool // the engine had to be started for this job
+	cold              bool   // the engine had to be started for this job
+	ip                string // the connection it came from (the daily limit per connection)
 }
 
 // finishJobLocked moves a job to a final (or "done"/"downloaded") state,
@@ -133,6 +134,9 @@ func (s *Share) finishJobLocked(j *guestJob, state, code, msg string) {
 	if refund && !j.refunded {
 		if g := s.guests[j.guestID]; g != nil && g.used[j.day] > 0 {
 			g.used[j.day]--
+		}
+		if u := s.ipUsed[j.ip]; u != nil && u[j.day] > 0 {
+			u[j.day]--
 		}
 		j.refunded = true
 	}

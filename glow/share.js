@@ -4,10 +4,14 @@
  * graphics card, for free. The launcher does the work (a separate guest server, Cloudflare's free quick tunnel or the
  * home Wi-Fi, the queue, the "AI-generated" label inside every picture and clip); this card only talks to the
  * launcher's host API, /__glow/share/* (127.0.0.1 only, never reachable by friends):
- *   GET status · POST start / stop / settings / new-link · POST guests/<id>/block · POST jobs/<id>/approve|decline|cancel
- *   GET jobs/<id>/thumb (the selfie thumbnail, only while a video waits for approval)
+ *   GET status · POST start / stop / settings / new-link / relink · POST guests/<id>/block · POST jobs/<id>/approve|decline|cancel
+ *   GET jobs/<id>/thumb (the friend's selfie, only while a video waits for approval)
  *
- *   GlowShare.mount(element, { where: 'ai'|'setup', onChange(status) }) -> { refresh(), unmount() }
+ *   GlowShare.mount(element, { where: 'ai'|'setup', onChange(status), top: element, onShow() }) -> { refresh(), unmount() }
+ *     top: a spot near the top of the page for a small "Share with friends" chip (Off / On · 2 friends / 1 waiting)
+ *     that jumps to the card. While a friend waits for the host's OK, a banner stays at the top of the window, the
+ *     window title says so (GlowShare.waitTitle; a page with its own title sets GlowShare.onTitle), screen readers hear
+ *     it, and a desktop notification is shown when the window is in the background (if the host allowed them).
  *   GlowShare.status   the last status (null before the first answer)
  *   GlowShare.active() true while sharing is starting, on or closing (friends may be using the AI)
  *   GlowShare.supported(engineStatus)  true when the launcher serving this page can share (version 1.4.0 or later)
@@ -38,6 +42,9 @@
     var m = Math.round((Date.now() - new Date(t)) / 60000);
     return !(m >= 1) ? 'just now' : m < 60 ? m + ' min ago' : Math.round(m / 60) + ' h ago';
   }
+  // "Click again" with a mouse, "Tap again" on a touch screen
+  var FINE = (function () { try { return !!(window.matchMedia && window.matchMedia('(pointer: fine)').matches); } catch (e) { return false; } })();
+  var AGAIN = FINE ? 'Click again' : 'Tap again';
   function req(method, path, body) {
     var init = { method: method, cache: 'no-store', credentials: 'same-origin', headers: {} };
     if (method !== 'GET') { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(body || {}); }
@@ -58,6 +65,7 @@
     '.gs-ico svg,.gs svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}',
     '.gs-pill{font-size:12px;font-weight:600;padding:4px 10px;border-radius:999px;background:var(--gs-surf);border:1px solid var(--gs-line);color:var(--gs-mut);white-space:nowrap}',
     '.gs-pill.on{color:#0b2a1c;background:#5eead4;border-color:transparent}.gs-pill.wait{color:#fde68a}.gs-pill.bad{color:#fecaca;border-color:rgba(248,113,113,.5)}',
+    '.gs-pill.ask{color:#2a1a00;background:#fbbf24;border-color:transparent}',
     '.gs p{margin:6px 0;font-size:13.5px;line-height:1.5;color:var(--gs-mut)}.gs b{color:var(--text,#f7f4ff)}',
     '.gs-f{display:grid;gap:12px;margin:12px 0 0}.gs-field{display:grid;gap:6px;min-width:0}',
     '.gs-lab{font-size:13px;font-weight:600;color:var(--text,#f7f4ff)}',
@@ -74,7 +82,7 @@
     '.gs-seg{display:inline-flex;border:1px solid var(--gs-line);border-radius:12px;overflow:hidden}.gs-seg button{border:0;background:transparent;color:inherit;font:inherit;font-size:13.5px;padding:8px 14px;cursor:pointer}',
     '.gs-seg button[aria-pressed=true]{background:rgba(164,87,255,.3);font-weight:600}',
     '.gs-btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.gs-btns .btn,.gs-btns .eg-btn{flex:0 1 auto}',
-    '.gs-b{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:42px;padding:9px 16px;border-radius:999px;border:1px solid var(--gs-line);background:var(--gs-surf);color:inherit;font:inherit;font-size:14px;font-weight:600;cursor:pointer;text-decoration:none}',
+    '.gs-b{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:42px;padding:9px 16px;border-radius:999px;border:1px solid var(--gs-line);background:var(--gs-surf);color:inherit;font:inherit;font-size:14px;font-weight:600;cursor:pointer;text-decoration:none;white-space:normal;max-width:100%;text-align:center;line-height:1.25}',
     '.gs-b.primary{border:0;background:var(--grad,linear-gradient(115deg,#ff4fa3,#a457ff 50%,#22d3ee));color:#fff;box-shadow:0 8px 22px -10px rgba(164,87,255,.9)}',
     '.gs-b.text{background:transparent;border-color:transparent;color:var(--gs-mut)}.gs-b.danger{color:#fda4af}.gs-b.small{min-height:34px;padding:6px 12px;font-size:13px}',
     '.gs-b[disabled]{opacity:.55;cursor:default}.gs-b.armed{background:rgba(244,63,94,.18);border-color:rgba(244,63,94,.6);color:#fecdd3}',
@@ -94,14 +102,38 @@
     '.gs-av i{position:absolute;right:-1px;bottom:-1px;width:11px;height:11px;border-radius:50%;background:#6b7280;border:2px solid #151125}.gs-av i.on{background:#34d399}',
     '.gs-who{min-width:0}.gs-who b{display:block;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gs-who small{display:block;font-size:12px;color:var(--gs-mut)}',
     '.gs-acts{display:flex;gap:6px;flex-wrap:wrap;align-items:center}',
-    '.gs-thumb{width:52px;height:52px;border-radius:12px;object-fit:cover;background:#222;flex:0 0 auto}',
+    '.gs-thumbb{padding:0;border:0;background:none;border-radius:12px;cursor:zoom-in;position:relative;flex:0 0 auto;display:block}',
+    '.gs-thumb{width:64px;height:84px;border-radius:12px;object-fit:cover;background:#222;display:block}',
+    '.gs-thumbb::after{content:"";position:absolute;right:4px;bottom:4px;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,.65) url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27 fill=%27none%27 stroke=%27white%27 stroke-width=%272.4%27 stroke-linecap=%27round%27%3E%3Ccircle cx=%2711%27 cy=%2711%27 r=%276%27/%3E%3Cpath d=%27M20 20l-4.5-4.5M11 8.5v5M8.5 11h5%27/%3E%3C/svg%3E") center/12px no-repeat}',
+    '.gs-thumbb:focus-visible{outline:2px solid #fbbf24;outline-offset:2px}',
     '.gs-st{font-size:12px;font-weight:600;padding:3px 8px;border-radius:999px;background:rgba(255,255,255,.08);white-space:nowrap}',
     '.gs-st.run{color:#a5f3fc}.gs-st.wait{color:#fde68a}.gs-st.done{color:#86efac}.gs-st.bad{color:#fca5a5}',
     '.gs-mini{height:4px;border-radius:999px;background:rgba(255,255,255,.1);overflow:hidden;margin-top:6px}.gs-mini i{display:block;height:100%;background:#22d3ee}',
     '.gs details{margin-top:12px}.gs summary{cursor:pointer;font-size:13.5px;font-weight:600;color:var(--gs-mut);padding:6px 0}',
     '.gs-help ol{margin:6px 0 0;padding-left:20px;font-size:12.5px;color:var(--gs-mut);line-height:1.5}',
     '.gs-empty{font-size:13px;color:var(--gs-mut);margin:0}',
-    '.gs .sr-only{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}'
+    '.gs .sr-only,.gs-dlg .sr-only{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}',
+    '.gs-done{padding:10px 12px;border-radius:12px;background:rgba(94,234,212,.08);border:1px solid rgba(94,234,212,.35);color:#ccfbf1!important;font-size:13.5px!important}',
+    '.gs-note{padding:10px 12px;border-radius:12px;background:rgba(34,211,238,.07);border:1px solid rgba(34,211,238,.3);color:#cffafe!important;font-size:13px!important}',
+    '.gs-dead{position:relative}.gs-dead .gs-qr,.gs-dead .gs-url{opacity:.25;filter:grayscale(1)}',
+    '.gs-deadmsg{font-weight:700;color:#fecdd3!important}',
+    '.gs-sub{display:block;font-size:12px;color:var(--gs-mut);margin-top:2px}',
+    /* the chip near the top of the page, and the banner while a friend waits for the host's OK */
+    '.gs-chip{display:inline-flex;align-items:center;gap:8px;min-height:38px;padding:6px 14px 6px 8px;border-radius:999px;border:1px solid var(--line-2,rgba(255,255,255,.16));background:var(--surface,rgba(255,255,255,.05));color:var(--text,#f7f4ff);font:inherit;font-size:13.5px;font-weight:600;cursor:pointer;max-width:100%;text-align:left;line-height:1.25}',
+    '.gs-chip svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:0 0 auto}',
+    '.gs-chip .gs-ci{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(135deg,rgba(255,79,163,.35),rgba(34,211,238,.3));flex:0 0 auto}',
+    '.gs-chip small{font-weight:500;color:var(--muted,#aca6c7)}',
+    '.gs-chip.on .gs-ci{background:#5eead4;color:#0b2a1c}.gs-chip.ask{border-color:#fbbf24;background:rgba(251,191,36,.14)}.gs-chip.ask .gs-ci{background:#fbbf24;color:#2a1a00}',
+    '.gs-ask{position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:2147483000;display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center;width:max-content;max-width:calc(100vw - 24px);box-sizing:border-box;padding:9px 10px 9px 14px;border-radius:16px;background:#2a1d05;border:1px solid #fbbf24;color:#fef3c7;font:600 14px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif;box-shadow:0 12px 34px -8px rgba(0,0,0,.7)}',
+    '.gs-ask[hidden]{display:none}.gs-ask b{color:#fff}',
+    '.gs-ask button{font:inherit;font-size:13.5px;font-weight:700;border-radius:999px;padding:7px 14px;cursor:pointer;border:0;background:#fbbf24;color:#2a1a00}',
+    '.gs-ask button.gs-x{background:transparent;color:#fde68a;border:1px solid rgba(251,191,36,.5)}',
+    '.gs-dlg{position:fixed;inset:0;z-index:2147483001;display:grid;place-items:center;padding:16px;background:rgba(6,4,14,.72)}',
+    '.gs-dlg[hidden]{display:none}',
+    '.gs-dlgb{width:min(440px,100%);max-height:calc(100vh - 32px);overflow:auto;box-sizing:border-box;border-radius:20px;padding:16px;background:#171226;border:1px solid rgba(255,255,255,.16);color:#f7f4ff;font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;box-shadow:0 24px 60px -12px rgba(0,0,0,.8)}',
+    '.gs-dlgb h3{margin:0 0 4px;font-size:17px}.gs-dlgb p{margin:4px 0;color:#c9c3e3;font-size:13.5px}',
+    '.gs-big{display:block;width:100%;height:min(56vh,460px);min-height:240px;object-fit:contain;background:#05040a;border-radius:14px;margin:10px 0}',
+    '.gs-dlgb .gs-btns{justify-content:flex-end}'
   ].join('\n');
   function injectCss() {
     if (document.getElementById('glowShareCss')) return;
@@ -109,7 +141,21 @@
     (document.head || document.documentElement).appendChild(st);
   }
 
-  var G = { status: null, mount: mount, supported: supported, active: function () { var s = G.status; return !!(s && s.state && s.state !== 'off'); } };
+  var G = { status: null, mount: mount, supported: supported, waitTitle: '', onTitle: null, active: function () { var s = G.status; return !!(s && s.state && s.state !== 'off'); } };
+  // the window title while a friend waits: "(1) Ben wants to make a video — Glow Studio"
+  var savedTitle = null;
+  function applyTitle(t) {
+    if (t === G.waitTitle) return;
+    G.waitTitle = t || '';
+    if (typeof G.onTitle === 'function') { try { G.onTitle(G.waitTitle); } catch (e) { /* the page's problem */ } return; }
+    if (t) { if (savedTitle == null) savedTitle = document.title; document.title = t; }
+    else if (savedTitle != null) { document.title = savedTitle; savedTitle = null; }
+  }
+  function waiting(s) { return s && s.state !== 'off' && Array.isArray(s.jobs) ? s.jobs.filter(function (j) { return j && j.state === 'waiting-approval'; }) : []; }
+  function waitText(w) { return !w.length ? '' : w.length === 1 ? (w[0].guestName || 'A friend') + ' wants to make a video' : w.length + ' friends want to make videos'; }
+  function hostRequestNotify() {
+    try { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); } catch (e) { /* not offered here */ }
+  }
   // Sharing needs the launcher's /__glow/share/* API, which Glow Studio has from version 1.4.0 (its engine status
   // says which version serves this page); without it there is no card (and nothing asks for an API that isn't there).
   function supported(s) {
@@ -123,7 +169,7 @@
     injectCss();
     var where = opts.where === 'setup' ? 'setup' : 'ai';
     var BTN = where === 'setup' ? 'eg-btn' : 'btn';
-    var st = { status: null, view: '', timer: 0, dead: false, busy: '', armed: {}, err: '', known: lsGet().known || null, unsupported: false, copied: 0 };
+    var st = { status: null, view: '', timer: 0, dead: false, busy: '', armed: {}, err: '', known: lsGet().known || null, unsupported: false, copied: 0, seenAsk: {}, stopped: null, wasOn: false };
     var prefs = lsGet();
     var form = { name: prefs.hostName || '', mode: prefs.mode === 'wifi' ? 'wifi' : 'internet', approve: !!prefs.approve, daily: LIMITS.indexOf(prefs.dailyLimit) >= 0 ? prefs.dailyLimit : 5, hours: HOURS.indexOf(prefs.autoStopHours) >= 0 ? prefs.autoStopHours : 4 };
     root.textContent = '';
@@ -138,13 +184,115 @@
     var live = h('p', 'sr-only'); live.setAttribute('role', 'status'); live.setAttribute('aria-live', 'polite'); box.appendChild(live);
     function say(t) { live.textContent = ''; setTimeout(function () { live.textContent = t; }, 30); }
 
+    // ---- near the top of the page: a chip (state + jump to the card); a banner while a friend waits ----
+    var chip = null;
+    if (opts.top) {
+      opts.top.textContent = '';
+      chip = h('button', 'gs-chip'); chip.type = 'button'; chip.id = 'gsChip';
+      var ci = h('span', 'gs-ci'); ci.appendChild(svg(ICON_SHARE)); chip.appendChild(ci);
+      chip.appendChild(h('span', 'gs-ct', 'Share with friends'));
+      chip.addEventListener('click', function () { if (waiting(st.status).length) showAsk(); else jumpToCard(); });
+      opts.top.appendChild(chip);
+      opts.top.hidden = true; // (shown once the launcher answers)
+    }
+    var ask = h('div', 'gs-ask'); ask.id = 'gsAsk'; ask.hidden = true; ask.setAttribute('role', 'region'); ask.setAttribute('aria-label', 'A friend is waiting for your OK');
+    var askT = h('span'); ask.appendChild(askT);
+    var askB = h('button', '', 'Show me'); askB.type = 'button'; askB.addEventListener('click', function () { showAsk(); }); ask.appendChild(askB);
+    document.body.appendChild(ask);
+    function jumpToCard(focusSel) {
+      try { root.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) { root.scrollIntoView(); }
+      setTimeout(function () { var f = (focusSel && box.querySelector(focusSel)) || box.querySelector('#gsStart,#gsCopy') || h2; try { if (f === h2) h2.tabIndex = -1; f.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }, 400);
+    }
+    function showAsk() {
+      if (typeof opts.onShow === 'function') { try { opts.onShow(); } catch (e) { /* ignore */ } }
+      var w = waiting(st.status);
+      if (w.length) openPreview(w[0]); else jumpToCard();
+    }
+    function renderTop(s) {
+      var state = s ? s.state : 'off', w = waiting(s);
+      var t = waitText(w);
+      applyTitle(t ? '(' + w.length + ') ' + t + ' — Glow Studio' : '');
+      askT.textContent = '';
+      if (t) { var bb = h('b', '', t); askT.appendChild(bb); askT.appendChild(document.createTextNode(' — they’re waiting for your OK.')); }
+      ask.hidden = !t || st.unsupported || !dlg.hidden; // (not over the photo dialog)
+      askB.textContent = w.length === 1 ? 'Look and decide' : 'Show me';
+      // new requests: heard by screen readers, and a notification while the window is in the background
+      w.forEach(function (j) {
+        if (st.seenAsk[j.id]) return;
+        st.seenAsk[j.id] = 1;
+        say((j.guestName || 'A friend') + ' wants to make a video. Look at their photo and approve or decline it.');
+        try {
+          if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+            var n = new Notification((j.guestName || 'A friend') + ' wants to make a video', { body: 'Open Glow Studio to approve or decline it.', tag: 'glow-ask-' + j.id });
+            n.onclick = function () { try { window.focus(); } catch (e) { /* ignore */ } showAsk(); n.close(); };
+          }
+        } catch (e) { /* not offered here */ }
+      });
+      if (!chip) return;
+      opts.top.hidden = !!st.unsupported;
+      var guests = s && Array.isArray(s.guests) ? s.guests.filter(function (g) { return g.here !== false && !g.blocked; }).length : 0;
+      var failed = !!(s && s.tunnel && s.tunnel.state === 'failed' && state === 'on');
+      var label = t ? t : state === 'on' ? (failed ? 'Sharing · the link stopped' : 'Sharing is on' + (guests ? ' · ' + guests + ' friend' + (guests > 1 ? 's' : '') : '')) : state === 'starting' ? 'Sharing is starting…' : state === 'closing' ? 'Sharing is closing…' : 'Share with friends';
+      var sub = t ? (FINE ? 'Click' : 'Tap') + ' to see their photo' : state === 'off' ? 'Let friends use this PC’s free AI' : 'Show the link and the queue';
+      chip.className = 'gs-chip' + (t ? ' ask' : state === 'on' || state === 'closing' ? ' on' : '');
+      var ct = chip.querySelector('.gs-ct'); ct.textContent = '';
+      ct.appendChild(document.createTextNode(label)); ct.appendChild(h('small', 'gs-sub', sub));
+      chip.setAttribute('aria-label', 'Share with friends: ' + label);
+    }
+
+    // ---- a friend's photo, big, with Approve / Decline ("Approve each video") ----
+    var dlg = h('div', 'gs-dlg'); dlg.hidden = true; dlg.setAttribute('role', 'dialog'); dlg.setAttribute('aria-modal', 'true'); dlg.setAttribute('aria-labelledby', 'gsDlgH');
+    var dlgB = h('div', 'gs-dlgb'); dlg.appendChild(dlgB);
+    document.body.appendChild(dlg);
+    var dlgJob = null, dlgBack = null;
+    dlg.addEventListener('click', function (e) { if (e.target === dlg) closePreview(); });
+    dlg.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { e.preventDefault(); closePreview(); return; }
+      if (e.key === 'Tab') { // (focus stays in the dialog)
+        var f = Array.prototype.filter.call(dlgB.querySelectorAll('button'), function (x) { return !x.disabled; });
+        if (!f.length) return;
+        if (e.shiftKey && document.activeElement === f[0]) { e.preventDefault(); f[f.length - 1].focus(); } else if (!e.shiftKey && document.activeElement === f[f.length - 1]) { e.preventDefault(); f[0].focus(); }
+      }
+    });
+    function openPreview(j) {
+      dlgJob = j.id; dlgBack = document.activeElement;
+      dlgB.textContent = '';
+      var hh = h('h3', '', (j.guestName || 'A friend') + ' wants to make a video'); hh.id = 'gsDlgH'; dlgB.appendChild(hh);
+      dlgB.appendChild(h('p', '', (j.sceneName || j.sceneId) + ' · ' + j.duration + ' s · ' + (SOUND[j.sound] || 'music') + (j.lipShots ? ' · lip-sync' : '')));
+      var img = h('img', 'gs-big'); img.alt = 'The photo ' + (j.guestName || 'your friend') + ' sent'; img.src = API + 'jobs/' + encodeURIComponent(j.id) + '/thumb';
+      img.onerror = function () { img.replaceWith(h('p', 'gs-err', 'The photo isn’t available any more.')); };
+      dlgB.appendChild(img);
+      dlgB.appendChild(h('p', '', 'Approve only if you know who this is, they’re 18 or older, and they’d be fine with this video. The photo is deleted after the video is made.'));
+      var err = h('p', 'gs-err'); err.setAttribute('role', 'alert'); dlgB.appendChild(err);
+      var row = h('div', 'gs-btns');
+      row.appendChild(b('Not now', 'text small', function () { closePreview(); }, 'dl-close'));
+      var de = b('Decline', 'small danger', function () {
+        if (!de.classList.contains('armed')) { de.classList.add('armed'); de.textContent = AGAIN + ' to decline'; return; }
+        act('jobs/' + encodeURIComponent(j.id) + '/decline', {}).then(function () { say('Declined'); closePreview(); }, function () { err.textContent = st.err; });
+      }, 'dl-de');
+      row.appendChild(de);
+      var ap = b('Approve', 'primary', function () {
+        ap.disabled = true;
+        act('jobs/' + encodeURIComponent(j.id) + '/approve', {}).then(function () { say('Approved ' + (j.guestName || '') + '’s video'); closePreview(); }, function () { ap.disabled = false; err.textContent = st.err; });
+      }, 'dl-ap');
+      row.appendChild(ap);
+      dlgB.appendChild(row);
+      dlg.hidden = false; ask.hidden = true;
+      setTimeout(function () { try { ap.focus(); } catch (e) { /* ignore */ } }, 30);
+    }
+    function closePreview() {
+      if (dlg.hidden) return;
+      dlg.hidden = true; dlgJob = null; renderTop(st.status);
+      if (dlgBack && dlgBack.isConnected) { try { dlgBack.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }
+    }
+
     function b(label, cls, fn, key) {
       var x = h('button', BTN + ' gs-b ' + (cls || ''), label); x.type = 'button';
       if (key) x.dataset.key = key;
       x.addEventListener('click', fn);
       return x;
     }
-    // a second tap for anything that stops a friend's video
+    // a second press for anything that stops a friend's video (again: what the button says until then)
     function armed(key, label, again, fn) {
       var x = b(st.armed[key] ? again : label, 'small' + (st.armed[key] ? ' armed' : '') + (/Block|Cancel|Stop|Decline/.test(label) ? ' danger' : ''), function () {
         if (!st.armed[key]) {
@@ -175,13 +323,16 @@
       if (c === 'already-on') return 'Sharing is already on.';
       if (c === 'bad-name') return 'Please enter your name (1–24 letters, numbers or simple punctuation).';
       if (c === 'no-lan') return 'This PC doesn’t seem to be on a home network. Use “Anywhere” instead.';
+      if (c === 'not-waiting') return 'That video isn’t waiting any more.';
       return (e && e.message && !/^HTTP \d+$/.test(e.message)) ? e.message : 'That didn’t work. Please try again.';
     }
 
     /* ---------- off: the setup form ---------- */
     function viewOff(s) {
       body.textContent = '';
-      body.appendChild(h('p', '', 'Let friends make AI videos with this PC’s free AI, from their own phone or computer. Their videos are made here on your graphics card from the same preset scenes, and every video gets the “AI-generated” label. Glow Studio stays open while you share.'));
+      if (st.stopped) { var sd = h('p', 'gs-done', 'Sharing stopped at ' + st.stopped + ' — the link no longer works.'); sd.setAttribute('role', 'status'); body.appendChild(sd); }
+      body.appendChild(h('p', '', 'Let friends make AI videos with this PC’s free AI, from their own phone or computer. Their videos are made here on your graphics card from the same preset scenes, and every video gets the “AI-generated” label.'));
+      body.appendChild(h('p', '', 'While you share, Glow Studio keeps working in the background — even if you close this window — and your PC won’t go to sleep by itself. Friends’ videos are made one at a time, and your own videos always go first.'));
       if (s && s.lastError) { var le = h('p', 'gs-err', s.lastError); le.setAttribute('role', 'alert'); body.appendChild(le); }
       var f = h('form', 'gs-f'); f.noValidate = true;
       // your name
@@ -207,8 +358,8 @@
       // approve each video
       var ap = h('label', 'gs-switch');
       var cb = h('input'); cb.type = 'checkbox'; cb.id = 'gsApprove'; cb.checked = form.approve;
-      cb.addEventListener('change', function () { form.approve = cb.checked; });
-      var apt = h('span'); apt.appendChild(document.createTextNode('Approve each video')); apt.appendChild(h('small', '', 'You see each friend’s selfie and scene first, then tap Approve or Decline.'));
+      cb.addEventListener('change', function () { form.approve = cb.checked; if (cb.checked) hostRequestNotify(); });
+      var apt = h('span'); apt.appendChild(document.createTextNode('Approve each video')); apt.appendChild(h('small', '', 'You see each friend’s selfie and scene first, then choose Approve or Decline.'));
       ap.appendChild(cb); ap.appendChild(apt); f.appendChild(ap);
       // limits
       var lim = h('div', 'gs-row');
@@ -237,7 +388,8 @@
         if (!name || name.length > 24) { st.err = 'Please enter your name — friends see it on their screen.'; err.textContent = st.err; inp.focus(); return; }
         form.name = name;
         lsSet({ hostName: name, mode: form.mode, approve: form.approve, dailyLimit: form.daily, autoStopHours: form.hours, known: st.known });
-        go.disabled = true; err.textContent = '';
+        go.disabled = true; err.textContent = ''; st.stopped = null;
+        if (form.approve) hostRequestNotify();
         act('start', { mode: form.mode, hostName: name, dailyLimit: form.daily, approve: form.approve, autoStopHours: form.hours }).then(function () { say('Sharing is starting'); }, function () { go.disabled = false; err.textContent = st.err; });
       });
       body.appendChild(f);
@@ -289,10 +441,11 @@
       }
       var closing = s.state === 'closing';
       var busy = (s.jobs || []).some(function (j) { return j.state === 'running' || j.state === 'queued' || j.state === 'waiting-approval'; });
-      part('top', [s.state, s.mode, s.link, s.linkReady, s.linkChangedAt, s.tunnel && s.tunnel.state, s.tunnel && s.tunnel.error, s.stopsAt, s.stopsAt && left(s.stopsAt), s.closing, linkChanged(s), st.err, busy,
-        closing && (s.jobs || []).map(function (j) { return j.state + j.guestName; }).join()], function (el) { viewTop(el, s, closing, busy); });
+      var nobody = !((s.guests || []).length || s.unnamed);
+      part('top', [s.state, s.mode, s.link, s.linkReady, s.linkChangedAt, s.tunnel && s.tunnel.state, s.tunnel && s.tunnel.error, s.stopsAt, s.stopsAt && left(s.stopsAt), s.closing, linkChanged(s), st.err, busy, nobody,
+        closing && (s.jobs || []).map(function (j) { return j.state + j.guestName + (j.progress ? Math.round((j.progress.overall || 0) * 100) : ''); }).join()], function (el) { viewTop(el, s, closing, busy, nobody); });
       part('jobs', [s.jobs, s.state], function (el) { el.appendChild(viewJobs(s)); });
-      part('guests', [s.guests, s.unnamed, s.settings && s.settings.dailyLimit, Math.floor(Date.now() / 60000)], function (el) { el.appendChild(viewGuests(s)); });
+      part('guests', [s.guests, s.unnamedGuests, s.settings && s.settings.dailyLimit, Math.floor(Date.now() / 60000)], function (el) { el.appendChild(viewGuests(s)); });
       part('settings', [s.settings, s.mode, closing], function (el) { if (!closing) { el.appendChild(viewSettings(s)); if (s.mode === 'wifi') el.appendChild(wifiHelp()); } });
     }
     function part(name, keyParts, draw) {
@@ -304,50 +457,71 @@
       draw(el);
       if (fk) { var n = el.querySelector('[data-key="' + fk + '"]') || document.getElementById(fk); if (n && n.focus) { try { n.focus({ preventScroll: true }); } catch (e) { /* ignore */ } } }
     }
-    function viewTop(top, s, closing, busy) {
+    function viewTop(top, s, closing, busy, nobody) {
+      var jobs = s.jobs || [];
       if (closing) {
-        var cl = h('div', 'gs-banner');
-        var waiting = (s.closing && s.closing.waitingFor) || 0;
-        var names = (s.jobs || []).filter(function (j) { return j.state === 'running' || j.state === 'done'; }).map(function (j) { return j.guestName || 'a friend'; });
-        cl.appendChild(h('span', '', (waiting && names.length ? 'Finishing ' + names[0] + '’s video… ' : 'Closing… ') + 'The link closes when friends have their videos.'));
-        cl.appendChild(armed('stopnow', 'Stop now', 'Tap again — friends’ videos stop', function () { act('stop', { now: true }).then(function () { say('Sharing is off'); }); }));
+        var cl = h('div', 'gs-banner'); cl.id = 'gsClosing';
+        var txt = h('span');
+        var run = jobs.filter(function (j) { return j.state === 'running'; })[0];
+        var made = jobs.filter(function (j) { return j.state === 'done'; }).map(function (j) { return j.guestName || 'a friend'; });
+        var by = s.closing && s.closing.closesBy;
+        var lines = [];
+        if (run) lines.push('Finishing ' + (run.guestName || 'a friend') + '’s video (' + Math.round(((run.progress && run.progress.overall) || 0) * 100) + '%)…');
+        if (made.length) lines.push('Waiting for ' + listNames(made) + ' to download theirs.');
+        if (!run && !made.length) lines.push('Closing…');
+        lines.push(by ? 'The link closes by ' + clock(by) + ' at the latest.' : 'The link closes when friends have their videos' + (s.closing && s.closing.graceMin ? ' (at most ' + s.closing.graceMin + ' min after the last one is made).' : '.'));
+        lines.push('New videos can’t start.');
+        txt.textContent = lines.join(' ');
+        cl.appendChild(txt);
+        cl.appendChild(armed('stopnow', 'Stop now', AGAIN + ' — unfinished videos stop', function () { act('stop', { now: true }).then(function () { say('Sharing is off'); }); }));
         top.appendChild(cl);
       }
-      var tun = s.tunnel;
-      if (tun && tun.state === 'failed') {
-        var fb = h('div', 'gs-banner bad'); fb.setAttribute('role', 'alert');
-        fb.appendChild(h('span', '', (tun.error ? tun.error + ' ' : '') + 'The internet link stopped working. Try “Same Wi-Fi only”, or stop and start sharing again.'));
+      var tun = s.tunnel, dead = !!(tun && tun.state === 'failed');
+      if (dead) {
+        var fb = h('div', 'gs-banner bad'); fb.setAttribute('role', 'alert'); fb.id = 'gsFailed';
+        fb.appendChild(h('span', '', tun.error || 'The internet link stopped working.'));
+        if (!closing) {
+          fb.appendChild(b('Try again', 'small', function () { act('relink', {}, knowLink).then(function () { say('Starting the internet link again'); }); }, 'relink'));
+          fb.appendChild(b('Switch to Same Wi-Fi only', 'small', function () { act('settings', { mode: 'wifi' }, knowLink).then(function () { say('Now Same Wi-Fi only. A new link is ready.'); }); }, 'towifi'));
+        }
         top.appendChild(fb);
       }
-      if (linkChanged(s) && !closing) {
+      if (linkChanged(s) && !closing && !dead) {
         var ch = h('div', 'gs-banner'); ch.setAttribute('role', 'status'); ch.id = 'gsChanged';
         ch.appendChild(h('span', '', 'The link changed — send the new link to your friends.'));
         ch.appendChild(b('OK', 'small', function () { knowLink(s); render(true); }));
         top.appendChild(ch);
       }
       if (s.link && !closing) {
-        var lk = h('div', 'gs-link');
+        var lk = h('div', 'gs-link' + (dead ? ' gs-dead' : ''));
         var qrw = h('div', 'gs-qr'); var cv = h('canvas'); cv.id = 'gsQr'; cv.setAttribute('role', 'img'); cv.setAttribute('aria-label', 'QR code of the link for your friends');
         qrw.appendChild(cv); lk.appendChild(qrw);
         var lt = h('div');
-        lt.appendChild(h('p', '', s.mode === 'wifi' ? 'Friends on your Wi-Fi scan the code with their phone camera, or open this link:' : 'Friends scan the code with their phone camera, or you send them this link:'));
+        if (dead) lt.appendChild(h('p', 'gs-deadmsg', 'This link doesn’t work right now.'));
+        else lt.appendChild(h('p', '', s.mode === 'wifi' ? 'Friends on your Wi-Fi scan the code with their phone camera, or open this link:' : 'Friends scan the code with their phone camera, or you send them this link:'));
         var url = h('div', 'gs-url', s.link); url.id = 'gsLink'; lt.appendChild(url);
         var row = h('div', 'gs-btns');
         var copy = b(Date.now() - st.copied < 2500 ? 'Copied' : 'Copy link', 'primary small', function () { copyLink(s.link, copy); }, 'copy');
-        copy.id = 'gsCopy'; row.appendChild(copy);
-        row.appendChild(armed('newlink', 'New link', 'Tap again — the old link stops letting people in', function () { act('new-link', {}, knowLink).then(function () { say('A new link is ready. The old link no longer lets new people in.'); }); }));
+        copy.id = 'gsCopy'; copy.disabled = dead; row.appendChild(copy);
+        row.appendChild(armed('newlink', 'New link', AGAIN + ' to replace the link', function () { act('new-link', {}, knowLink).then(function () { say('A new link is ready. The old link no longer lets new people in.'); }); }));
         lt.appendChild(row);
-        if (!s.linkReady) lt.appendChild(h('p', '', 'The link is starting — it may take a minute before it works.'));
+        lt.appendChild(h('p', 'gs-empty', '“New link” makes a fresh link: the old one stops letting people in, and anyone who opened it without typing a name is disconnected.'));
+        if (!s.linkReady && !dead) lt.appendChild(h('p', '', 'The link is starting — it may take a minute before it works.'));
         lk.appendChild(lt);
         top.appendChild(lk);
         try { if (window.GlowQR) window.GlowQR.draw(cv, s.link, { px: 200 }); } catch (e) { qrw.replaceWith(h('p', 'gs-err', 'This link is too long for a QR code — copy it instead.')); }
       }
+      if (s.mode === 'wifi' && !closing && nobody) {
+        top.appendChild(h('p', 'gs-note', 'If Windows asks whether Glow Studio may use networks, tick “Private networks” and press Allow. Only Glow Studio’s friend page is reachable on your Wi-Fi — nothing else on this PC.'));
+      }
       var tl = h('div', 'gs-row');
       if (s.stopsAt && !closing) tl.appendChild(h('p', '', 'Sharing stops at ' + clock(s.stopsAt) + ' (in ' + left(s.stopsAt) + ').'));
-      if (!closing) tl.appendChild(armed('stop', 'Stop sharing', busy ? 'Tap again — waiting videos are cancelled, the one being made finishes' : 'Tap again to stop sharing', function () { act('stop', {}).then(function () { say('Sharing is stopping'); }); }));
+      if (!closing) tl.appendChild(armed('stop', 'Stop sharing', busy ? AGAIN + ' — waiting videos are cancelled, the one being made finishes' : AGAIN + ' to stop sharing', function () { act('stop', {}).then(function () { say('Sharing is stopping'); }); }));
       top.appendChild(tl);
+      if (!closing) top.appendChild(h('p', 'gs-empty', 'Closing this window doesn’t stop sharing' + (s.stopsAt ? ': it stops at ' + clock(s.stopsAt) + ', or when you press Stop sharing.' : '.') + ' Your PC won’t go to sleep by itself while you share — keep it plugged in, and don’t close a laptop’s lid.'));
       var err = h('p', 'gs-err', st.err); err.setAttribute('role', 'alert'); top.appendChild(err);
     }
+    function listNames(a) { return a.length <= 1 ? (a[0] || '') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1]; }
     function copyLink(link, btn) {
       function done() { st.copied = Date.now(); btn.textContent = 'Copied'; say('Link copied'); setTimeout(function () { if (btn.isConnected) btn.textContent = 'Copy link'; }, 2500); }
       function fallback() {
@@ -372,9 +546,11 @@
         var li = h('li', 'gs-item'); li.dataset.job = j.id;
         var what = (j.sceneName || j.sceneId) + ' · ' + j.duration + ' s · ' + (SOUND[j.sound] || 'music') + (j.lipShots ? ' · lip-sync' : '');
         if (j.state === 'waiting-approval') {
-          var img = h('img', 'gs-thumb'); img.alt = 'Selfie from ' + (j.guestName || 'a friend'); img.src = API + 'jobs/' + encodeURIComponent(j.id) + '/thumb'; img.decoding = 'async';
+          var tb = h('button', 'gs-thumbb'); tb.type = 'button'; tb.dataset.key = 'th-' + j.id; tb.setAttribute('aria-label', 'See ' + (j.guestName || 'the friend') + '’s photo bigger');
+          var img = h('img', 'gs-thumb'); img.alt = ''; img.src = API + 'jobs/' + encodeURIComponent(j.id) + '/thumb'; img.decoding = 'async';
           img.onerror = function () { img.removeAttribute('src'); };
-          li.appendChild(img);
+          tb.appendChild(img); tb.addEventListener('click', function () { openPreview(j); });
+          li.appendChild(tb);
         } else {
           var av = h('span', 'gs-av', (j.guestName || '?').charAt(0).toUpperCase()); av.setAttribute('aria-hidden', 'true'); li.appendChild(av);
         }
@@ -388,10 +564,10 @@
         li.appendChild(who);
         var acts = h('div', 'gs-acts');
         if (j.state === 'waiting-approval') {
-          acts.appendChild(b('Approve', 'primary small', function () { act('jobs/' + encodeURIComponent(j.id) + '/approve', {}).then(function () { say('Approved ' + (j.guestName || '') + '’s video'); }); }, 'ap-' + j.id));
-          acts.appendChild(armed('de-' + j.id, 'Decline', 'Tap again to decline', function () { act('jobs/' + encodeURIComponent(j.id) + '/decline', {}).then(function () { say('Declined'); }); }));
+          acts.appendChild(b('Look and decide', 'primary small', function () { openPreview(j); }, 'ap-' + j.id));
+          acts.appendChild(armed('de-' + j.id, 'Decline', AGAIN + ' to decline', function () { act('jobs/' + encodeURIComponent(j.id) + '/decline', {}).then(function () { say('Declined'); }); }));
         } else if (j.state !== 'done') {
-          acts.appendChild(armed('ca-' + j.id, 'Cancel', 'Tap again to cancel', function () { act('jobs/' + encodeURIComponent(j.id) + '/cancel', {}).then(function () { say('Cancelled'); }); }));
+          acts.appendChild(armed('ca-' + j.id, 'Cancel', AGAIN + ' to cancel', function () { act('jobs/' + encodeURIComponent(j.id) + '/cancel', {}).then(function () { say('Cancelled'); }); }));
         }
         li.appendChild(acts);
         ul.appendChild(li);
@@ -404,26 +580,40 @@
       var gs = s.guests || [];
       var hh = h('h3'); hh.id = 'gsGuestsH'; hh.appendChild(document.createTextNode('Who’s connected')); hh.appendChild(h('small', '', gs.length ? String(gs.filter(function (g) { return g.online && !g.blocked; }).length) + ' online' : ''));
       sec.appendChild(hh);
-      if (!gs.length) sec.appendChild(h('p', 'gs-empty', 'Nobody yet. Friends show up here with their name once they open the link.'));
+      if (!gs.length && !(s.unnamedGuests || []).length) sec.appendChild(h('p', 'gs-empty', 'Nobody yet. Friends show up here with their name once they open the link.'));
       var ul = h('ul', 'gs-list');
       gs.forEach(function (g) {
         var li = h('li', 'gs-item'); li.dataset.guest = g.id;
         var av = h('span', 'gs-av', (g.name || '?').charAt(0).toUpperCase()); av.setAttribute('aria-hidden', 'true');
         var dot = h('i', g.online && !g.blocked ? 'on' : ''); av.appendChild(dot); li.appendChild(av);
         var who = h('div', 'gs-who');
-        who.appendChild(h('b', '', g.name || 'Someone'));
+        who.appendChild(h('b', '', g.name || 'Someone without a name'));
         var lim = (s.settings && s.settings.dailyLimit) || 5;
         who.appendChild(h('small', '', g.blocked ? 'Blocked' : (g.online ? 'Online' : 'Last seen ' + ago(g.lastSeenAt)) + ' · ' + (g.usedToday || 0) + ' of ' + lim + ' videos today'));
         li.appendChild(who);
         var acts = h('div', 'gs-acts');
         if (g.blocked) acts.appendChild(b('Unblock', 'small text', function () { act('guests/' + encodeURIComponent(g.id) + '/block', { blocked: false }); }, 'ub-' + g.id));
-        else acts.appendChild(armed('bl-' + g.id, 'Block', 'Tap again to block ' + (g.name || 'them'), function () { act('guests/' + encodeURIComponent(g.id) + '/block', { blocked: true }).then(function () { say((g.name || 'They') + ' can’t use your PC any more'); }); }));
+        else acts.appendChild(armed('bl-' + g.id, 'Block', AGAIN + ' to block ' + (g.name || 'them'), function () { act('guests/' + encodeURIComponent(g.id) + '/block', { blocked: true }).then(function () { say((g.name || 'They') + ' can’t use your PC any more'); }); }));
         li.appendChild(acts);
         ul.appendChild(li);
       });
       if (gs.length) sec.appendChild(ul);
-      if (s.unnamed) sec.appendChild(h('p', 'gs-empty', s.unnamed + (s.unnamed === 1 ? ' more person has' : ' more people have') + ' opened the link but not entered a name yet.'));
-      sec.appendChild(h('p', 'gs-empty', 'Someone you don’t know? Block them, then press “New link” and send it only to your friends.'));
+      var un = s.unnamedGuests || [];
+      if (un.length) {
+        sec.appendChild(h('p', 'gs-empty', un.length + (un.length === 1 ? ' more person has' : ' more people have') + ' opened the link but not typed a name yet:'));
+        var ul2 = h('ul', 'gs-list');
+        un.forEach(function (u) {
+          var li = h('li', 'gs-item'); li.dataset.guest = u.id;
+          var av = h('span', 'gs-av', '?'); av.setAttribute('aria-hidden', 'true'); li.appendChild(av);
+          var who = h('div', 'gs-who'); who.appendChild(h('b', '', 'Someone who hasn’t typed a name')); who.appendChild(h('small', '', 'Opened the link ' + ago(u.joinedAt)));
+          li.appendChild(who);
+          var acts = h('div', 'gs-acts');
+          acts.appendChild(armed('bl-' + u.id, 'Block', AGAIN + ' to block', function () { act('guests/' + encodeURIComponent(u.id) + '/block', { blocked: true }).then(function () { say('Blocked'); }); }));
+          li.appendChild(acts); ul2.appendChild(li);
+        });
+        sec.appendChild(ul2);
+      }
+      sec.appendChild(h('p', 'gs-empty', 'Limits and Block count per friend: opening the link again in another browser doesn’t reset them. Someone you don’t know? Block them, then press “New link” and send it only to your friends.'));
       return sec;
     }
     function viewSettings(s) {
@@ -434,7 +624,7 @@
       var set = s.settings || {};
       var ap = h('label', 'gs-switch');
       var cb = h('input'); cb.type = 'checkbox'; cb.id = 'gsApproveOn'; cb.checked = !!set.approve;
-      cb.addEventListener('change', function () { act('settings', { approve: cb.checked }); });
+      cb.addEventListener('change', function () { if (cb.checked) hostRequestNotify(); act('settings', { approve: cb.checked }); });
       var apt = h('span'); apt.appendChild(document.createTextNode('Approve each video')); apt.appendChild(h('small', '', 'You see each friend’s selfie and scene first.'));
       ap.appendChild(cb); ap.appendChild(apt); f.appendChild(ap);
       var lim = h('div', 'gs-row');
@@ -450,7 +640,7 @@
       var mrow = h('div', 'gs-row');
       var other = s.mode === 'wifi' ? 'internet' : 'wifi';
       mrow.appendChild(h('span', 'gs-lab', s.mode === 'wifi' ? 'Same Wi-Fi only' : 'Anywhere (internet link)'));
-      mrow.appendChild(armed('mode', other === 'wifi' ? 'Switch to Same Wi-Fi only' : 'Switch to Anywhere', 'Tap again — this makes a new link', function () { act('settings', { mode: other }, knowLink); }));
+      mrow.appendChild(armed('mode', other === 'wifi' ? 'Switch to Same Wi-Fi only' : 'Switch to Anywhere', AGAIN + ' — this makes a new link', function () { act('settings', { mode: other }, knowLink); }));
       f.appendChild(mrow);
       d.appendChild(f);
       return d;
@@ -475,12 +665,17 @@
     }
     function render(force) {
       var s = st.status;
-      if (st.unsupported) { root.hidden = true; return; }
+      if (st.unsupported) { root.hidden = true; if (opts.top) opts.top.hidden = true; ask.hidden = true; applyTitle(''); return; }
       var state = s ? s.state : 'off';
       // (while closing, "Closing…" matters more; the banner still says the internet link stopped)
       var failed = !!(s && s.tunnel && s.tunnel.state === 'failed' && state === 'on');
-      pill.className = 'gs-pill' + (failed ? ' bad' : state === 'on' ? ' on' : state === 'starting' || state === 'closing' ? ' wait' : '');
-      pill.textContent = failed ? 'Link stopped' : state === 'on' ? (s.stopsAt ? 'On · ' + left(s.stopsAt) + ' left' : 'On') : state === 'starting' ? 'Starting…' : state === 'closing' ? 'Closing…' : 'Off';
+      var nw = waiting(s).length;
+      if (state !== 'off') st.wasOn = true;
+      else if (st.wasOn) { st.wasOn = false; st.stopped = clock(Date.now()); force = true; } // (the confirmation above the form)
+      pill.className = 'gs-pill' + (nw ? ' ask' : failed ? ' bad' : state === 'on' ? ' on' : state === 'starting' || state === 'closing' ? ' wait' : '');
+      pill.textContent = nw ? nw + ' waiting for you' : failed ? 'Link stopped' : state === 'on' ? (s.stopsAt ? 'On · ' + left(s.stopsAt) + ' left' : 'On') : state === 'starting' ? 'Starting…' : state === 'closing' ? 'Closing…' : 'Off';
+      renderTop(s);
+      if (dlgJob && !waiting(s).some(function (j) { return j.id === dlgJob; })) closePreview();
       var was = st.view, view = state === 'closing' ? 'on' : state;
       if (view !== 'on') parts = null;
       if (view === 'off') {
@@ -518,7 +713,11 @@
     poll();
     return {
       refresh: poll,
-      unmount: function () { st.dead = true; clearTimeout(st.timer); document.removeEventListener('visibilitychange', onVis); root.textContent = ''; }
+      unmount: function () {
+        st.dead = true; clearTimeout(st.timer); document.removeEventListener('visibilitychange', onVis); root.textContent = '';
+        applyTitle(''); if (ask.parentNode) ask.parentNode.removeChild(ask); if (dlg.parentNode) dlg.parentNode.removeChild(dlg);
+        if (opts.top) { opts.top.textContent = ''; opts.top.hidden = true; }
+      }
     };
   }
 

@@ -181,7 +181,7 @@ func parseJobRequest(sd *ScenesData, body []byte, audio bool) (*guestRequest, *a
 		return nil, e
 	}
 	if j.Consent == nil || j.Consent.Own == nil || j.Consent.Adult == nil || !*j.Consent.Own || !*j.Consent.Adult {
-		return nil, &apiError{Status: 400, Code: "consent", Message: "Please confirm that this is your own photo and that you are 18 or older.", Field: "consent"}
+		return nil, &apiError{Status: 400, Code: "consent", Message: "Tick the box: it's you or you have permission, and they're 18 or older.", Field: "consent"}
 	}
 	r.Consent = true
 	if j.Seed != nil {

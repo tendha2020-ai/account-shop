@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -308,4 +309,73 @@ func stopProcess(pid int) error {
 		return err
 	}
 	return p.Kill()
+}
+
+// ---- keeping the PC awake while friends use it ("Share with friends") ----
+//
+// Windows puts an idle PC to sleep even while the GPU is busy, which would
+// stall a friend's video. While sharing is on, the launcher holds a power
+// request (PowerCreateRequest + PowerSetRequest(PowerRequestSystemRequired),
+// shown by `powercfg /requests` as "Glow Studio: friends are using this PC's
+// AI"). It doesn't keep the screen on, and pressing Sleep or closing a laptop's
+// lid still puts the PC to sleep. The request ends with sharing or the launcher.
+
+var (
+	procPowerCreateRequest = kernel32.NewProc("PowerCreateRequest")
+	procPowerSetRequest    = kernel32.NewProc("PowerSetRequest")
+	procPowerClearRequest  = kernel32.NewProc("PowerClearRequest")
+)
+
+const (
+	powerRequestContextVersion      = 0
+	powerRequestContextSimpleString = 0x1
+	powerRequestSystemRequired      = 1
+)
+
+// reasonContext is REASON_CONTEXT with the SimpleReasonString member of its
+// union in the first slot (the union is larger; the rest stays zero).
+type reasonContext struct {
+	Version uint32
+	Flags   uint32
+	Reason  [4]uintptr
+}
+
+var awake struct {
+	mu     sync.Mutex
+	h      syscall.Handle
+	reason *uint16
+}
+
+func keepAwake(on bool) bool {
+	awake.mu.Lock()
+	defer awake.mu.Unlock()
+	if on == (awake.h != 0) {
+		return false
+	}
+	if !on {
+		procPowerClearRequest.Call(uintptr(awake.h), powerRequestSystemRequired)
+		syscall.CloseHandle(awake.h)
+		awake.h = 0
+		return true
+	}
+	if procPowerCreateRequest.Find() != nil {
+		return false
+	}
+	if awake.reason == nil {
+		awake.reason, _ = syscall.UTF16PtrFromString("Glow Studio: friends are using this PC's AI (Share with friends)")
+	}
+	rc := reasonContext{Version: powerRequestContextVersion, Flags: powerRequestContextSimpleString}
+	rc.Reason[0] = uintptr(unsafe.Pointer(awake.reason))
+	h, _, err := procPowerCreateRequest.Call(uintptr(unsafe.Pointer(&rc)))
+	if h == 0 || syscall.Handle(h) == syscall.InvalidHandle {
+		launcherLog.printf("[share] could not keep the PC awake: %v", err)
+		return false
+	}
+	if r, _, err := procPowerSetRequest.Call(h, powerRequestSystemRequired); r == 0 {
+		launcherLog.printf("[share] could not keep the PC awake: %v", err)
+		syscall.CloseHandle(syscall.Handle(h))
+		return false
+	}
+	awake.h = syscall.Handle(h)
+	return true
 }

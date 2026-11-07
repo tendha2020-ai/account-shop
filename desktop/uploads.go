@@ -18,11 +18,11 @@ var badPhoto = &apiError{Status: 400, Code: "bad-photo", Message: "This photo co
 
 const (
 	selfieMaxSide = 1536
-	thumbSide     = 160
+	thumbSide     = 480 // the host judges who is in the photo: big enough to see a face
 )
 
 // sanitizeSelfie checks a JPEG/PNG selfie and re-encodes it (long side <= 1536,
-// JPEG quality 92). With thumb, it also makes the host's 160 px approval thumbnail.
+// JPEG quality 92). With thumb, it also makes the host's 480 px approval photo.
 func sanitizeSelfie(data []byte, thumb bool) (out, th []byte, e *apiError) {
 	isJPEG := len(data) > 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF
 	isPNG := len(data) > 8 && bytes.HasPrefix(data, []byte("\x89PNG\r\n\x1a\n"))

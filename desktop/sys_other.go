@@ -133,3 +133,7 @@ func processName(pid int) string {
 
 // stopProcess asks an older launcher to quit (SIGTERM: it stops its engine first).
 func stopProcess(pid int) error { return syscall.Kill(pid, syscall.SIGTERM) }
+
+// keepAwake: only Windows puts an idle PC to sleep under a running launcher
+// (sys_windows.go); it reports whether the request changed.
+func keepAwake(on bool) bool { return false }

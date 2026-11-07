@@ -681,14 +681,14 @@ func TestGuestQueueOrderApprovalAndThumb(t *testing.T) {
 	if len(jobs) != 3 || jobs[0].(map[string]any)["thumb"] != true || jobs[1].(map[string]any)["position"] != 2.0 {
 		t.Fatalf("host jobs %v", jobs)
 	}
-	// the thumbnail: 160 px JPEG, only while waiting
+	// the approval photo: 480 px JPEG (big enough to judge who is in it), only while waiting
 	resp, err := http.Get(h.host + "/__glow/share/jobs/" + ids[0] + "/thumb")
 	if err != nil || resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "image/jpeg" {
 		t.Fatalf("thumb %v %v", err, resp)
 	}
 	tb, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if cfg, err := jpeg.DecodeConfig(bytes.NewReader(tb)); err != nil || cfg.Height != 160 || cfg.Width != 120 {
+	if cfg, err := jpeg.DecodeConfig(bytes.NewReader(tb)); err != nil || cfg.Height != 480 || cfg.Width != 360 {
 		t.Errorf("thumb %v %v", cfg, err)
 	}
 	// nothing runs before approval; approving the second one first runs it first
@@ -1019,11 +1019,19 @@ func TestShareClosingAndStop(t *testing.T) {
 	d := h.joined("Rui", "198.51.100.124")
 	_, md := d.submit(jobReq("party-hall", 5, "music", "beat", "best"), testJPEG(300, 400, ""), nil)
 	h.waitJob(jobOf(md)["id"].(string), "done")
+	logPath := filepath.Join(t.TempDir(), "launcher.log")
+	launcherLog.open(logPath, logRotateBytes)
+	defer launcherLog.close()
 	h.hostDo("POST", "/__glow/share/stop", map[string]any{})
 	if h.status()["state"] != "closing" {
 		t.Fatal("not closing")
 	}
 	waitFor(t, 5*time.Second, func() bool { return h.status()["state"] == "off" })
+	// the ticker that ends closing must not wait for itself: the tunnel, files and log follow at once (not after 10 s)
+	waitFor(t, 3*time.Second, func() bool {
+		b, _ := os.ReadFile(logPath)
+		return strings.Contains(string(b), "sharing off (stopped; every friend has their video)")
+	})
 }
 
 // While sharing is on, the launcher neither idles out nor lets an update replace it.
@@ -1145,8 +1153,12 @@ func TestShareJobExpiry(t *testing.T) {
 }
 
 func TestShareRequestGroups(t *testing.T) {
-	for p, want := range map[string]string{"/__glow/guest/jobs/gq-1/files/clip-0.mp4": "guest/jobs", "/__glow/guest/join": "guest/join",
-		"/__glow/share/jobs/x/approve": "share/jobs", "/__glow/share/status": "share/status"} {
+	for p, want := range map[string]string{"/__glow/guest/jobs/gq-1/files/clip-0.mp4": "guest/jobs/*/files", "/__glow/guest/join": "guest/join",
+		"/__glow/share/jobs/x/approve": "share/jobs/*/approve", "/__glow/share/status": "share/status", "/__glow/guest/jobs/gq-1": "guest/jobs/*",
+		"/__glow/guest/jobs/current": "guest/jobs/current", "/__glow/guest/jobs/gq-1/done": "guest/jobs/*/done", "/__glow/guest/x\n2026": "guest/other",
+		"/__glow/guest/" + strings.Repeat("A", 8000): "guest/other", "/__glow/engine/y\nFORGED": "engine/other", "/__glow/share/guests/u1/block": "share/guests/*/block",
+		"/__glow/share/zzz": "share/other", "/__glow/comfy/view": "comfy/view", "/__glow/comfy/evil%0a": "comfy/other", "/__glow/comfy/upload/image": "comfy/upload",
+		"/anything": "page"} {
 		if g := requestGroup(p); g != want {
 			t.Errorf("%s -> %s", p, g)
 		}

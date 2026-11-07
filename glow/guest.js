@@ -57,7 +57,13 @@
     estimateStory: estimateStory, uuid: uuid, hostName: hostName, onSession: null
   };
   var lastHost = ''; // the host's name stays known after the session ends (blocked, sharing stopped)
+  try { lastHost = sessionStorage.getItem('glow.guest.host') || ''; } catch (e) { /* ignore */ }
+  function rememberHost(n) { if (n && typeof n === 'string') { lastHost = n; try { sessionStorage.setItem('glow.guest.host', n); } catch (e) { /* ignore */ } } }
   function hostName() { var s = G.session; return (s && s.host && s.host.name) || lastHost || 'your friend'; }
+  // The link's join token, kept for this tab only: a session that hasn't typed a name ends after 10 minutes (the
+  // host's app limits those), and the page then joins again by itself instead of asking for a new link.
+  var joinToken = '';
+  try { joinToken = sessionStorage.getItem('glow.guest.join') || ''; } catch (e) { /* ignore */ }
 
   /* ---------------- HTTP ---------------- */
   function api(method, path, body, opt) {
@@ -77,10 +83,11 @@
         var code = (data && data.error) || (r.status === 401 ? 'no-session' : r.status === 404 ? 'not-found' : r.status === 413 ? 'too-large' : r.status === 429 ? 'too-many-attempts' : 'http-' + r.status);
         var e = GuestError(code, (data && data.message) || '', data || {});
         e.status = r.status;
+        if (data && data.host && data.host.name) rememberHost(data.host.name);
         e.retryAfter = +(r.headers.get('Retry-After') || 0) || 0;
         // no session any more, or the host blocked this friend (the host's app then answers every request with 403
         // "blocked"): the page leaves the scene controls and says so
-        if (r.status === 401 || code === 'blocked') { if (code === 'blocked') G.error = e; G.session = null; notify(); }
+        if (r.status === 401 || code === 'blocked' || code === 'sharing-stopped') { if (code !== 'no-session' && r.status !== 401) G.error = e; G.session = null; notify(); }
         throw e;
       });
     }, function (err) {
@@ -89,7 +96,7 @@
     });
   }
   function notify() { if (typeof G.onSession === 'function') { try { G.onSession(G.session); } catch (e) { /* the page's problem */ } } }
-  function setSession(s) { if (s && s.session) s = s.session; G.session = s || null; if (G.session && G.session.host && G.session.host.name) lastHost = G.session.host.name; notify(); return G.session; }
+  function setSession(s) { if (s && s.session) s = s.session; G.session = s || null; if (G.session && G.session.host && G.session.host.name) rememberHost(G.session.host.name); notify(); return G.session; }
 
   /* ---------------- joining ---------------- */
   // ?join=<token> -> a session cookie (HttpOnly, set by the host's app); the token leaves the address bar at once.
@@ -98,6 +105,8 @@
     var token = null;
     try { token = new URLSearchParams(location.search).get('join'); } catch (e) { var m = /[?&]join=([^&#]+)/.exec(location.search); token = m ? decodeURIComponent(m[1]) : null; }
     if (token) {
+      joinToken = String(token).slice(0, 200);
+      try { sessionStorage.setItem('glow.guest.join', joinToken); } catch (e) { /* ignore */ }
       try {
         var q = location.search.replace(/([?&])join=[^&#]*&?/, '$1').replace(/[?&]$/, '');
         history.replaceState(null, '', location.pathname + q + location.hash);
@@ -108,7 +117,14 @@
     var joined = token ? api('POST', 'join', { token: String(token).slice(0, 200) }, { join: true }).then(setSession, function (e) {
       // an old link: still fine when this browser already has a session from the current link
       return known().then(function (s) { if (!s) G.error = e; return s; }, function () { G.error = e; return null; });
-    }) : known().then(function (s) { if (!s && G.sharing !== 'on') G.error = GuestError('not-accepting', ''); return s; }, function (e) { G.error = e; return null; });
+    }) : known().then(function (s) {
+      if (!s && G.sharing === 'on' && joinToken) {
+        // reloaded after the session ended (no name typed for 10 minutes): the link this tab opened, once more
+        return api('POST', 'join', { token: joinToken }, { join: true }).then(setSession, function (e) { G.error = e; return null; });
+      }
+      if (!s && G.sharing !== 'on') G.error = GuestError('not-accepting', '');
+      return s;
+    }, function (e) { G.error = e; return null; });
     G.ready = joined.then(function (s) { if (s) G.error = null; keepAlive(); return s; });
     return G.ready;
   }
@@ -127,7 +143,14 @@
       keepAlive();
     }, SESSION_MS);
   }
-  function setName(name) { return api('POST', 'name', { name: String(name || '') }).then(function (r) { return refresh().then(function () { return r; }); }); }
+  function setName(name) {
+    var send = function () { return api('POST', 'name', { name: String(name || '') }); };
+    return send().catch(function (e) {
+      // the session ended before the name was typed (10 minutes): join again with the same link, once
+      if (!(e && e.status === 401 && joinToken)) throw e;
+      return api('POST', 'join', { token: joinToken }, { join: true }).then(setSession).then(send);
+    }).then(function (r) { return refresh().then(function () { return r; }); });
+  }
   function plan(req) { return api('POST', 'plan', req); }
   function current() { return api('GET', 'jobs/current').then(function (r) { return r.job || null; }); }
   function cancel(id) { return api('POST', 'jobs/' + encodeURIComponent(id) + '/cancel', {}); }
@@ -187,13 +210,14 @@
     }
     function report(j) {
       last = j;
-      var st = j.state;
-      if (st === 'waiting-approval') emit(onProgress, { stage: 'approval', job: id, code: j.code, shot: null, shots: shotsOf(j), pct: 0, overall: 0, message: 'Waiting for ' + hostName() + ' to approve your video.', queue: j.queue || null });
-      else if (st === 'queued') emit(onProgress, { stage: 'queue', job: id, code: j.code, shot: null, shots: shotsOf(j), pct: 0, overall: 0, ahead: j.queue ? j.queue.ahead : 0, hostBusy: !!(j.queue && j.queue.hostBusy), startMin: j.queue ? j.queue.startMin : null, doneMin: j.queue ? j.queue.doneMin : null, message: queueText(j.queue) });
+      var st = j.state, sharing = j.sharing || '';
+      var est = j.plan && Array.isArray(j.plan.estimateMin) ? j.plan.estimateMin : null;
+      if (st === 'waiting-approval') emit(onProgress, { stage: 'approval', job: id, code: j.code, sharing: sharing, shot: null, shots: shotsOf(j), pct: 0, overall: 0, estimateMin: est, message: 'Waiting for ' + hostName() + ' to say OK. If ' + hostName() + ' doesn’t answer, you can cancel and try later.', queue: j.queue || null });
+      else if (st === 'queued') emit(onProgress, { stage: 'queue', job: id, code: j.code, sharing: sharing, shot: null, shots: shotsOf(j), pct: 0, overall: 0, ahead: j.queue ? j.queue.ahead : 0, hostBusy: !!(j.queue && j.queue.hostBusy), startMin: j.queue ? j.queue.startMin : null, doneMin: j.queue ? j.queue.doneMin : null, estimateMin: est, message: queueText(j.queue) });
       else if (st === 'running' && j.progress) {
-        var p = j.progress, ev = { stage: p.stage || 'still', job: id, code: j.code, shot: p.shot != null ? p.shot : null, shots: p.shots || shotsOf(j), pct: +p.pct || 0, overall: +p.overall || 0, message: p.message || '', step: p.step || '', doneMin: j.queue ? j.queue.doneMin : null };
+        var p = j.progress, ev = { stage: p.stage || 'still', job: id, code: j.code, sharing: sharing, startedAt: j.startedAt || null, shot: p.shot != null ? p.shot : null, shots: p.shots || shotsOf(j), pct: +p.pct || 0, overall: +p.overall || 0, message: p.message || '', step: p.step || '', doneMin: j.queue ? j.queue.doneMin : null };
         emit(onProgress, ev);
-      }
+      } else if (st === 'done' && sharing) emit(onProgress, { stage: 'made', job: id, code: j.code, sharing: sharing });
       lastState = st;
     }
     function shotsOf(j) { return j.plan && j.plan.shots ? j.plan.shots.length : 1; }
@@ -223,17 +247,22 @@
         if (j.state === 'done') return finish(j);
         if (j.state === 'downloaded') throw GuestError('gone', 'This video was already saved on another device or tab.');
         if (j.state === 'failed') throw GuestError((j.error && j.error.code) || 'failed', (j.error && j.error.message) || '', { serverJob: j });
-        if (j.state === 'cancelled' || j.state === 'declined' || j.state === 'expired') throw GuestError(j.state, (j.error && j.error.message) || '', { serverJob: j });
+        if (j.state === 'cancelled' || j.state === 'declined' || j.state === 'expired') throw GuestError(j.state, (j.error && j.error.message) || '', { serverJob: j, reason: (j.error && j.error.code) || '' });
         return fetchStills(j).then(function () { return nap(document.hidden ? HIDDEN_MS : POLL_MS); }).then(loop);
       }, function (e) {
         if (e && e.name === 'AbortError') throw e;
         // connection trouble, or the host asking to slow down for a moment (429 / 503 with Retry-After): wait it out
         if (e && (e.code === 'network' || e.status >= 500 || e.status === 429)) {
           fails++;
-          emit(onProgress, { stage: lastState === 'running' && last.progress ? last.progress.stage : 'queue', job: id, reconnecting: true, shots: shotsOf(last), pct: 0, overall: (last.progress && +last.progress.overall) || 0, message: 'Can’t reach ' + hostName() + '’s PC right now — trying again…' });
+          // (after half a minute or so it is more than a blip: the internet link may have changed, or sharing stopped)
+          var who = hostName(), lost = fails >= 4 && last && last.code;
+          var msg = lost ? 'Can’t reach ' + who + '’s PC. ' + who + ' may have stopped sharing, or the link changed. If ' + who + ' sends you a new link, open it, tap “I have a code” and enter ' + last.code + ' to pick up your video.'
+            : 'Can’t reach ' + who + '’s PC right now — trying again…';
+          emit(onProgress, { stage: lastState === 'running' && last.progress ? last.progress.stage : 'queue', job: id, reconnecting: true, lost: !!lost, shots: shotsOf(last), pct: 0, overall: (last.progress && +last.progress.overall) || 0, message: msg });
           return nap(Math.max((e.retryAfter || 0) * 1000, Math.min(20000, POLL_MS * Math.pow(1.5, Math.min(fails, 8))))).then(loop);
         }
         if (e && (e.code === 'not-found' || e.status === 404)) throw GuestError('gone', 'This video is no longer on ' + hostName() + '’s PC.');
+        if (e && e.code === 'sharing-stopped') { e.reason = 'sharing-stopped'; e.made = lastState === 'done'; }
         throw e;
       });
     }
@@ -304,7 +333,12 @@
         if (r.status === 409 && n < 20) return wait(1500, signal).then(go);
         // the host's PC is sending other files right now (it limits how many at once): wait and ask again
         if ((r.status === 503 || r.status === 429) && n < 40) return wait(Math.max(1, +(r.headers.get('Retry-After') || 5)) * 1000, signal).then(go);
-        if (r.status === 410 || r.status === 404) throw GuestError('gone', 'This video is no longer on ' + hostName() + '’s PC.');
+        if (r.status === 410 || r.status === 404) {
+          return r.json().catch(function () { return null; }).then(function (d) {
+            if (d && d.error === 'sharing-stopped') { if (d.host && d.host.name) rememberHost(d.host.name); throw GuestError('sharing-stopped', '', { reason: 'sharing-stopped' }); }
+            throw GuestError('gone', 'This video is no longer on ' + hostName() + '’s PC.');
+          });
+        }
         if (r.status === 401) throw GuestError('no-session', '');
         throw GuestError('download', 'HTTP ' + r.status);
       }, function (e) {
@@ -389,7 +423,7 @@
     else if (o.lipSync === false) lip = 0;
     var fast = o.quality === 'fast', hasFast = typeof o.fastPack === 'boolean' ? o.fastPack : !!host.fast, song = !!o.song, lo = 0, hi = 0;
     function add(r, k) { k = k == null ? 1 : k; lo += r[0] * k; hi += r[1] * k; }
-    add(STORY_MIN.cold);
+    if (typeof o.cold === 'boolean' ? o.cold : !host.ready) add(STORY_MIN.cold);
     add(fast && hasFast ? STORY_MIN.stillKlein : STORY_MIN.stillQwen, n);
     add(STORY_MIN.swap, (song ? 1 : 0) + (n - lip > 0 ? 1 : 0) + (lip > 0 ? 1 : 0));
     if (song) add(STORY_MIN.song);

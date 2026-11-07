@@ -671,7 +671,7 @@
     var host = document.getElementById('egShare');
     if (!host) return;
     var show = !!(window.GlowShare && S && isLoopback() && installed('core') && window.GlowShare.supported(S));
-    if (show && !shareCtl) shareCtl = window.GlowShare.mount(host, { where: 'setup' }); // (shown once the launcher answers)
+    if (show && !shareCtl) shareCtl = window.GlowShare.mount(host, { where: 'setup', top: document.getElementById('egShareTop') }); // (shown once the launcher answers)
     if (!show) { host.hidden = true; if (shareCtl) { shareCtl.unmount(); shareCtl = null; } }
   }
 
