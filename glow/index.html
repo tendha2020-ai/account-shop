@@ -1,0 +1,717 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Glow Studio · AI scenes &amp; photo videos</title>
+<meta name="description" content="Upload one selfie and get a real-looking AI video of you dancing at a party, leaving the club with your friends or famous on the street — synced to the beat of the music, or your own song. Or turn your photos into beat-synced videos. No watermark.">
+<meta name="theme-color" content="#08060f">
+<meta name="color-scheme" content="dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Glow Studio">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link id="gfonts" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Playfair+Display:ital,wght@0,400;0,700;1,400;1,700&family=Caveat:wght@600;700&family=Anton&family=VT323&family=Bangers&display=swap">
+<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="ai.css">
+<link rel="preload" href="scenes.json" as="fetch" crossorigin>
+<script src="music.js" defer></script>
+<script src="templates.js" defer></script>
+<script src="beat.js" defer></script>
+<script src="app.js" defer></script>
+<script src="local-engine.js" defer></script>
+<script src="qr.js" defer></script>
+<script src="share.js" defer></script>
+<script src="scenes.js" defer></script>
+<script src="guest.js" defer></script>
+<script src="ai.js" defer></script>
+</head>
+<body data-mode="ai">
+<script>try{var gm=(location.hash.match(/^#(ai|photo)$/)||[])[1]||localStorage.getItem('glow.mode');if(gm==='ai'||gm==='photo')document.body.setAttribute('data-mode',gm);}catch(e){}</script>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+
+<header class="top">
+  <a class="brand" href="./" aria-label="Glow Studio home">
+    <svg class="logo" viewBox="0 0 40 40" aria-hidden="true">
+      <defs>
+        <linearGradient id="lgLogo" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#ff4fa3"/><stop offset=".52" stop-color="#9b5cff"/><stop offset="1" stop-color="#22d3ee"/>
+        </linearGradient>
+      </defs>
+      <rect width="40" height="40" rx="12" fill="url(#lgLogo)"/>
+      <path d="M15.5 13.2v13.6c0 .8.9 1.3 1.6.9l10.6-6.8c.6-.4.6-1.3 0-1.7L17.1 12.3c-.7-.4-1.6.1-1.6.9z" fill="#fff"/>
+      <path d="M30 6.5l1 2.8 2.8 1-2.8 1-1 2.8-1-2.8-2.8-1 2.8-1z" fill="#fff" opacity=".95"/>
+    </svg>
+    <span class="brand-text">
+      <b>Glow <em>Studio</em></b>
+      <small class="for-photo">Turn photos into scroll-stopping videos</small>
+      <small class="for-ai">One selfie, any scene</small>
+    </span>
+  </a>
+  <div class="top-r">
+    <ul class="perks for-photo" aria-label="Highlights">
+      <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 3v5c0 4.6-3 8.6-7 10-4-1.4-7-5.4-7-10V6z"/></svg>On-device</li>
+      <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>No watermark</li>
+      <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>Original music</li>
+    </ul>
+    <ul class="perks for-ai" aria-label="Highlights">
+      <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8.5" r="3.6"/><path d="M5 20c.8-3.6 3.6-5.6 7-5.6s6.2 2 7 5.6"/></svg>Your face, any scene</li>
+      <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>Built-in music</li>
+      <li class="host-only"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>No watermark</li>
+      <li class="guest-only"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Free for you</li>
+    </ul>
+    <button type="button" class="ai-keychip for-ai host-only" id="aiKeyChip" aria-haspopup="dialog">
+      <i class="ai-kdot" aria-hidden="true"></i><span id="aiKeyChipT">Connect fal.ai</span>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+    </button>
+  </div>
+</header>
+
+<nav class="modes" aria-label="Mode">
+  <div class="modes-in" role="tablist" aria-label="Glow Studio modes">
+    <span class="modes-thumb" aria-hidden="true"></span>
+    <button type="button" class="mode-tab" role="tab" id="tabAi" data-mode="ai" aria-controls="ai" aria-selected="true">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 3l1.9 5.4L18.3 10.3l-5.4 1.9L11 17.6l-1.9-5.4L3.7 10.3l5.4-1.9z"/><path d="M18.5 14.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg>
+      <span>AI Scenes</span>
+    </button>
+    <button type="button" class="mode-tab" role="tab" id="tabPhoto" data-mode="photo" aria-controls="app" aria-selected="false" tabindex="-1">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M7.5 4.5v15M16.5 4.5v15M3.5 9h4M3.5 15h4M16.5 9h4M16.5 15h4"/></svg>
+      <span>Photo Video</span>
+    </button>
+  </div>
+</nav>
+
+<main class="app for-photo" id="app" role="tabpanel" aria-labelledby="tabPhoto">
+  <!-- Preview / stage -->
+  <section class="stage" aria-label="Preview">
+    <div class="player">
+      <div class="screen" id="screen" data-state="empty">
+        <canvas id="pv" width="540" height="960" aria-label="Video preview"></canvas>
+
+        <div class="empty" id="emptyState">
+          <div class="empty-art" aria-hidden="true">
+            <span class="ea ea1"></span><span class="ea ea2"></span><span class="ea ea3"></span>
+            <svg class="ea-spark" viewBox="0 0 24 24"><path d="M12 1.5l2.3 6.6 6.7 2.4-6.7 2.4L12 19.5l-2.3-6.6L3 10.5l6.7-2.4z"/></svg>
+          </div>
+          <h2 class="empty-h">Your video starts here</h2>
+          <p class="empty-p">Add photos or try the demo — we’ll handle the edit, the beat and the music.</p>
+          <div class="empty-actions">
+            <button type="button" class="btn primary" id="emptyAdd">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Choose photos
+            </button>
+            <button type="button" class="btn glass" id="emptyDemo">Try the demo</button>
+          </div>
+        </div>
+
+        <div class="loading" aria-hidden="true">
+          <span class="spinner"></span>
+          <span class="loading-t">Building your video…</span>
+        </div>
+
+        <button type="button" class="bigplay" id="bigPlay" aria-label="Play preview">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.6v12.8c0 .8.9 1.3 1.5.8l10-6.4c.6-.4.6-1.2 0-1.6l-10-6.4C8.9 4.3 8 4.8 8 5.6z"/></svg>
+        </button>
+      </div>
+
+      <div class="transport">
+        <button type="button" class="tbtn" id="btnPlay" aria-label="Play" disabled>
+          <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.6v12.8c0 .8.9 1.3 1.5.8l10-6.4c.6-.4.6-1.2 0-1.6l-10-6.4C8.9 4.3 8 4.8 8 5.6z"/></svg>
+          <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="5" width="4" height="14" rx="1.3"/><rect x="13.5" y="5" width="4" height="14" rx="1.3"/></svg>
+        </button>
+        <span class="time" id="tCur">0:00</span>
+        <input type="range" class="scrub" id="scrub" min="0" max="1000" step="1" value="0" aria-label="Seek preview" disabled>
+        <span class="time" id="tDur">0:00</span>
+      </div>
+      <p class="nowline" id="nowline"><span class="dot"></span><span id="nowTpl">Glow Up</span><span class="sep">·</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg><span id="nowTrack">Shine On</span></p>
+    </div>
+
+    <div class="cta-bar">
+      <button type="button" class="cta" id="btnCreate">
+        <span class="cta-main">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l2.1 6 6.4 2.3-6.4 2.3-2.1 6-2.1-6-6.4-2.3 6.4-2.3z"/><path d="M19 15.5l.9 2.4 2.4.9-2.4.9-.9 2.4-.9-2.4-2.4-.9 2.4-.9z"/></svg>
+          Create video
+        </span>
+        <span class="cta-sub" id="ctaSub">Add photos to start</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- Controls -->
+  <section class="controls" aria-label="Video settings">
+    <article class="card" id="cardPhotos">
+      <header class="card-h">
+        <span class="step" aria-hidden="true">1</span>
+        <h2>Photos</h2>
+        <span class="hint" id="photoCount">0 / 20</span>
+        <button type="button" class="link-btn" id="btnClear" hidden>Clear</button>
+      </header>
+      <div class="tray-wrap" id="trayWrap">
+        <ul class="tray" id="tray" aria-label="Selected photos"></ul>
+        <div class="tray-empty" id="trayEmpty">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5-5-8 8"/></svg>
+          <span><b>Add up to 20 photos</b><small class="desk-only">or drag &amp; drop them here</small><small class="mob-only">They stay on your phone</small></span>
+        </div>
+      </div>
+      <div class="row">
+        <button type="button" class="btn primary" id="btnAdd">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Add photos
+        </button>
+        <button type="button" class="btn glass" id="btnDemo">Try demo photos</button>
+      </div>
+      <input type="file" id="fileInput" accept="image/*" multiple hidden>
+      <p class="photo-status" id="photoStatus" aria-live="polite"></p>
+    </article>
+
+    <article class="card" id="cardTemplates">
+      <header class="card-h">
+        <span class="step" aria-hidden="true">2</span>
+        <h2>Template</h2>
+        <button type="button" class="pill-btn" id="btnSurprise">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><circle cx="8.5" cy="8.5" r="1.3"/><circle cx="15.5" cy="15.5" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="15.5" cy="8.5" r="1.3"/><circle cx="8.5" cy="15.5" r="1.3"/></svg>
+          Surprise me
+        </button>
+      </header>
+      <div class="tpls" id="tpls" role="group" aria-label="Templates"></div>
+    </article>
+
+    <article class="card" id="cardMusic">
+      <header class="card-h">
+        <span class="step" aria-hidden="true">3</span>
+        <h2>Music</h2>
+        <span class="hint">Original · royalty-free · or your song</span>
+      </header>
+      <div class="tracks" id="tracks" role="group" aria-label="Music tracks"></div>
+      <div class="pv-own" id="pvOwn" hidden>
+        <span class="pv-own-t"><b id="pvOwnName"></b><small id="pvOwnMeta"></small></span>
+        <div class="pv-own-at" role="group" aria-label="Where your song starts">
+          <button type="button" class="icon-btn" id="pvOwnPrev" aria-label="Start 4 bars earlier"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6l-6 6 6 6"/></svg></button>
+          <span id="pvOwnAt" aria-live="polite">Starts at 0:00</span>
+          <button type="button" class="icon-btn" id="pvOwnNext" aria-label="Start 4 bars later"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 6l6 6-6 6"/></svg></button>
+        </div>
+        <button type="button" class="link-btn" id="pvOwnChange">Change song</button>
+      </div>
+      <p class="pv-own-note" id="pvOwnNote" hidden>The template cuts on your song’s beat, starting on a downbeat. Only use music you have the rights to.</p>
+      <input type="file" id="pvOwnFile" accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.oga,.opus,.flac" hidden>
+      <div class="vol">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>
+        <label for="volume">Music volume</label>
+        <input type="range" class="slider" id="volume" min="0" max="100" step="1" value="85">
+        <output id="volOut" for="volume">85%</output>
+      </div>
+    </article>
+
+    <article class="card" id="cardStyle">
+      <header class="card-h">
+        <span class="step" aria-hidden="true">4</span>
+        <h2>Style</h2>
+        <span class="hint">Optional</span>
+      </header>
+      <div class="fields">
+        <label class="field">
+          <span>Title</span>
+          <input type="text" id="title" maxlength="32" placeholder="Summer ’26" autocomplete="off" enterkeyhint="done">
+        </label>
+        <label class="field">
+          <span>Subtitle</span>
+          <input type="text" id="subtitle" maxlength="48" placeholder="Best days with my crew" autocomplete="off" enterkeyhint="done">
+        </label>
+      </div>
+      <div class="group">
+        <span class="glabel" id="lblFormat">Format</span>
+        <div class="seg seg-4" id="aspects" role="group" aria-labelledby="lblFormat"></div>
+      </div>
+      <div class="group">
+        <span class="glabel" id="lblQuality">Quality</span>
+        <div class="seg seg-2" id="qualities" role="group" aria-labelledby="lblQuality"></div>
+      </div>
+    </article>
+
+    <footer class="foot">
+      <p class="foot-note">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg>
+        Made on your device — your photos never leave it. Music is original &amp; royalty-free.
+      </p>
+      <p class="foot-links"><a class="more-apps" href="../">More apps</a><span>·</span><span>No sign-up · No watermark · Free</span></p>
+    </footer>
+  </section>
+</main>
+
+<!-- ================= AI Scenes ================= -->
+<main class="ai for-ai" id="ai" role="tabpanel" aria-labelledby="tabAi">
+  <section class="ai-stage" aria-label="Your selfie">
+    <div class="ai-hero">
+      <p class="ai-kicker"><i aria-hidden="true"></i>The one-selfie trend, done right</p>
+      <h1 class="ai-h1">Put yourself in <em>any scene</em></h1>
+      <p class="ai-lede">Upload one selfie, pick a scene, and get a real-looking video of you dancing, partying or singing.</p>
+      <button type="button" class="ai-myvids" id="aiMyVids" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="3"/><path d="M10.5 9.3v5.4c0 .4.4.6.7.4l4.2-2.7c.3-.2.3-.6 0-.8l-4.2-2.7c-.3-.2-.7 0-.7.4z"/></svg>
+        My AI videos <b id="aiMyVidsN">0</b>
+      </button>
+      <p class="ai-eng-web host-only" id="aiEngWeb" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16.5V20"/></svg>
+        <span>Free on your own PC? <a href="./engine.html">Get the Windows app</a></span>
+      </p>
+      <!-- "Share with friends" (share.js): its state near the top, and a jump to the card -->
+      <div class="ai-share-top host-only" id="aiShareTop" hidden></div>
+    </div>
+
+    <!-- a friend's page ("Share with friends"): connecting / no link / your name, then whose PC makes the video -->
+    <article class="card ai-gate guest-only" id="aiGate" hidden></article>
+    <article class="card ai-guest guest-only" id="aiGuestCard" hidden>
+      <div class="ai-guest-h">
+        <span class="ai-guest-badge"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16.5V20"/></svg><span id="aiGuestBadgeT">Made on a friend’s PC · free</span></span>
+      </div>
+      <p class="ai-guest-left" id="aiGuestLeft" aria-live="polite"></p>
+      <p class="ai-guest-note" id="aiGuestNote" hidden></p>
+      <div class="ai-guest-me">
+        <span id="aiGuestMe"></span>
+        <span class="ai-guest-links"><button type="button" class="link-btn" id="aiGuestNameBtn">Change name</button><button type="button" class="link-btn" id="aiGuestCodeBtn">I have a code</button></span>
+      </div>
+      <form class="ai-guest-form" id="aiGuestNameBox" hidden novalidate>
+        <label for="aiGuestNameIn">Your name</label>
+        <span class="ai-guest-row"><input type="text" id="aiGuestNameIn" maxlength="24" autocomplete="given-name" enterkeyhint="done"><button type="submit" class="btn glass" id="aiGuestNameGo">Save</button></span>
+        <span class="ai-guest-msg" id="aiGuestNameMsg" role="status"></span>
+      </form>
+      <form class="ai-guest-form" id="aiGuestCodeBox" hidden novalidate>
+        <label for="aiGuestCodeIn">The code from your video</label>
+        <span class="ai-guest-row"><input type="text" id="aiGuestCodeIn" maxlength="11" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCDE-12345" enterkeyhint="go"><button type="submit" class="btn glass" id="aiGuestCodeGo">Find my video</button></span>
+        <span class="ai-guest-msg" id="aiGuestCodeMsg" role="status"></span>
+      </form>
+    </article>
+
+    <article class="card ai-engine host-only" id="aiEngineCard" hidden>
+      <div class="ai-eng-h">
+        <span class="ai-eng-k" id="aiEngL">AI engine</span>
+        <span class="ai-eng-st" id="aiEngSt"></span>
+      </div>
+      <div class="ai-eng-seg" id="aiEngSeg" role="radiogroup" aria-labelledby="aiEngL">
+        <button type="button" class="ai-eng-opt" role="radio" data-engine="local" aria-checked="true">
+          <span class="ai-eng-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16.5V20"/></svg></span>
+          <span class="ai-eng-t"><b>Free on this PC</b><small id="aiEngLocalS">No account, no fees</small></span>
+          <span class="ai-eng-tag">Free</span>
+        </button>
+        <button type="button" class="ai-eng-opt" role="radio" data-engine="fal" aria-checked="false">
+          <span class="ai-eng-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 18.5h10.5a4 4 0 0 0 .6-7.95A6 6 0 0 0 6.6 9.1 4.7 4.7 0 0 0 7 18.5z"/></svg></span>
+          <span class="ai-eng-t"><b>fal.ai cloud</b><small>Pay per video</small></span>
+        </button>
+      </div>
+      <p class="ai-eng-cmp" id="aiEngCmp"></p>
+      <div class="ai-eng-note" id="aiEngNote" hidden></div>
+      <div class="ai-eng-resume" id="aiEngResume" role="group" aria-labelledby="aiEngResT" hidden>
+        <span class="ai-eng-resico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5.6v12.8c0 .8.9 1.3 1.5.8l10-6.4c.6-.4.6-1.2 0-1.6l-10-6.4C8.9 4.3 8 4.8 8 5.6z"/></svg></span>
+        <span class="ai-eng-rest"><b id="aiEngResT">You were making a video</b><small id="aiEngResS"></small></span>
+        <span class="ai-eng-resb">
+          <button type="button" class="btn primary" id="aiEngContinue">Continue your video</button>
+          <button type="button" class="btn text" id="aiEngDiscard">Discard</button>
+        </span>
+      </div>
+    </article>
+
+    <article class="card ai-photo" id="aiPhotoCard">
+      <header class="card-h">
+        <span class="step" aria-hidden="true">1</span>
+        <h2>Your selfie</h2>
+        <button type="button" class="link-btn" id="aiChange" hidden>Change photo</button>
+      </header>
+      <div class="ai-pair">
+        <div class="ai-drop" id="aiDrop" data-state="empty">
+          <button type="button" class="ai-pick" id="aiPick" aria-describedby="aiTips">
+            <span class="ai-pick-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="9" r="3.6"/><path d="M5.2 19.5c.9-3.4 3.6-5.3 6.8-5.3s5.9 1.9 6.8 5.3"/><path d="M19 2.8v5M16.5 5.3h5"/></svg></span>
+            <b>Upload your selfie</b>
+            <small class="desk-only">or drop it here</small><small class="mob-only">One photo of you</small>
+          </button>
+          <figure class="ai-selfie" id="aiSelfie" hidden>
+            <img id="aiSelfieImg" alt="Your selfie">
+            <figcaption>You</figcaption>
+          </figure>
+        </div>
+        <span class="ai-arrow" aria-hidden="true">
+          <svg viewBox="0 0 48 32"><path d="M3 24c8-14 22-18 36-10"/><path d="M33 7l7 7-9 3"/></svg>
+        </span>
+        <figure class="ai-target" aria-hidden="true">
+          <canvas id="aiTargetArt" width="480" height="640"></canvas>
+          <figcaption id="aiTargetName">Party Hall Dance</figcaption>
+        </figure>
+      </div>
+      <ul class="ai-tips" id="aiTips" aria-label="Photo tips">
+        <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8.5" r="3.6"/><path d="M5 20c.8-3.6 3.6-5.6 7-5.6s6.2 2 7 5.6"/></svg>Just you</li>
+        <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><circle cx="9" cy="10.5" r=".9"/><circle cx="15" cy="10.5" r=".9"/><path d="M8.8 14.6c1.8 1.6 4.6 1.6 6.4 0"/></svg>Clear face</li>
+        <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8"/></svg>Good light</li>
+      </ul>
+      <label class="ai-consent" id="aiConsentRow" hidden>
+        <input type="checkbox" id="aiConsent">
+        <span class="ai-cbox" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5.5 12.5l4 4 9-9"/></svg></span>
+        <span class="ai-consent-t">This is me, or I have permission from the person in this photo, and they are 18 or older.</span>
+      </label>
+      <p class="ai-guest-privacy guest-only" id="aiGuestPrivacy" hidden></p>
+      <p class="ai-status" id="aiPhotoStatus" aria-live="polite"></p>
+      <input type="file" id="aiFile" accept="image/*" hidden>
+    </article>
+
+    <div class="cta-bar ai-cta-bar">
+      <button type="button" class="cta" id="aiMake">
+        <span class="cta-main">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l2.1 6 6.4 2.3-6.4 2.3-2.1 6-2.1-6-6.4-2.3 6.4-2.3z"/><path d="M19 15.5l.9 2.4 2.4.9-2.4.9-.9 2.4-.9-2.4-2.4-.9 2.4-.9z"/></svg>
+          <span id="aiMakeT">Make my video</span>
+        </span>
+        <span class="cta-sub" id="aiCost">5 s · Built-in music · about $0.57 from your fal.ai credit</span>
+      </button>
+    </div>
+  </section>
+
+  <section class="ai-controls" aria-label="Scene and sound">
+    <article class="card" id="aiSceneCard">
+      <header class="card-h">
+        <span class="step" aria-hidden="true">2</span>
+        <h2 id="aiSceneH">Pick a scene</h2>
+        <span class="hint" id="aiSceneHint">14 scenes</span>
+      </header>
+      <div class="ai-see-top host-only" id="aiSeeTop" hidden>
+        <span class="ai-see-top-t" id="aiSeeTopT">See yourself in 4 scenes</span>
+        <button type="button" class="btn glass ai-see-top-go" id="aiSeeTopGo">Start</button>
+        <button type="button" class="link-btn" id="aiSeeTopMore">Choose scenes</button>
+      </div>
+      <div class="ai-scenes" id="aiScenes" role="radiogroup" aria-labelledby="aiSceneH"></div>
+      <p class="ai-see-kept host-only" id="aiSeeKept" hidden><span id="aiSeeKeptT">Your quick previews are kept on this PC so the cards can show them.</span> <button type="button" class="link-btn ai-danger" id="aiSeeRemove">Remove my previews</button></p>
+      <section class="ai-see host-only" id="aiSee" aria-labelledby="aiSeeT" hidden>
+        <div class="ai-see-h">
+          <span class="ai-see-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="10" cy="9" r="3.4"/><path d="M3.8 19.5c.8-3.3 3.3-5.1 6.2-5.1 1.3 0 2.6.4 3.6 1.1"/><path d="M18 12.5l.9 2.4 2.4.9-2.4.9-.9 2.4-.9-2.4-2.4-.9 2.4-.9z"/></svg></span>
+          <span class="ai-see-t"><b id="aiSeeT">See yourself in every scene</b><small>Quick 5-second previews made on this PC, one at a time — free.</small></span>
+        </div>
+        <div class="ai-see-list" id="aiSeeList" role="group" aria-label="Scenes to preview"></div>
+        <p class="ai-see-time" id="aiSeeTime"></p>
+        <div class="ai-see-acts">
+          <button type="button" class="btn glass" id="aiSeeGo">Make my previews</button>
+          <button type="button" class="btn text" id="aiSeeStop" hidden>Stop</button>
+          <button type="button" class="btn text" id="aiSeeClear" hidden>Clear the list</button>
+        </div>
+        <p class="ai-see-now" id="aiSeeSt" role="status" aria-live="polite"></p>
+      </section>
+    </article>
+
+    <article class="card" id="aiSoundCard">
+      <header class="card-h">
+        <span class="step" aria-hidden="true">3</span>
+        <h2 id="aiSoundH">Sound</h2>
+        <span class="hint" id="aiSoundHint">Music is free</span>
+      </header>
+      <div class="ai-sound" id="aiSound" role="radiogroup" aria-labelledby="aiSoundH">
+        <button type="button" class="ai-snd" role="radio" data-sound="music" aria-checked="true">
+          <span class="ai-snd-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg></span>
+          <span class="ai-snd-t"><b>Built-in music</b><small>8 original tracks</small></span>
+        </button>
+        <button type="button" class="ai-snd" role="radio" data-sound="ai" aria-checked="false">
+          <span class="ai-snd-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5v4M8.5 21.5h7"/></svg></span>
+          <span class="ai-snd-t"><b>AI sound</b><small>Crowd &amp; singing</small></span>
+          <span class="ai-snd-tag">Premium</span>
+        </button>
+        <button type="button" class="ai-snd" role="radio" data-sound="own" aria-checked="false">
+          <span class="ai-snd-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 18V6.5l10-2V9"/><circle cx="6" cy="18" r="3"/><path d="M18 13v7M14.5 16.5h7"/></svg></span>
+          <span class="ai-snd-t"><b>My song</b><small>Upload a song</small></span>
+        </button>
+      </div>
+      <p class="ai-lock" id="aiSoundLock" hidden></p>
+      <div class="ai-music" id="aiMusic">
+        <div class="tracks ai-tracks" id="aiTracks" role="group" aria-label="Music tracks"></div>
+      </div>
+      <p class="ai-aisound" id="aiAiNote" hidden></p>
+      <div class="ai-own" id="aiOwn" hidden>
+        <button type="button" class="ai-own-pick" id="aiOwnEmpty">
+          <span class="ai-own-pico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 15V4M8 8l4-4 4 4"/><path d="M5 14v4.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V14"/></svg></span>
+          <span class="ai-own-pt"><b>Choose a song file</b><small>MP3, M4A, WAV or OGG · up to 20 MB</small></span>
+        </button>
+        <div class="ai-own-box" id="aiOwnBox" hidden>
+          <div class="ai-own-h">
+            <span class="ai-own-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg></span>
+            <span class="ai-own-n"><b id="aiOwnName"></b><small id="aiOwnMeta"></small></span>
+            <button type="button" class="link-btn" id="aiOwnChange">Change</button>
+            <button type="button" class="link-btn ai-danger" id="aiOwnRemove">Remove</button>
+          </div>
+          <div class="ai-wave" id="aiWave" role="slider" tabindex="0" aria-label="Where your song starts in the video" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
+            <canvas id="aiWaveCv" aria-hidden="true"></canvas>
+          </div>
+          <div class="ai-own-row">
+            <button type="button" class="btn glass ai-own-play" id="aiOwnPlay" aria-label="Play the part of your song that the video uses"><svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.6v12.8c0 .8.9 1.3 1.5.8l10-6.4c.6-.4.6-1.2 0-1.6l-10-6.4C8.9 4.3 8 4.8 8 5.6z"/></svg><svg class="i-stop" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg><span>Play this part</span></button>
+            <span class="ai-own-start" id="aiOwnStart"></span>
+          </div>
+          <p class="ai-own-hint">Drag the bright part (or use the arrow keys) to choose where your song starts — it snaps to the beat.</p>
+          <p class="ai-own-short" id="aiOwnShort" hidden>Your song is shorter than the video, so the end is quiet.</p>
+        </div>
+        <p class="ai-own-st" id="aiOwnSt" role="status" aria-live="polite"></p>
+        <p class="ai-own-rights"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.4v.1"/></svg>Only use music you have the rights to.</p>
+        <input type="file" id="aiOwnFile" accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.oga,.opus,.flac" hidden>
+      </div>
+      <div class="group ai-len ai-sync" id="aiSyncGroup" hidden>
+        <span class="glabel" id="aiSyncL">Sync to the song</span>
+        <div class="seg seg-2" id="aiSync" role="group" aria-labelledby="aiSyncL">
+          <button type="button" class="opt" data-sync="beat" aria-pressed="true"><b>Dance to the beat</b><small class="ai-len-cost"></small></button>
+          <button type="button" class="opt" data-sync="lips" aria-pressed="false"><b>Lip-sync to the song</b><small class="ai-len-cost"></small></button>
+        </div>
+        <p class="ai-sync-note" id="aiSyncNote"></p>
+      </div>
+      <div class="group ai-len" id="aiLenGroup">
+        <span class="glabel" id="aiLenL">Length</span>
+        <div class="seg seg-2" id="aiLen" role="group" aria-labelledby="aiLenL"></div>
+      </div>
+      <div class="group ai-len ai-qual" id="aiQualGroup" hidden>
+        <span class="glabel" id="aiQualL">Quality</span>
+        <div class="seg seg-2" id="aiQual" role="group" aria-labelledby="aiQualL">
+          <button type="button" class="opt" data-quality="best" aria-pressed="true"><b>Best</b><small class="ai-len-cost" id="aiQualBest"></small></button>
+          <button type="button" class="opt" data-quality="fast" aria-pressed="false"><b>Fast</b><small class="ai-len-cost" id="aiQualFast"></small></button>
+        </div>
+        <p class="ai-qual-note" id="aiQualNote"></p>
+      </div>
+      <p class="ai-tier" id="aiTier"></p>
+    </article>
+
+    <!-- Share with friends (the Windows app only): share.js draws it here -->
+    <article class="card ai-share host-only" id="aiShareCard" hidden></article>
+
+    <article class="card ai-hist-card" id="aiHistCard">
+      <header class="card-h">
+        <span class="step step-hist" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="3"/><path d="M10.5 9.3v5.4c0 .4.4.6.7.4l4.2-2.7c.3-.2.3-.6 0-.8l-4.2-2.7c-.3-.2-.7 0-.7.4z"/></svg></span>
+        <h2 id="aiHistH">My AI videos</h2>
+        <span class="hint" id="aiHistCount"></span>
+      </header>
+      <ul class="ai-hist" id="aiHist" aria-labelledby="aiHistH"></ul>
+      <p class="ai-hist-empty" id="aiHistEmpty">Your finished videos are saved here, on this device.</p>
+    </article>
+
+    <footer class="foot ai-foot">
+      <p class="foot-note">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 3v5c0 4.6-3 8.6-7 10-4-1.4-7-5.4-7-10V6z"/></svg>
+        <span id="aiFootNote">Your selfie goes straight from this browser to <a href="https://fal.ai" target="_blank" rel="noopener">fal.ai</a>, using your own key, and nowhere else. Use only your own photo, or one you have permission to use, of an adult. Every video gets a small &ldquo;AI-generated&rdquo; label.</span>
+      </p>
+      <p class="foot-links"><button type="button" class="foot-btn host-only" id="aiFootKey">fal.ai key settings</button><span class="host-only">&middot;</span><a class="more-apps host-only" href="../">More apps</a><span class="host-only">&middot;</span><span class="host-only">No watermark</span><span class="guest-only">Every AI video carries a small “AI-generated” label</span></p>
+    </footer>
+  </section>
+</main>
+
+<!-- Export modal -->
+<div class="modal" id="exportModal" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="exTitle" aria-describedby="exNote">
+    <div class="sheet-h">
+      <h3 id="exTitle">Creating your video</h3>
+      <button type="button" class="icon-btn" id="exMonitor" aria-pressed="true" aria-label="Mute sound while recording" title="Sound while recording">
+        <svg class="i-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>
+        <svg class="i-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>
+      </button>
+    </div>
+    <div class="ex-view" id="exView" data-state="prep">
+      <canvas id="exCanvas" width="1080" height="1920"></canvas>
+      <div class="ex-prep"><span class="spinner"></span><span id="exPrepT">Preparing full-quality frames…</span></div>
+      <span class="rec-badge" aria-hidden="true"><i></i>REC</span>
+    </div>
+    <div class="progress" aria-hidden="true"><i id="exBar"></i></div>
+    <div class="ex-meta"><span id="exPct" aria-live="polite">Getting ready…</span><span id="exLeft"></span></div>
+    <p class="ex-note" id="exNote">Keep this tab open — your video records in real time.</p>
+    <p class="ex-warn" id="exWarn" hidden role="alert"></p>
+    <div class="sheet-actions">
+      <button type="button" class="btn glass wide" id="btnCancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Result sheet -->
+<div class="modal" id="resultModal" hidden>
+  <div class="sheet sheet-result" role="dialog" aria-modal="true" aria-labelledby="resTitle">
+    <div class="sheet-h">
+      <h3 id="resTitle"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l2.1 6 6.4 2.3-6.4 2.3-2.1 6-2.1-6-6.4-2.3 6.4-2.3z"/></svg>Your video is ready</h3>
+      <button type="button" class="icon-btn" id="resClose" aria-label="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="res-video"><video id="resultVideo" controls playsinline preload="metadata"></video></div>
+    <p class="res-meta" id="resMeta"></p>
+    <div class="res-actions">
+      <a class="btn primary wide" id="btnDownload" href="#" download="glow.mp4">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10.5l5 5 5-5M5 19.5h14"/></svg>Download
+      </a>
+      <button type="button" class="btn glass wide" id="btnShare" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4M8 7.5l4-4 4 4M6 11v7.5A1.5 1.5 0 0 0 7.5 20h9a1.5 1.5 0 0 0 1.5-1.5V11"/></svg>Share
+      </button>
+      <button type="button" class="btn text wide" id="btnAnother">Make another</button>
+    </div>
+  </div>
+</div>
+
+<!-- Info / unsupported -->
+<div class="modal" id="infoModal" hidden>
+  <div class="sheet sheet-info" role="alertdialog" aria-modal="true" aria-labelledby="infoTitle" aria-describedby="infoText">
+    <h3 id="infoTitle">Recording isn’t available</h3>
+    <p id="infoText"></p>
+    <div class="sheet-actions"><button type="button" class="btn primary wide" id="infoOk">Got it</button></div>
+  </div>
+</div>
+
+
+<!-- ================= AI Scenes sheets ================= -->
+<div class="modal ai-modal" id="aiConnect" hidden>
+  <div class="sheet ai-connect" role="dialog" aria-modal="true" aria-labelledby="aiConnT" aria-describedby="aiConnLede">
+    <div class="sheet-h">
+      <h3 id="aiConnT" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l2.1 6 6.4 2.3-6.4 2.3-2.1 6-2.1-6-6.4-2.3 6.4-2.3z"/></svg>Connect fal.ai</h3>
+      <button type="button" class="icon-btn" id="aiConnClose" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <p class="ai-conn-lede" id="aiConnLede">AI Scenes are made by <b>fal.ai</b>, a pay-as-you-go AI service. You use your own fal.ai account, so you pay fal only for the videos you make &mdash; usually <b id="aiConnRange">$0.57&ndash;$3.40 (5&ndash;20 s)</b> each. Glow Studio is free and takes no cut.</p>
+    <ol class="ai-howto">
+      <li>
+        <span class="ai-howto-n" aria-hidden="true">1</span>
+        <span class="ai-howto-t"><b>Create a free fal.ai account</b><small>Sign in with Google or GitHub.</small></span>
+        <a class="btn glass ai-howto-b" href="https://fal.ai/login" target="_blank" rel="noopener">Open fal.ai</a>
+      </li>
+      <li>
+        <span class="ai-howto-n" aria-hidden="true">2</span>
+        <span class="ai-howto-t"><b>Add some credit</b><small>fal uses prepaid credit and only charges for successful results. About $10 makes 10&ndash;15 videos.</small></span>
+        <a class="btn glass ai-howto-b" href="https://fal.ai/dashboard/billing" target="_blank" rel="noopener">Add credit</a>
+      </li>
+      <li>
+        <span class="ai-howto-n" aria-hidden="true">3</span>
+        <span class="ai-howto-t"><b>Create an API key</b><small>Tap &ldquo;Create Key&rdquo;, name it &ldquo;Glow Studio&rdquo; and choose the <b>API</b> preset.</small></span>
+        <a class="btn glass ai-howto-b" href="https://fal.ai/dashboard/keys" target="_blank" rel="noopener">Open keys</a>
+      </li>
+      <li>
+        <span class="ai-howto-n" aria-hidden="true">4</span>
+        <span class="ai-howto-t"><b>Copy it right away and paste it below</b><small>fal shows a new key only once. It looks like two codes joined by a colon.</small></span>
+      </li>
+    </ol>
+    <div class="field ai-keyfield">
+      <label for="aiKey">Your fal.ai key</label>
+      <div class="ai-keywrap">
+        <input type="password" id="aiKey" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="key-id:key-secret" enterkeyhint="done" aria-describedby="aiKeyMsg aiKeyNote">
+        <button type="button" class="ai-eye" id="aiKeyEye" aria-label="Show key" aria-pressed="false">
+          <svg class="i-show" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg>
+          <svg class="i-hide" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18M10.6 5.6A9.6 9.6 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a17 17 0 0 1-3 3.8M6.3 6.9C3.9 8.6 2.5 12 2.5 12s3.5 6.5 9.5 6.5c1.7 0 3.2-.5 4.5-1.2M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+        </button>
+      </div>
+    </div>
+    <p class="ai-keymsg" id="aiKeyMsg" role="status" aria-live="polite"></p>
+    <p class="ai-keynote" id="aiKeyNote">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg>
+      <span><b>Saved only on this device</b> and sent only to fal.ai, straight from this browser. Anyone using this browser could use it, so don&rsquo;t save it on a shared computer. You can revoke it anytime on fal.ai.</span>
+    </p>
+    <div class="sheet-actions">
+      <button type="button" class="btn primary wide" id="aiKeySave">Save key</button>
+      <button type="button" class="btn text wide ai-danger" id="aiKeyRemove" hidden>Remove key from this device</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal ai-modal" id="aiProgress" hidden>
+  <div class="sheet ai-prog" role="dialog" aria-modal="true" aria-labelledby="aiProgT">
+    <div class="sheet-h">
+      <h3 id="aiProgT"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l2.1 6 6.4 2.3-6.4 2.3-2.1 6-2.1-6-6.4-2.3 6.4-2.3z"/></svg><span id="aiProgTt">Making your video</span></h3>
+      <button type="button" class="icon-btn" id="aiMin" aria-label="Hide this and keep working in the background" title="Keep working in the background"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9.5l6 6 6-6"/></svg></button>
+    </div>
+    <div class="ai-pv" id="aiPv" data-stage="still">
+      <img class="ai-pv-selfie" id="aiPvSelfie" alt="">
+      <img class="ai-pv-still" id="aiPvStill" alt="">
+      <canvas class="ai-pv-canvas" id="aiPvCanvas" width="720" height="1280"></canvas>
+      <span class="ai-pv-scan" aria-hidden="true"></span>
+      <span class="ai-pv-ring" aria-hidden="true">
+        <svg viewBox="0 0 100 100"><defs><linearGradient id="aiRingG" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff4fa3"/><stop offset=".55" stop-color="#a457ff"/><stop offset="1" stop-color="#22d3ee"/></linearGradient></defs><circle class="trk" cx="50" cy="50" r="44"/><circle class="bar" id="aiRingBar" cx="50" cy="50" r="44" pathLength="100"/></svg>
+        <b id="aiPct">0%</b>
+      </span>
+      <span class="rec-badge ai-rec" aria-hidden="true"><i></i>Finishing</span>
+      <button type="button" class="icon-btn ai-mon" id="aiMon" aria-pressed="true" aria-label="Mute sound while finishing" hidden>
+        <svg class="i-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>
+        <svg class="i-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>
+      </button>
+    </div>
+    <ol class="ai-shots" id="aiShots" aria-label="Your shots" hidden></ol>
+    <ol class="ai-steps" id="aiSteps">
+      <li data-step="still" data-state="active"><span class="ai-sn" aria-hidden="true"><i>1</i><svg viewBox="0 0 24 24"><path d="M5.5 12.5l4 4 9-9"/></svg></span><span class="ai-st"><b id="aiStillName">Placing you in the scene</b><small id="aiSubStill"></small></span></li>
+      <li data-step="video" data-state="todo"><span class="ai-sn" aria-hidden="true"><i>2</i><svg viewBox="0 0 24 24"><path d="M5.5 12.5l4 4 9-9"/></svg></span><span class="ai-st"><b id="aiVideoName">Bringing it to life</b><small id="aiSubVideo"></small></span></li>
+      <li data-step="finish" data-state="todo"><span class="ai-sn" aria-hidden="true"><i>3</i><svg viewBox="0 0 24 24"><path d="M5.5 12.5l4 4 9-9"/></svg></span><span class="ai-st"><b id="aiFinishName">Adding music &amp; finishing</b><small id="aiSubFinish"></small></span></li>
+    </ol>
+    <p class="ai-msg" id="aiProgMsg"></p>
+    <p class="sr-only" id="aiAnnounce" role="status" aria-live="polite"></p>
+    <p class="ai-elapsed"><span id="aiElapsed">0:00</span><span id="aiEta"></span></p>
+    <p class="ai-share-note host-only" id="aiShareNote" hidden></p>
+    <p class="ai-share-ask host-only" id="aiShareAsk" hidden><span id="aiShareAskT"></span> <button type="button" class="link-btn" id="aiShareAskB">Show me</button></p>
+    <div class="ai-err" id="aiErr" hidden role="alert">
+      <span class="ai-err-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.4v.1"/></svg></span>
+      <b id="aiErrT"></b>
+      <p id="aiErrP"></p>
+      <details class="ai-err-det" id="aiErrDet" hidden><summary>Details</summary><pre id="aiErrDetP"></pre></details>
+      <div class="ai-err-actions" id="aiErrActions"></div>
+    </div>
+    <div class="sheet-actions" id="aiProgActions">
+      <button type="button" class="btn primary wide" id="aiTapFinish" hidden>Tap to finish your video</button>
+      <button type="button" class="btn glass wide" id="aiCancel">Cancel</button>
+    </div>
+    <p class="ai-keepopen" id="aiKeepOpen">Videos take a few minutes. You can leave &mdash; come back on this device later today and we&rsquo;ll pick up right where we left off, without paying again.</p>
+  </div>
+</div>
+
+<div class="modal ai-modal" id="aiResult" hidden>
+  <div class="sheet sheet-result ai-result" role="dialog" aria-modal="true" aria-labelledby="aiResT">
+    <div class="sheet-h">
+      <h3 id="aiResT"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l2.1 6 6.4 2.3-6.4 2.3-2.1 6-2.1-6-6.4-2.3 6.4-2.3z"/></svg><span id="aiResTt">Your AI video is ready</span></h3>
+      <button type="button" class="icon-btn" id="aiResClose" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="res-video ai-res-video">
+      <video id="aiResVideo" controls playsinline loop preload="metadata"></video>
+      <span class="ai-label-ov" id="aiLabelOv" hidden>AI-generated</span>
+    </div>
+    <p class="res-meta" id="aiResMeta"></p>
+    <p class="ai-res-note" id="aiResNote" hidden></p>
+    <div class="res-actions ai-res-actions">
+      <a class="btn primary wide" id="aiDownload" href="#" download="glow-ai.mp4">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10.5l5 5 5-5M5 19.5h14"/></svg>Download
+      </a>
+      <button type="button" class="btn glass" id="aiShare" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V4M8 7.5l4-4 4 4M6 11v7.5A1.5 1.5 0 0 0 7.5 20h9a1.5 1.5 0 0 0 1.5-1.5V11"/></svg>Share
+      </button>
+      <button type="button" class="btn glass" id="aiAgain">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 0 1 12.9-5.2L20 9.5M20 4.5v5h-5M19.5 12a7.5 7.5 0 0 1-12.9 5.2L4 14.5M4 19.5v-5h5"/></svg><span id="aiAgainT">Make again</span>
+      </button>
+      <button type="button" class="btn text wide" id="aiOther">Try another scene with this photo</button>
+      <button type="button" class="btn text wide ai-danger" id="aiDelete" hidden>Delete from this device</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal ai-modal" id="aiPreview" hidden>
+  <div class="sheet ai-pvs" role="dialog" aria-modal="true" aria-labelledby="aiPvsT" aria-describedby="aiPvsNote">
+    <div class="sheet-h">
+      <h3 id="aiPvsT">Scene</h3>
+      <button type="button" class="icon-btn" id="aiPvsClose" aria-label="Close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="ai-pvs-stage">
+      <canvas id="aiPvsCanvas" role="img" aria-label="Animated example of this scene"></canvas>
+      <video id="aiPvsVideo" playsinline loop hidden aria-label="Your video in this scene"></video>
+      <span class="ai-pvs-chip" id="aiPvsChip">Example</span>
+      <button type="button" class="icon-btn ai-pvs-mute" id="aiPvsMute" aria-pressed="false" aria-label="Mute">
+        <svg class="i-on" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>
+        <svg class="i-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>
+      </button>
+      <span class="ai-pvs-cap" id="aiPvsCap" hidden></span>
+    </div>
+    <div class="ai-pvs-body">
+      <p class="ai-pvs-line" id="aiPvsLine"></p>
+      <p class="ai-pvs-info" id="aiPvsInfo"></p>
+      <ol class="ai-pvs-shots" id="aiPvsShots" aria-label="The shots" hidden></ol>
+      <p class="ai-pvs-note" id="aiPvsNote"></p>
+      <div class="sheet-actions ai-pvs-acts">
+        <button type="button" class="btn primary wide" id="aiPvsUse">Use this scene</button>
+        <button type="button" class="btn text wide" id="aiPvsBack">Close</button>
+        <button type="button" class="btn text wide ai-danger" id="aiPvsDel" hidden>Remove this preview from this PC</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<button type="button" class="ai-pill" id="aiPill" hidden aria-haspopup="dialog">
+  <span class="ai-pill-ring" aria-hidden="true"></span><span id="aiPillT">Making your video&hellip;</span>
+</button>
+
+<div class="drop-overlay" aria-hidden="true"><div><svg viewBox="0 0 24 24"><path d="M12 15V4M8 8l4-4 4 4M5 14v4.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V14"/></svg><b class="for-photo">Drop photos to add them</b><b class="for-ai">Drop your selfie</b></div></div>
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+<noscript><p class="noscript">Glow Studio needs JavaScript to make videos.</p></noscript>
+</body>
+</html>
