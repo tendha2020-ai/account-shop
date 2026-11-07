@@ -785,7 +785,7 @@ html:not([data-guest]) .guest-only { display: none !important; }
 
 /* singing scenes on a friend's page whose host has no Singing add-on */
 .ai-scene-w.needs .ai-scene-art canvas { filter: grayscale(.85) brightness(.55); }
-.ai-scene-need { position: absolute; left: 8px; right: 8px; top: 34%; transform: translateY(-50%); z-index: 3; padding: 6px 8px; border-radius: 10px; font-size: 11.5px; font-weight: 700; line-height: 1.25; text-align: center; color: #fff; background: rgba(8, 6, 15, .78); border: 1px solid rgba(255, 255, 255, .18); }
+.ai-scene-need { position: absolute; left: 8px; right: 8px; top: 41%; transform: translateY(-50%); z-index: 3; padding: 6px 8px; border-radius: 10px; font-size: 11.5px; font-weight: 700; line-height: 1.25; text-align: center; color: #fff; background: rgba(8, 6, 15, .78); border: 1px solid rgba(255, 255, 255, .18); }
 .ai-scene-need[hidden] { display: none; }
 @media (prefers-reduced-motion: reduce) { .ai-gate-ico.wait::before { animation: none; } }
 /* (a friend's clips carry the host's AI label top-left: the "Finishing" badge moves out of its way) */

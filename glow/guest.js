@@ -56,7 +56,8 @@
     cancel: cancel, done: done, claim: claim, leave: leave, preparePhoto: preparePhoto, wavSegment: wavSegment,
     estimateStory: estimateStory, uuid: uuid, hostName: hostName, onSession: null
   };
-  function hostName() { var s = G.session; return (s && s.host && s.host.name) || 'your friend'; }
+  var lastHost = ''; // the host's name stays known after the session ends (blocked, sharing stopped)
+  function hostName() { var s = G.session; return (s && s.host && s.host.name) || lastHost || 'your friend'; }
 
   /* ---------------- HTTP ---------------- */
   function api(method, path, body, opt) {
@@ -77,7 +78,9 @@
         var e = GuestError(code, (data && data.message) || '', data || {});
         e.status = r.status;
         e.retryAfter = +(r.headers.get('Retry-After') || 0) || 0;
-        if (r.status === 401) { G.session = null; notify(); }
+        // no session any more, or the host blocked this friend (the host's app then answers every request with 403
+        // "blocked"): the page leaves the scene controls and says so
+        if (r.status === 401 || code === 'blocked') { if (code === 'blocked') G.error = e; G.session = null; notify(); }
         throw e;
       });
     }, function (err) {
@@ -86,7 +89,7 @@
     });
   }
   function notify() { if (typeof G.onSession === 'function') { try { G.onSession(G.session); } catch (e) { /* the page's problem */ } } }
-  function setSession(s) { if (s && s.session) s = s.session; G.session = s || null; notify(); return G.session; }
+  function setSession(s) { if (s && s.session) s = s.session; G.session = s || null; if (G.session && G.session.host && G.session.host.name) lastHost = G.session.host.name; notify(); return G.session; }
 
   /* ---------------- joining ---------------- */
   // ?join=<token> -> a session cookie (HttpOnly, set by the host's app); the token leaves the address bar at once.
@@ -111,7 +114,7 @@
   }
   function refresh() {
     return api('GET', 'session').then(setSession, function (e) {
-      if (e && (e.code === 'no-session' || e.status === 401)) { setSession(null); return null; }
+      if (e && (e.code === 'no-session' || e.status === 401 || e.code === 'blocked')) { setSession(null); return null; }
       throw e;
     });
   }

@@ -10,6 +10,7 @@
  *   GlowShare.mount(element, { where: 'ai'|'setup', onChange(status) }) -> { refresh(), unmount() }
  *   GlowShare.status   the last status (null before the first answer)
  *   GlowShare.active() true while sharing is starting, on or closing (friends may be using the AI)
+ *   GlowShare.supported(engineStatus)  true when the launcher serving this page can share (version 1.4.0 or later)
  *
  * Everything a friend typed (their name) is shown with textContent only. Plain classic script, no libraries
  * (the QR code comes from qr.js).
@@ -108,7 +109,13 @@
     (document.head || document.documentElement).appendChild(st);
   }
 
-  var G = { status: null, mount: mount, active: function () { var s = G.status; return !!(s && s.state && s.state !== 'off'); } };
+  var G = { status: null, mount: mount, supported: supported, active: function () { var s = G.status; return !!(s && s.state && s.state !== 'off'); } };
+  // Sharing needs the launcher's /__glow/share/* API, which Glow Studio has from version 1.4.0 (its engine status
+  // says which version serves this page); without it there is no card (and nothing asks for an API that isn't there).
+  function supported(s) {
+    var m = s && typeof s.launcher === 'string' ? /^(\d+)\.(\d+)/.exec(s.launcher) : null;
+    return !!m && (+m[1] > 1 || (+m[1] === 1 && +m[2] >= 4));
+  }
   var ICON_SHARE = '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/>';
 
   function mount(root, opts) {
@@ -470,7 +477,8 @@
       var s = st.status;
       if (st.unsupported) { root.hidden = true; return; }
       var state = s ? s.state : 'off';
-      var failed = !!(s && s.tunnel && s.tunnel.state === 'failed' && state !== 'off');
+      // (while closing, "Closing…" matters more; the banner still says the internet link stopped)
+      var failed = !!(s && s.tunnel && s.tunnel.state === 'failed' && state === 'on');
       pill.className = 'gs-pill' + (failed ? ' bad' : state === 'on' ? ' on' : state === 'starting' || state === 'closing' ? ' wait' : '');
       pill.textContent = failed ? 'Link stopped' : state === 'on' ? (s.stopsAt ? 'On · ' + left(s.stopsAt) + ' left' : 'On') : state === 'starting' ? 'Starting…' : state === 'closing' ? 'Closing…' : 'Off';
       var was = st.view, view = state === 'closing' ? 'on' : state;

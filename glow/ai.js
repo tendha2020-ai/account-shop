@@ -2506,7 +2506,7 @@
   function renderShareCard(app) {
     var card = document.getElementById('aiShareCard');
     if (!card) return;
-    var show = !!(app && window.GlowShare && localPack('core'));
+    var show = !!(app && window.GlowShare && localPack('core') && window.GlowShare.supported(LOC.s));
     if (show && !SHARE) SHARE = window.GlowShare.mount(card, { where: 'ai' }); // (the card appears once the launcher answers)
     if (!show) { card.hidden = true; if (SHARE) { SHARE.unmount(); SHARE = null; } }
   }
@@ -2639,7 +2639,8 @@
     el.gate.hidden = !g;
     el.gate.textContent = '';
     if (!g) return;
-    var h = document.createElement('h2'), p = document.createElement('p'), host = ses ? guestHostName() : 'your friend';
+    var h = document.createElement('h2'), p = document.createElement('p'), host = guestHostName();
+    var Host = host.charAt(0).toUpperCase() + host.slice(1);
     h.id = 'aiGateH'; h.tabIndex = -1;
     el.gate.setAttribute('aria-labelledby', 'aiGateH');
     var ico = document.createElement('span'); ico.className = 'ai-gate-ico'; ico.setAttribute('aria-hidden', 'true');
@@ -2654,8 +2655,9 @@
     if (g === 'nolink') {
       var code = GG.error && GG.error.code;
       ico.classList.add('link');
-      h.textContent = code === 'not-accepting' ? 'Sharing has stopped' : code === 'full' ? 'This share is full' : code === 'too-many-attempts' ? 'Too many tries' : code === 'network' ? 'Can’t reach your friend’s PC' : 'Ask your friend for a new link';
-      p.textContent = code === 'not-accepting' ? 'Your friend has stopped sharing their PC for now. Ask them to share again and send you the new link.'
+      h.textContent = code === 'blocked' ? Host + ' stopped sharing with you' : code === 'not-accepting' ? 'Sharing has stopped' : code === 'full' ? 'This share is full' : code === 'too-many-attempts' ? 'Too many tries' : code === 'network' ? 'Can’t reach your friend’s PC' : 'Ask your friend for a new link';
+      p.textContent = code === 'blocked' ? 'You can’t make AI videos with this link any more. Photo Video still works on this device, and the videos you made are in My AI videos.'
+        : code === 'not-accepting' ? 'Your friend has stopped sharing their PC for now. Ask them to share again and send you the new link.'
         : code === 'network' ? 'Check your connection, then try again. If it still doesn’t work, ask your friend whether sharing is still on.'
         : code === 'full' ? 'Too many people are using this link right now. Ask your friend to send you a new link later.'
         : code === 'too-many-attempts' ? 'Wait a few minutes, then open the link your friend sent you again.'
@@ -2663,13 +2665,13 @@
       el.gate.appendChild(h); el.gate.appendChild(p);
       var tip = document.createElement('p'); tip.className = 'ai-gate-tip';
       tip.textContent = 'Were you making a video? Open the new link, then tap “I have a code” and enter the code from your video.';
-      el.gate.appendChild(tip);
+      if (code !== 'blocked') el.gate.appendChild(tip);
       var acts = document.createElement('div'); acts.className = 'ai-gate-acts';
       var pv = document.createElement('button'); pv.type = 'button'; pv.className = 'btn primary'; pv.textContent = 'Make a photo video instead';
       pv.addEventListener('click', function () { setMode('photo', { user: true }); });
       var again = document.createElement('button'); again.type = 'button'; again.className = 'btn glass'; again.textContent = 'Try again';
       again.addEventListener('click', function () { GG.refresh().then(function (s) { if (!s) toast('This link still doesn’t work — ask your friend for a new one.', 'warn', 5000); afterSession(); }, function () { toast('Can’t reach your friend’s PC right now.', 'warn'); }); });
-      acts.appendChild(pv); acts.appendChild(again);
+      acts.appendChild(pv); if (code !== 'blocked') acts.appendChild(again);
       el.gate.appendChild(acts);
       return;
     }
