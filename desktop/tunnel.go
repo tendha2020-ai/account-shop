@@ -4,7 +4,7 @@ package main
 // launcher downloads Cloudflare's official cloudflared for Windows once (an
 // exact release, checked by size and sha256 before EVERY start), runs
 //
-//	cloudflared tunnel --no-autoupdate --config <own yml> --metrics 127.0.0.1:<m> --url http://127.0.0.1:<guest port>
+//	cloudflared tunnel --no-autoupdate --config <own yml> --protocol http2 --metrics 127.0.0.1:<m> --url http://127.0.0.1:<guest port>
 //
 // hidden and inside the kill-on-close Job Object (like ComfyUI), reads the
 // https://<random>.trycloudflare.com address from its output, confirms it on
@@ -348,7 +348,7 @@ func (t *cloudflaredTunnel) once(ctx context.Context, exe string, args []string)
 	if err != nil {
 		return
 	}
-	full := append(append([]string(nil), args...), "--metrics", fmt.Sprintf("127.0.0.1:%d", mport), "--url", fmt.Sprintf("http://127.0.0.1:%d", t.gport))
+	full := append(append([]string(nil), args...), "--protocol", "http2", "--metrics", fmt.Sprintf("127.0.0.1:%d", mport), "--url", fmt.Sprintf("http://127.0.0.1:%d", t.gport))
 	cmd := exec.Command(exe, full...)
 	cmd.Env = tunnelEnv()
 	cmd.Dir = toolsDir()

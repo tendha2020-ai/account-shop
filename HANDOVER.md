@@ -58,7 +58,7 @@ The launcher (`desktop/*.go`):
 1. **Consistency across shots:** the outfit and the face drift between shots, as seen in the real outputs. Fix: generate shots 2–4 from shot 1's still (or pass it as a second reference image to Qwen-Edit), and add "same outfit" to the prompts.
 2. **Garbled sign text and unrequested props** (neon letters, headphones): add "blank signs, no readable text, no headphones" to the negative and positive prompts.
 3. **Requested but not built:** a "one continuous take" mode. Each 5 s piece starts from the previous piece's last frame, with no cuts.
-4. **Not yet run for real:** the cloudflared link, same-Wi-Fi sharing, iPhone Safari, real fal.ai generations, and the Windows firewall and power prompts.
+4. **Internet link:** cloudflared is forced to `--protocol http2` because QUIC timed out on the real network (the log showed "failed to accept QUIC stream"). **Not yet run for real:** the cloudflared link over HTTP/2, same-Wi-Fi sharing, iPhone Safari, real fal.ai generations, and the Windows firewall and power prompts.
 5. **Signing:** the exe is unsigned, so SmartScreen warns on first launch. Code signing is recommended.
 6. **Two labels on guest videos:** they come out with two different-looking AI labels (pixel font from the PC, smooth from the browser). Unify them.
 7. **Merging:** the PR is still a draft. Merging it to `main` publishes `glow/` on GitHub Pages.
