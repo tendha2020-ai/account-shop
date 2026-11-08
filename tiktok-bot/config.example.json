@@ -1,0 +1,97 @@
+{
+  "tiktokUsername": "tendha2",
+
+  "server": { "host": "127.0.0.1", "port": 3000 },
+
+  "connection": {
+    "autoReconnect": true,
+    "reconnectDelaySeconds": 15,
+    "waitForLiveSeconds": 60
+  },
+
+  "sendToTikTokChat": {
+    "enabled": false,
+    "minSecondsBetweenMessages": 4,
+    "signApiKey": "",
+    "sessionId": "",
+    "ttTargetIdc": ""
+  },
+
+  "commandPrefix": "!",
+  "commandCooldownSeconds": 10,
+  "userCooldownSeconds": 20,
+  "commands": {
+    "snap": "Add me on Snapchat: Tendha6 👻",
+    "socials": "TikTok: @tendha2 · Snapchat: Tendha6 👻",
+    "game": "We're playing Fortnite! 🎮 Type !join to get in the queue and squad up.",
+    "music": "Music is life 🎵 Drop your song recommendations in chat!",
+    "rules": "Be kind, no spam, no self-promo. Have fun! 🙌"
+  },
+
+  "welcome": {
+    "firstChat": true,
+    "onJoin": false,
+    "message": "Welcome {user}! 👋 We're playing Fortnite, pull up 🎮",
+    "minSecondsBetween": 15
+  },
+
+  "thanks": {
+    "follow": "Thanks for the follow, {user}! ❤️",
+    "share": "Thanks for sharing the live, {user}! 🙌",
+    "gift": "Thank you {user} for {count}x {gift}! 🎁",
+    "giftMinDiamonds": 1
+  },
+
+  "giftRules": [
+    { "gift": "Rose", "message": "🌹 {user} sent {count} rose(s)! Thank you!" },
+    { "minDiamonds": 100, "message": "🔥 HUGE! {user} sent {gift} x{count} — thank you so much!" }
+  ],
+
+  "likeMilestone": 1000,
+  "likeMilestoneMessage": "We just hit {total} likes! Keep tapping! 💖",
+
+  "goals": {
+    "likes": 10000,
+    "diamonds": 1000,
+    "follows": 50
+  },
+
+  "timers": [
+    { "everyMinutes": 10, "message": "Enjoying the Fortnite grind? Tap follow so you don't miss the next live! 🎮" },
+    { "everyMinutes": 15, "message": "Add me on Snapchat: Tendha6 👻" },
+    { "everyMinutes": 20, "message": "Want to play with me? Type !join to get in the queue. Type !commands for more." }
+  ],
+  "timerMinChatLines": 5,
+
+  "moderation": {
+    "enabled": true,
+    "bannedWords": ["scam", "free followers", "free vbucks", "free v-bucks"],
+    "blockLinks": true,
+    "maxCapsRatio": 0.75,
+    "repeatLimit": 3,
+    "floodMessagesPer10s": 6,
+    "strikesBeforeMute": 3,
+    "muteMinutes": 10,
+    "warnMessage": "@{user} please keep the chat friendly ({reason}).",
+    "trustedUsers": ["tendha2"]
+  },
+
+  "ai": {
+    "enabled": true,
+    "apiKey": "",
+    "botName": "Tendha's bot",
+    "about": "Streamer: Tendha (TikTok @tendha2, display name 'TENDHA Runs You'). Mainly streams Fortnite. Loves music, so viewers can share song recommendations in chat. Snapchat: Tendha6. Viewers can type !join to get in the queue to play Fortnite with Tendha, and !commands to see all commands.",
+    "answerQuestions": true,
+    "model": "claude-opus-5-5",
+    "effort": "low",
+    "maxReplyChars": 150,
+    "minSecondsBetweenReplies": 8,
+    "userCooldownSeconds": 60,
+    "maxRepliesPerStream": 200
+  },
+
+  "overlay": {
+    "alertSeconds": 6,
+    "tts": false
+  }
+}

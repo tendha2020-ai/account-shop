@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LIVE Bot Dashboard</title>
+  <link rel="stylesheet" href="dashboard.css">
+  <script defer src="dashboard.js"></script>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="logo">●</span>
+      <h1>LIVE Bot</h1>
+      <span id="status" class="pill">offline</span>
+      <span id="status-detail" class="muted small"></span>
+    </div>
+    <form id="connect-form" class="connect">
+      <input id="username" placeholder="@your_username" autocomplete="off" spellcheck="false">
+      <button type="submit" class="btn primary" id="connect-btn">Connect</button>
+      <button type="button" class="btn" id="disconnect-btn">Disconnect</button>
+    </form>
+  </header>
+
+  <section class="stats" id="stats"></section>
+
+  <main class="grid">
+    <section class="card feed-card">
+      <div class="card-head">
+        <h2>Live feed</h2>
+        <div class="tabs" id="feed-tabs">
+          <button data-filter="all" class="active">All</button>
+          <button data-filter="chat">Chat</button>
+          <button data-filter="gift">Gifts</button>
+          <button data-filter="social">Follows</button>
+          <button data-filter="flagged">Flagged</button>
+        </div>
+      </div>
+      <ul id="feed" class="feed"></ul>
+      <form id="say-form" class="say">
+        <input id="say-text" maxlength="300" placeholder="Type a message for the bot to say…" autocomplete="off">
+        <button class="btn primary" type="submit">Say</button>
+      </form>
+      <p class="muted small" id="say-hint"></p>
+    </section>
+
+    <div class="col">
+      <section class="card">
+        <h2>Goals</h2>
+        <div id="goals"></div>
+      </section>
+
+      <section class="card">
+        <h2>Bot features</h2>
+        <div id="toggles" class="toggles"></div>
+        <p class="small muted" id="ai-hint"></p>
+      </section>
+
+      <section class="card">
+        <h2>Poll</h2>
+        <div id="poll-view"></div>
+        <form id="poll-form" class="poll-form">
+          <input id="poll-q" placeholder="Question, e.g. Which game next?" maxlength="100">
+          <input id="poll-opts" placeholder="Options separated by commas" maxlength="200">
+          <div class="row">
+            <label class="small muted">Seconds <input id="poll-secs" type="number" min="10" max="900" value="60"></label>
+            <button class="btn primary" type="submit">Start poll</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Test alerts</h2>
+        <div class="row wrap">
+          <button class="btn" data-test="follow">Follow</button>
+          <button class="btn" data-test="share">Share</button>
+          <button class="btn" data-test="gift">Small gift</button>
+          <button class="btn" data-test="bigGift">Big gift</button>
+        </div>
+        <p class="small muted">OBS overlay: <a id="overlay-link" target="_blank"></a>
+          <button class="btn tiny" id="copy-overlay">Copy</button></p>
+      </section>
+    </div>
+
+    <div class="col">
+      <section class="card">
+        <div class="card-head">
+          <h2>Viewer queue <span id="queue-count" class="muted"></span></h2>
+          <div class="row">
+            <button class="btn primary tiny" id="queue-next">Next</button>
+            <button class="btn tiny" id="queue-clear">Clear</button>
+          </div>
+        </div>
+        <ol id="queue" class="list"></ol>
+        <p class="small muted">Viewers type <code>!join</code> / <code>!leave</code>.</p>
+      </section>
+
+      <section class="card">
+        <h2>Top gifters</h2>
+        <ol id="gifters" class="list"></ol>
+      </section>
+
+      <section class="card">
+        <h2>Questions</h2>
+        <ul id="questions" class="list"></ul>
+      </section>
+
+      <section class="card">
+        <h2>Muted</h2>
+        <ul id="muted" class="list"></ul>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h2>Session</h2>
+          <div class="row">
+            <button class="btn tiny" id="save-session">Save summary</button>
+            <button class="btn tiny danger" id="reset-session">Reset</button>
+          </div>
+        </div>
+        <h3 class="small muted">Bot said</h3>
+        <ul id="says" class="list says"></ul>
+      </section>
+    </div>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+</body>
+</html>

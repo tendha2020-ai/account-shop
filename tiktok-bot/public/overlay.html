@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LIVE Overlay</title>
+  <!--
+    OBS / TikTok LIVE Studio: add a Browser Source pointing at this page
+    (1080x1920 for vertical). Pick widgets with ?show=alerts,goals,chat,bot
+    and add &tts=1 to read bot messages aloud, &sound=0 to mute chimes.
+  -->
+  <style>
+    :root { --pink: #fe2c55; --cyan: #25f4ee; --gold: #ffc940; }
+    html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+    body { font: 600 26px/1.3 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #fff; }
+    .shadow { text-shadow: 0 2px 6px rgba(0,0,0,.8); }
+    [hidden] { display: none !important; }
+
+    #alert {
+      position: absolute; top: 30%; left: 50%; transform: translate(-50%, -30px) scale(.9);
+      width: min(86vw, 760px); padding: 22px 28px; border-radius: 24px;
+      background: rgba(15, 15, 22, .88); border: 3px solid var(--pink);
+      box-shadow: 0 0 0 3px var(--cyan) inset, 0 20px 50px rgba(0,0,0,.5);
+      display: flex; gap: 20px; align-items: center;
+      opacity: 0; transition: opacity .35s, transform .35s cubic-bezier(.2, 1.6, .4, 1);
+    }
+    #alert.show { opacity: 1; transform: translate(-50%, 0) scale(1); }
+    #alert img { width: 96px; height: 96px; border-radius: 18px; object-fit: cover; flex: none; }
+    #alert .emoji { font-size: 72px; line-height: 1; flex: none; }
+    #alert .title { font-size: 38px; font-weight: 800; color: var(--gold); }
+    #alert .text { font-size: 26px; font-weight: 600; opacity: .95; }
+    #alert.follow { border-color: var(--cyan); }
+    #alert.goal { border-color: var(--gold); }
+
+    #goals { position: absolute; top: 3%; left: 4%; width: min(46vw, 520px); display: grid; gap: 10px; }
+    .goal { background: rgba(0,0,0,.55); border-radius: 14px; padding: 8px 14px; font-size: 20px; }
+    .goal .bar { height: 12px; border-radius: 99px; background: rgba(255,255,255,.18); overflow: hidden; margin-top: 6px; }
+    .goal .bar span { display: block; height: 100%; background: linear-gradient(90deg, var(--cyan), var(--pink)); transition: width .6s; }
+
+    #chat { position: absolute; left: 4%; bottom: 18%; width: min(70vw, 640px); display: flex; flex-direction: column; gap: 8px; }
+    .line { background: rgba(0,0,0,.5); border-radius: 14px; padding: 8px 14px; font-size: 22px; font-weight: 500;
+            animation: in .3s ease-out; overflow-wrap: anywhere; }
+    .line b { color: var(--cyan); margin-right: 6px; }
+
+    #bot { position: absolute; left: 50%; bottom: 6%; transform: translateX(-50%); width: min(90vw, 900px);
+           background: linear-gradient(90deg, rgba(254,44,85,.92), rgba(140,30,200,.92)); border-radius: 18px;
+           padding: 12px 20px; font-size: 26px; text-align: center; opacity: 0; transition: opacity .4s; }
+    #bot.show { opacity: 1; }
+
+    /* Landscape (PC games): keep the alert clear of the crosshair in the middle. */
+    @media (min-aspect-ratio: 4/3) {
+      #alert { top: 4%; width: min(44vw, 700px); }
+      #goals { left: 2%; width: min(26vw, 420px); }
+      #chat { left: 2%; width: min(32vw, 560px); }
+    }
+
+    @keyframes in { from { opacity: 0; transform: translateX(-20px); } to { opacity: 1; transform: none; } }
+  </style>
+</head>
+<body>
+  <div id="goals" class="shadow"></div>
+  <div id="alert" class="shadow" aria-live="polite">
+    <span class="emoji" id="alert-emoji"></span>
+    <img id="alert-img" alt="" hidden>
+    <div><div class="title" id="alert-title"></div><div class="text" id="alert-text"></div></div>
+  </div>
+  <div id="chat" class="shadow"></div>
+  <div id="bot" class="shadow"></div>
+
+<script>
+  const params = new URLSearchParams(location.search);
+  const show = new Set((params.get('show') || 'alerts,goals,chat,bot').split(','));
+  let tts = params.get('tts') === '1';
+  const sound = params.get('sound') !== '0';
+  let alertMs = 6000;
+
+  const $ = (id) => document.getElementById(id);
+  for (const id of ['goals', 'chat', 'bot']) if (!show.has(id)) $(id).hidden = true;
+
+  // ---- alerts: one at a time, queued ----------------------------------------
+  const EMOJI = { follow: '💖', share: '🔁', gift: '🎁', likes: '👍', goal: '🏆', poll: '📊', queue: '🎮' };
+  const alerts = [];
+  let showing = false;
+
+  function queueAlert(a) {
+    if (!show.has('alerts')) return;
+    alerts.push(a);
+    if (alerts.length > 20) alerts.shift();
+    if (!showing) nextAlert();
+  }
+
+  function nextAlert() {
+    const a = alerts.shift();
+    if (!a) { showing = false; return; }
+    showing = true;
+    const box = $('alert');
+    box.className = `shadow ${a.kind}`;
+    $('alert-emoji').textContent = EMOJI[a.kind] || '✨';
+    const img = $('alert-img');
+    img.hidden = !a.image;
+    if (a.image) img.src = a.image;
+    $('alert-title').textContent = a.title;
+    $('alert-text').textContent = a.message || '';
+    if (sound) chime(a.kind === 'goal' || a.kind === 'gift' ? 3 : 2);
+    requestAnimationFrame(() => box.classList.add('show'));
+    setTimeout(() => {
+      box.classList.remove('show');
+      setTimeout(nextAlert, 500);
+    }, alertMs);
+  }
+
+  let audio;
+  function chime(notes) {
+    try {
+      audio = audio || new AudioContext();
+      const base = [659, 784, 988, 1319];
+      for (let i = 0; i < notes; i++) {
+        const o = audio.createOscillator();
+        const g = audio.createGain();
+        const t = audio.currentTime + i * 0.12;
+        o.type = 'triangle';
+        o.frequency.value = base[i];
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(0.25, t + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+        o.connect(g).connect(audio.destination);
+        o.start(t);
+        o.stop(t + 0.4);
+      }
+    } catch { /* audio not allowed */ }
+  }
+
+  // ---- goals ----------------------------------------------------------------
+  const LABEL = { likes: '👍 Likes', diamonds: '💎 Diamonds', follows: '➕ Follows' };
+  let lastGoals = '';
+  function renderGoals(goals) {
+    const json = JSON.stringify(goals);
+    if (json === lastGoals) return;
+    lastGoals = json;
+    $('goals').replaceChildren(...Object.entries(goals).filter(([, g]) => g.target).map(([kind, g]) => {
+      const el = document.createElement('div');
+      el.className = 'goal';
+      const label = document.createElement('div');
+      label.textContent = `${LABEL[kind] || kind}  ${Math.min(g.current, g.target).toLocaleString('en-US')} / ${g.target.toLocaleString('en-US')}`;
+      const bar = document.createElement('div');
+      bar.className = 'bar';
+      const fillEl = document.createElement('span');
+      fillEl.style.width = `${Math.min(100, (g.current / g.target) * 100)}%`;
+      bar.append(fillEl);
+      el.append(label, bar);
+      return el;
+    }));
+  }
+
+  // ---- chat -----------------------------------------------------------------
+  function addChat(item) {
+    if (item.kind !== 'chat' || item.hidden) return;
+    const line = document.createElement('div');
+    line.className = 'line';
+    line.dataset.id = item.id;
+    const who = document.createElement('b');
+    who.textContent = item.user.nickname;
+    line.append(who, document.createTextNode(item.text));
+    $('chat').append(line);
+    while ($('chat').children.length > 7) $('chat').firstChild.remove();
+  }
+
+  // ---- bot messages ---------------------------------------------------------
+  let botTimer;
+  function botSay(say) {
+    const el = $('bot');
+    el.textContent = `🤖 ${say.text}`;
+    el.classList.add('show');
+    clearTimeout(botTimer);
+    botTimer = setTimeout(() => el.classList.remove('show'), 7000);
+    if (tts && 'speechSynthesis' in window) {
+      const u = new SpeechSynthesisUtterance(say.text.replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}]/gu, ''));
+      u.rate = 1.05;
+      speechSynthesis.speak(u);
+    }
+  }
+
+  // ---- socket ---------------------------------------------------------------
+  function connect() {
+    const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?role=overlay`);
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'hello') {
+        if (msg.overlay.alertSeconds) alertMs = msg.overlay.alertSeconds * 1000;
+        if (msg.overlay.tts && !params.has('tts')) tts = true;
+        renderGoals(msg.state.goals);
+        $('chat').replaceChildren();
+        msg.feed.slice(-7).forEach(addChat);
+      } else if (msg.type === 'state') renderGoals(msg.state.goals);
+      else if (msg.type === 'feed') addChat(msg.item);
+      else if (msg.type === 'alert') queueAlert(msg.alert);
+      else if (msg.type === 'say' && show.has('bot')) botSay(msg.say);
+      else if (msg.type === 'hide') document.querySelector(`#chat [data-id="${Number(msg.id)}"]`)?.remove();
+    };
+    ws.onclose = () => setTimeout(connect, 2000);
+  }
+  connect();
+</script>
+</body>
+</html>
