@@ -929,7 +929,7 @@
     if (!x) return;
     var p = { x: x, W: canvas.width, H: canvas.height, R: rng(seedOf(id)) };
     x.save();
-    try { (PAINT[id] || PAINT['party-hall'])(p); } catch (e) { console.warn('[glow-ai] art failed', id, e); }
+    try { (PAINT[id] || (id === 'vip-exit' && PAINT['famous-street']) || PAINT['party-hall'])(p); } catch (e) { console.warn('[glow-ai] art failed', id, e); }
     x.restore();
     vignette(p);
   }
@@ -1003,13 +1003,13 @@
    * a video in shows the first seconds of their latest one instead (muted loop, with its burned-in AI label).
    * ------------------------------------------------------------------ */
   var CARD_FX = {
-    'party-hall': ['bob', 'bokeh', 'crowd'], 'famous-street': ['bob', 'phones', 'flashes', 'crowd'], 'club-exit-sing': ['bob', 'neon', 'notes', 'crowd'],
+    'party-hall': ['bob', 'bokeh', 'crowd'], 'famous-street': ['bob', 'phones', 'flashes', 'crowd'], 'club-exit-sing': ['bob', 'neon', 'notes', 'crowd'], 'vip-exit': ['bob', 'phones', 'flashes', 'notes', 'crowd'],
     club: ['bob', 'lasers', 'crowd'], spanish: ['bob', 'notes', 'bokeh', 'crowd'], karaoke: ['bob', 'beams', 'notes'], concert: ['bob', 'beams', 'phones', 'crowd'],
     wedding: ['bob', 'bokeh', 'crowd'], birthday: ['bob', 'confetti'], beach: ['bob', 'bokeh', 'crowd'], rooftop: ['bob', 'bokeh', 'crowd'],
     street: ['bob', 'crowd'], festival: ['bob', 'confetti', 'crowd'], redcarpet: ['bob', 'flashes']
   };
   var CARD_COL = {
-    'party-hall': '#ff8fd0', 'famous-street': '#ff5068', 'club-exit-sing': '#ff8fd0', club: '#22d3ee', spanish: '#ffb347', karaoke: '#ff5cc8', concert: '#7f9bff',
+    'party-hall': '#ff8fd0', 'famous-street': '#ff5068', 'club-exit-sing': '#ff8fd0', 'vip-exit': '#ff5068', club: '#22d3ee', spanish: '#ffb347', karaoke: '#ff5cc8', concert: '#7f9bff',
     wedding: '#ffd6b0', birthday: '#ffb36b', beach: '#ff9a5a', rooftop: '#7fb2ff', street: '#ffb36b', festival: '#ffd6a0', redcarpet: '#ffd28a'
   };
   var CARD = { list: {}, vis: {}, raf: 0, last: 0, draws: {}, io: null, fps: 24, t0: performance.now() };
@@ -1218,7 +1218,7 @@
     bits.push(sc.audio === 'required' ? (isLocal() ? 'AI song or your own song' : 'AI sound or your own song') : 'Built-in music: ' + (tr ? tr.name + ' (' + tr.bpm + ' BPM)' : 'original'));
     // a singing scene's example plays a built-in track: say it is only a stand-in for the song the video gets
     var sings = sc.audio === 'required' || !!sc.song;
-    if (sings && !m && tr) bits.push('Music in this example: ' + tr.name + ', a stand-in — your video gets its own ' + (sc.id === 'club-exit-sing' || sc.id === 'spanish' ? 'Spanish party song' : 'song') + ', or your song');
+    if (sings && !m && tr) bits.push('Music in this example: ' + tr.name + ', a stand-in — your video gets its own ' + (sc.id === 'club-exit-sing' || sc.id === 'vip-exit' || sc.id === 'spanish' ? 'Spanish party song' : 'song') + ', or your song');
     el.pvsInfo.textContent = bits.join(' · ');
     el.pvsChip.textContent = m ? (m.kind === 'video' ? 'Your latest video' : 'Quick preview of you') : 'Example';
     el.pvsChip.classList.toggle('you', !!m);
@@ -1637,8 +1637,8 @@
           ? ' The free AI writes an original Spanish song for this scene; you sing the chorus in sync, and the song plays under the whole video. It takes a few minutes longer.'
           : ' The free AI writes a short Spanish party song and makes you sing it. Lip-sync is approximate (one singer), and it takes a few minutes longer.'));
       } else {
-        var what = sc.lyrics || (sc.shots && sc.shots.some(function (x) { return x.lyric; })) ? 'singing' + (sc.id === 'spanish' || sc.id === 'club-exit-sing' ? ' in Spanish' : '') + ', friends and the room' : 'music, the crowd and the room';
-        var spanish = sc.id === 'spanish' || sc.id === 'club-exit-sing';
+        var what = sc.lyrics || (sc.shots && sc.shots.some(function (x) { return x.lyric; })) ? 'singing' + (sc.id === 'spanish' || sc.id === 'club-exit-sing' || sc.id === 'vip-exit' ? ' in Spanish' : '') + ', friends and the room' : 'music, the crowd and the room';
+        var spanish = sc.id === 'spanish' || sc.id === 'club-exit-sing' || sc.id === 'vip-exit';
         b.textContent = req ? (sc.alt || sc.name) + ' needs AI sound.' : 'Real sound, made with the video.';
         el.aiNote.appendChild(b);
         el.aiNote.appendChild(document.createTextNode((req ? ' So the video can really sing' + (spanish ? ' in Spanish' : '') + ', the' : ' The') +
@@ -3010,7 +3010,7 @@
    * is kept (IndexedDB, "previews") and shown on its scene card. A real video always comes first: making one pauses
    * the queue (Resume continues it). A preview cut off by closing the window is made again, never offered as a video.
    * ------------------------------------------------------------------ */
-  var SEE_DEFAULT = ['party-hall', 'famous-street', 'club', 'club-exit-sing'];
+  var SEE_DEFAULT = ['vip-exit', 'party-hall', 'famous-street', 'club-exit-sing'];
   var SEE = { running: false, queue: [], done: [], failed: [], cur: null, pct: 0, ctl: null, photoSeq: 0, saved: {}, ticked: null, open: false, wait: 0, resumeAfter: false };
   (function () { var t = lsJSON('glow.ai.see'); SEE.ticked = t && Array.isArray(t.ticked) ? t.ticked : SEE_DEFAULT.slice(); if (t && Array.isArray(t.queue)) SEE.queue = t.queue; })();
   function seeSave() { lsSet('glow.ai.see', JSON.stringify({ ticked: SEE.ticked, queue: SEE.queue })); }
