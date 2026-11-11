@@ -1479,6 +1479,7 @@ async function refreshJobs() {
   try {
     const res = await api('/jobs');
     if (state.worker !== asked) return; // another worker on this device meanwhile: its own list is on the way
+    state.keyRefused = false;
     state.jobs = res.jobs;
     if (res.me) state.me = res.me;
     renderJobs();
@@ -1504,6 +1505,18 @@ async function refreshJobs() {
       schedulePoll(120000);
       return;
     }
+    // The owner's key was refused: the worker was set up again (it has a new connection key) and this device
+    // still has the old one. The worker's public /health still says what it can do, so the screens stay right.
+    if (e.status === 401) {
+      state.keyRefused = true;
+      $('#wakeNote').textContent = "This device's connection to your worker is out of date (your worker was set up again). "
+        + 'On a phone or computer where antics works, open Settings, Copy app link, and open that link here. '
+        + "Don't set the worker up again: that disconnects your other devices.";
+      refreshHealth();
+      schedulePoll(60000);
+      return;
+    }
+    refreshHealth(); // asleep or busy: /health may still answer, so the options and update banner stay right
     $('#wakeNote').textContent = e.waking || e instanceof TypeError
       ? 'Waking up your worker… (up to a minute)'
       : `Worker problem: ${e.message}`;
