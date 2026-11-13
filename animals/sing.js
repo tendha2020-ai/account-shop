@@ -1002,7 +1002,8 @@
         row.appendChild(tile);
       }
     }
-    $('#singAddSong').hidden = !(owner() && songsOn() && list.length < SONG_MAX);
+    // (the button works before the list arrives: adding doesn't need it)
+    $('#singAddSong').hidden = !(owner() && canDo('songs') && !state.keyRefused && list.length < SONG_MAX);
     $('#singOwnSong').hidden = !isGuest();
     const p = pack();
     const songNote = $('#singSongNote');
@@ -1013,6 +1014,9 @@
     } else if (state.keyRefused) {
       text = "This device's connection to your worker is out of date: open your app link here (see the note at the top).";
       bad = true;
+    } else if (canDo('songs') && !Array.isArray(state.songs) && !S.ownSong) {
+      text = songsWaitText(); // (on its way, or why not; it keeps trying)
+      bad = Boolean(state.songsError);
     } else if (!songsOn() && !S.ownSong) {
       text = known() ? 'Your worker needs an update for songs.' : 'Getting your songs…';
     } else if (!list.length && !S.ownSong) {
