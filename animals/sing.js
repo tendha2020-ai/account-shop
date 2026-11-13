@@ -1010,7 +1010,7 @@
     let text = '';
     let bad = false;
     if (!state.worker) {
-      text = 'Your songs show here once your worker is set up: tap Make it to set it up.';
+      text = 'Your songs show here once your worker is set up (tap the Make button below).'; // (Studio) its name changes
     } else if (state.keyRefused) {
       text = "This device's connection to your worker is out of date: open your app link here (see the note at the top).";
       bad = true;
@@ -1340,7 +1340,7 @@
     if (test) {
       const id = testEngine();
       $('#singTestWhy').textContent = nb((S.retest && (anyGood() || pcGood()) ? 'A new 5-second test: its result replaces the old one for that AI.'
-        : "Nobody knows yet how well each AI sings with your animal, so your first Sing video is a 5-second test. If the mouth doesn't sing, one tap tries the next one.")
+        : 'Your first Sing video is a 5-second test, to find the AI that sings best with your animal.') // (Studio) one short line
         + (duet() ? ' The test sings with singer 1 only.' : ''));
       chips($('#singTestEngines'), testable().map((x) => ({ key: x, label: `${engineName(x)}${stateMark(x)}` })), id, (key) => {
         S.test = key;
@@ -1403,6 +1403,7 @@
 
   function nudge(sel) {
     const el = $(sel);
+    if (window.Studio) Studio.reveal(el); // (Studio) a part of the folded panel opens first
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     el.classList.remove('nudge');
     void el.offsetWidth;
@@ -1444,7 +1445,7 @@
     const info = partInfo(testMode() ? 'meme' : S.part);
     if (info && Number(info.sung) < 0.5) {
       note(msg, 'No singing found in this part. Pick another part.', 'bad');
-      nudge('#singSongStep');
+      nudge('#singPartBox'); // (Studio) the part is in the folded panel now
       return;
     }
     if (friendBlocked()) {
@@ -1794,6 +1795,7 @@
     state.style = 'dance';
     save(KEYS.style, 'dance');
     redraw();
+    if (window.Studio) Studio.show('make'); // (Studio) from its card in My videos: to Make video
     $('#step1').scrollIntoView({ behavior: 'smooth', block: 'center' });
     toast(`Pick your animal's video: it dances to ${songTitle(job.song_name)} (a normal AI video).`);
   }
@@ -2459,7 +2461,8 @@
     S.test = id || null;
     if (!S.on) setOn(true);
     else redraw();
-    const target = S.singers.length ? '#step4' : '#step1';
+    if (window.Studio) Studio.show('sing'); // (Studio) from Settings to the Sing tab, so the step below is in sight
+    const target = S.singers.length ? '#singLead' : '#step1'; // (Studio) the test card sits above the Make button
     $(target).scrollIntoView({ behavior: 'smooth', block: 'center' });
     toast(S.singers.length ? 'Tap Make the 5-second test.' : 'Pick who sings, then tap Make the 5-second test.');
   }
@@ -2886,7 +2889,8 @@
   }
 
   window.Sing = {
-    on, noRealVideo: () => !S.singers.some((s) => s.real),
+    on, allowed, outdated, rebuildNeeded, // (Studio) the Sing tab: shown when allowed, "Update needed" when outdated
+    noRealVideo: () => !S.singers.some((s) => s.real),
     render, renderExtras, renderMake, make, addSing, sent,
     actions, decorate, tip, playerSrc, playerOpen,
     renderPost, postLines,

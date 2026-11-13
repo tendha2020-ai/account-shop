@@ -106,7 +106,8 @@ const state = {
   plan: null, // the owner's posting plan (workers with 'plan'): the worker's GET /plan answer, once loaded
   planAt: 0, // when it was loaded
   openPost: null, // a plan item to open on the Post screen once the plan is loaded (from a reminder)
-  openPlan: false, // open the posting plan in Settings once it is loaded (from "Your posting plan is empty")
+  openPlan: false, // open the posting plan (its tab) once it is loaded (from "Your posting plan is empty")
+  planFailed: false, // (Studio) the last load of the plan failed: the Posting plan tab says so and tries again
 };
 
 function load(key, fallback) {
@@ -128,15 +129,29 @@ function save(key, value) {
 }
 
 let toastTimer;
-function toast(msg) {
+// act (optional): { label, run } adds one button to the toast (it then stays longer, so there's time to tap it).
+function toast(msg, act = null) {
   const el = $('#toast');
   // Over an open dialog the toast goes inside it: only there does it show on top (a dialog covers the page).
   const host = topDialog() || document.body;
   if (el.parentNode !== host) host.appendChild(el);
   el.textContent = msg;
+  el.classList.toggle('has-act', Boolean(act));
+  if (act) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'toast-act';
+    b.textContent = act.label;
+    b.addEventListener('click', () => {
+      clearTimeout(toastTimer);
+      el.classList.remove('show');
+      act.run();
+    });
+    el.append(' ', b);
+  }
   el.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+  toastTimer = setTimeout(() => el.classList.remove('show'), act ? 7000 : 2600);
 }
 
 function note(el, text, kind = '') {
@@ -438,6 +453,17 @@ function randomKey() {
   return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+// (Studio) a setupWorker() run is on (the build takes 10–20 min): Settings is a tab, one tap away from any other, so
+// leaving it keeps the setup's steps, and they show again when you come back (renderSettings, the close below).
+let setupRunning = false;
+
+// Settings back to its options (the update or setup screen ends): when Settings closes, and when a setup that went
+// on while Settings wasn't showing ends.
+function endSetupPane() {
+  state.setupMode = 'setup';
+  $('#steps').hidden = true;
+}
+
 async function setupWorker() {
   const rebuilding = state.setupMode === 'rebuild' && Boolean(state.worker);
   const updating = (state.setupMode === 'update' || rebuilding) && Boolean(state.worker);
@@ -460,6 +486,9 @@ async function setupWorker() {
   $('#setupBtn').disabled = true;
   $('#steps').hidden = false;
   $('#steps').querySelectorAll('li').forEach((li) => { li.className = ''; });
+  setupRunning = true;
+  renderPc(); // (Studio) no "Update my worker" banner while it updates
+  if (window.Studio) Studio.sync(); // (Studio) the sidebar says so
   try {
     step('key', 'active');
     const whoRes = await hf('/api/whoami-v2', token);
@@ -588,8 +617,17 @@ async function setupWorker() {
   } catch (e) {
     $('#steps').querySelectorAll('li.active').forEach((li) => { li.className = ''; });
     note(msg, e.message, 'bad');
+    // (Studio) it went on while another tab showed: say so there (Settings shows its normal options again)
+    if (window.Studio && Studio.current() !== 'settings') {
+      toast(`${updating ? "Your worker wasn't updated" : "Your worker wasn't set up"}: ${e.message}`,
+        { label: 'Open Settings', run: () => (updating ? openUpdate(rebuilding ? 'rebuild' : 'update') : openSettings()) });
+    }
   } finally {
+    setupRunning = false;
     $('#setupBtn').disabled = false;
+    if (!$('#settings').open) endSetupPane(); // (Studio) it ended while Settings wasn't showing
+    renderPc(); // (the update banner again, if the worker still needs it)
+    if (window.Studio) Studio.sync();
   }
 }
 
@@ -677,6 +715,7 @@ async function waitForHealth() {
 function renderWorkerDot(on) {
   state.online = on;
   $('#workerDot').classList.toggle('on', Boolean(on));
+  if (window.Studio) Studio.sync(); // (Studio) the worker line at the bottom of the sidebar
 }
 
 // Step 1: a link, a file, or a surprise. A chosen file or the surprise shows as a chip with ✕.
@@ -745,7 +784,8 @@ async function submit(what) {
   const msg = $('#note');
   const music = musicNow();
   if (music === 'upload' && !state.songFile && what.kind !== 'sing') { // (Sing: the song is picked in its own step)
-    note(msg, 'Choose your song file first (Music, Upload a song), or pick other music.', 'bad');
+    note(msg, 'Choose your song file first (Song, Upload a song), or pick other music.', 'bad');
+    if (window.Studio) Studio.reveal('#songUpload'); // (Studio) the song's part of the folded panel opens
     return;
   }
   if (!state.worker && standalone()) {
@@ -847,14 +887,14 @@ async function submit(what) {
     const got = made.length > 1 ? `${made.length} ${kind}s on the way` : `Your ${kind} is on the way`;
     toast(`${got}${missing.length ? ` (without ${missing.join(' and ')} this time)` : ''}. You can close the app, it keeps working.`);
     if (what.kind === 'sing') Sing.sent(made, missing); // (Sing) the singers stay; the test says what comes next
-    // On a phone the list is below the form: show the new card.
-    if (!matchMedia('(min-width: 960px)').matches) {
+    if (window.Studio) Studio.made(made.map((j) => j.id)); // (Studio) My videos opens with the new card picked out
+    else if (!matchMedia('(min-width: 960px)').matches) { // On a phone the list is below the form: show the new card.
       const card = $('#jobs .job');
       if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
     schedulePoll(2000);
   } catch (e) {
-    note(msg, e.waking ? 'Your worker is waking up (takes up to a minute). Tap Make it again in a moment.' : e.message, 'bad');
+    note(msg, e.waking ? 'Your worker is waking up (takes up to a minute). Tap the Make button again in a moment.' : e.message, 'bad');
     if (e.waking) wakeWorker();
   } finally {
     sending = false;
@@ -897,9 +937,14 @@ function renderMake() {
   if (!sending) { // while a video is being sent, the button says how that is going
     btn.disabled = Boolean(out);
     if (out) btn.textContent = 'No videos left';
-    else if (draft) btn.textContent = n > 1 ? `Make ${n} previews` : 'Make a preview';
-    else btn.textContent = n > 1 ? `Make ${n} videos` : 'Make it';
+    // (Studio) the button says what it makes: a 5-second preview (the default) or the whole video
+    else if (draft) btn.textContent = n > 1 ? `Make ${n} previews (5 s)` : 'Make a preview (5 s)';
+    else btn.textContent = n > 1 ? `Make ${n} videos` : 'Make my video';
   }
+  // (Studio) under the button, in the Make bar: what a preview is, and one tap to the switch (Sing says its own)
+  const hint = draft && !out && !(window.Sing && Sing.on());
+  $('#makeHint').hidden = !hint;
+  if (hint) $('#makeHintText').textContent = `Finish adds the other ${(state.clips - 1) * 5} s later.`; // (one short line)
   $('#surpriseBtn').disabled = Boolean(out);
   if (out) note($('#note'), `You've used all your videos. Ask ${hostName()} for more.`);
   else if ($('#note').textContent.startsWith("You've used all")) note($('#note'), '');
@@ -1363,6 +1408,8 @@ function renderJobs() {
   for (const job of state.jobs) {
     const card = document.createElement('article');
     card.className = `job ${job.status}${job.has_video ? ' playable' : ''}`;
+    card.dataset.id = job.id;
+    if (window.Studio && Studio.fresh(job.id)) card.classList.add('fresh'); // (Studio) just made: picked out
     card.innerHTML = `
       <button type="button" class="thumb" aria-label="Play"></button>
       <div class="job-body">
@@ -1446,6 +1493,7 @@ function renderJobs() {
     if (!own && job.status !== 'working') add('Delete', 'del', () => deleteJob(job));
     if (job.kind === 'together' && window.Together) Together.decorate(card, job); // Together: tag, picture, note
     if (job.kind === 'sing' && window.Sing) Sing.decorate(card, job); // (Sing) tag, parts, what it is doing
+    if (window.Studio) Studio.card(card, job); // (Studio) its main button or two in sight, the rest under ⋯
     box.appendChild(card);
   }
   const drafts = state.jobs.filter(finishable);
@@ -1456,8 +1504,9 @@ function renderJobs() {
   const busy = state.jobs.filter((j) => j.status === 'queued' || j.status === 'working').length;
   const parts = [ready && `${ready} ready`, busy && `${busy} making`].filter(Boolean);
   $('#jumpVideos').hidden = !state.jobs.length;
-  $('#jumpVideos').textContent = parts.length ? `Your videos: ${parts.join(' · ')}` : `Your videos (${state.jobs.length})`;
+  $('#jumpVideos').textContent = parts.length ? `My videos: ${parts.join(' · ')}` : `My videos (${state.jobs.length})`;
   renderPlanStrip();
+  if (window.Studio) Studio.sync(); // (Studio) the count on My videos and Posting plan
 }
 
 function replaceJob(job) {
@@ -1465,7 +1514,8 @@ function replaceJob(job) {
   renderJobs();
 }
 
-const anyDialogOpen = () => [...document.querySelectorAll('dialog')].some((d) => d.open);
+// (Studio) Settings is a tab, shown in place (not over the page): it doesn't count as a dialog over the page.
+const anyDialogOpen = () => [...document.querySelectorAll('dialog')].some((d) => d.open && !(window.Studio && d.id === 'settings'));
 
 let pollTimer;
 function schedulePoll(ms) {
@@ -2024,7 +2074,7 @@ function renderOptions() {
   $('#musicRow [data-key="mine"]').disabled = state.surprise;
   const song = music === 'mysong' ? mySong(state.songId) : null;
   const hint = state.surprise && music === 'mine' ? 'A surprise has no sound of its own, so it gets a meme song.'
-    : song ? `Every video starts at its meme part (${clock(song.start)}).${isGuest() ? '' : ' Change it in Settings.'}`
+    : song ? `Every video starts at its meme part (${clock(song.start)}).${isGuest() ? '' : ' Change it in My songs.'}`
       : MUSIC_HINT[music] || '';
   $('#musicHelp').textContent = hint;
   $('#musicHelp').hidden = !hint;
@@ -2050,6 +2100,7 @@ function renderOptions() {
   renderMake();
   if (window.Together) Together.render(); // Together: the switch, the animals, scene cards, Look, Ideas to try
   if (window.Sing) Sing.render(); // (Sing) the third mode: who sings, the song, the stage and voices
+  if (window.Studio) Studio.sync(); // (Studio) the tabs follow the mode and what this worker can do
 }
 
 const canDo = (key) => Boolean(state.health && (state.health.features || []).includes(key));
@@ -2489,7 +2540,9 @@ async function saveEdit() {
 // Others record, and the worker writes it down (Whisper on its free CPU).
 
 const BrowserSpeech = window.SpeechRecognition || window.webkitSpeechRecognition;
-let browserSpeechOff = false; // the browser's speech service failed here: record for the worker instead
+// the browser's speech service failed here: record for the worker instead. (Desktop) The antics app for Windows has
+// the browser's speech object but no speech service behind it, so it records for the worker from the first tap.
+let browserSpeechOff = Boolean(window.antics && window.antics.desktop);
 let listening = null; // { stop }
 
 function joinText(before, said, max = 160) {
@@ -2998,9 +3051,37 @@ const pings = {
   audio: null,
 };
 
-const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+// (Studio) the antics app for Windows says so from its preload (window.antics.desktop): it counts as the installed
+// app (the connect box on a device that isn't connected yet, no "Add to Home Screen"), and Settings says "Desktop app".
+const desktopApp = () => Boolean(window.antics && window.antics.desktop);
+const standalone = () => desktopApp() || matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-const pushReady = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+// (Desktop) the antics app for Windows has no push service (Electron can't get web push): no notifications there.
+const pushReady = () => !desktopApp() && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const DESKTOP_PINGS = "The desktop app can't get notifications. Turn them on in antics on your phone."; // (Desktop)
+// (Desktop) The antics app for Windows (desktop/ in this repo): its newest version and its setup, which is published
+// as antics-Setup.exe on this repo's 'downloads' branch (Git LFS, so the link never changes). With each new app (a new
+// Electron patch at least monthly: desktop/README.md), raise the version: an older app then says "A new version of the
+// antics app for Windows is ready". A Windows PC's browser offers the app in Settings (the Home Screen box).
+const DESKTOP_APP = {
+  version: '1.0.1',
+  url: 'https://github.com/tendha2020-ai/account-shop/raw/downloads/antics-Setup.exe',
+};
+const desktopVersion = () => (window.antics && typeof window.antics.version === 'string' ? window.antics.version.slice(0, 20) : '');
+const windowsPc = () => /Windows NT/.test(navigator.userAgent);
+// "1.0.0" is older than "1.0.1" (an app that doesn't say its version is taken as up to date)
+function olderApp(v) {
+  const a = String(v).split('.').map(Number);
+  const b = DESKTOP_APP.version.split('.').map(Number);
+  if (!/^\d+(\.\d+){0,2}$/.test(String(v))) return false;
+  for (let i = 0; i < 3; i++) if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) < (b[i] || 0);
+  return false;
+}
+
+// (Desktop) In the antics app for Windows, when a newer app is out: a banner on every tab (not in Settings, which says it).
+function renderAppUpdate() {
+  $('#appUpdateBanner').hidden = !(desktopApp() && olderApp(desktopVersion()));
+}
 const workerPings = () => canDo('push');
 // iPhone Safari in a tab: notifications only work in the Home Screen app.
 const iosTab = () => isIOS() && !standalone() && !pushReady();
@@ -3092,7 +3173,7 @@ function resetPings() {
 async function turnOnPings() {
   save(KEYS.pingAsked, true);
   if (!pushReady()) {
-    toast(iosTab() ? 'On iPhone, notifications work in the Home Screen app. Settings shows how.'
+    toast(desktopApp() ? DESKTOP_PINGS : iosTab() ? 'On iPhone, notifications work in the Home Screen app. Settings shows how.'
       : "This browser can't show notifications. Try Chrome.");
     renderPings();
     return;
@@ -3194,7 +3275,8 @@ function renderPings() {
   $('#pingBtn').hidden = !can || (blocked && !pings.on);
   $('#pingTest').hidden = !pings.on;
   $('#pingRow').hidden = $('#pingBtn').hidden && $('#pingTest').hidden;
-  $('#pingHelp').textContent = ios ? 'On iPhone, notifications work in the Home Screen app. The steps are below.'
+  $('#pingHelp').textContent = desktopApp() ? DESKTOP_PINGS // (Desktop)
+    : ios ? 'On iPhone, notifications work in the Home Screen app. The steps are below.'
     : blocked ? 'Notifications are blocked for antics. Allow them in the browser settings.'
       : !pushReady() ? "This browser can't show notifications."
         : `A notification on this ${touch ? 'phone' : 'computer'} when a video is ready, even when antics is closed.`;
@@ -3212,7 +3294,19 @@ function renderPings() {
   $('#appLinkHelp').hidden = $('#copyAppLink').hidden && $('#copyInvite').hidden;
   $('#appLinkHelp').textContent = owner ? 'Keep it private: anyone with this link can use your antics.'
     : 'Paste it in the Home Screen app, or open it on another phone.';
-  $('#appBox').hidden = !inSettings || (!tab && !pings.install);
+  $('#appBox').hidden = !inSettings || (!tab && !pings.install) || desktopApp();
+  // (Studio) the antics app for Windows
+  $('#desktopBox').hidden = !(inSettings && desktopApp());
+  const version = desktopVersion();
+  const oldApp = desktopApp() && olderApp(version);
+  $('#desktopState').textContent = version ? `in use · ${version}` : 'in use';
+  $('#desktopHelp').textContent = oldApp
+    ? `A new version of this app (${DESKTOP_APP.version}) is ready. Install it over this one: your connection stays.`
+    : 'The antics app on this computer. It always opens the newest antics.';
+  $('#desktopGetRow').hidden = !oldApp;
+  renderAppUpdate();
+  // (Desktop) in the browser on a Windows PC: the owner can get the antics app for Windows
+  $('#winAppLine').hidden = !(owner && windowsPc() && !desktopApp());
   // The nudge, while one of your videos is being made: once, until you answer it
   const mine = (j) => isGuest() || !j.owner || j.owner === 'me';
   const busy = state.jobs.some((j) => ['queued', 'working', 'waiting'].includes(j.status) && mine(j));
@@ -3242,12 +3336,18 @@ function announceReady(jobs) {
   chime();
   // Phones only allow a buzz after a tap on the page.
   if (navigator.vibrate && (!navigator.userActivation || navigator.userActivation.hasBeenActive)) navigator.vibrate([90, 60, 90]);
+  // (Studio) on another tab (or away): a "ready" count on My videos until it is opened
+  const elsewhere = window.Studio && (document.hidden || Studio.current() !== 'videos');
+  if (elsewhere) Studio.readyCue(fresh.length);
   if (document.hidden) {
     pings.unseen += fresh.length;
     document.title = `(${pings.unseen}) Ready · ${APP_TITLE}`;
     if (navigator.setAppBadge) navigator.setAppBadge(pings.unseen).catch(() => {});
   } else if (!anyDialogOpen()) {
-    toast(fresh.length > 1 ? `${fresh.length} videos are ready` : `${fresh[0].draft ? 'Your preview' : 'Your video'} is ready. Tap it to watch.`);
+    const what = fresh.length > 1 ? `${fresh.length} videos are ready` : `${fresh[0].draft ? 'Your preview' : 'Your video'} is ready`;
+    // (Studio) the cards are on My videos: from another tab, the toast takes you there
+    if (elsewhere) toast(`${what}.`, { label: 'See My videos', run: () => Studio.show('videos', { focus: true }) });
+    else toast(fresh.length > 1 ? what : `${what}. Tap it to watch.`);
   }
 }
 
@@ -3310,6 +3410,7 @@ function showLinked(jobs) {
   const job = jobs.find((j) => j.id === id);
   if (!job) toast('That video is gone.');
   else if (job.has_video) {
+    if (window.Studio) Studio.show('videos'); // (Studio) My videos under the player (this leaves Settings too)
     [...document.querySelectorAll('dialog')].forEach((d) => d.open && closeDialog(d));
     openPlayer(job);
   }
@@ -3328,7 +3429,8 @@ function openUpdate(mode) {
 function openSettings() {
   renderSettings();
   note($('#setupNote'), state.pending ? 'One quick setup first, then your video starts by itself.' : '');
-  openDialog($('#settings'));
+  if (window.Studio) Studio.show('settings', { drawn: true }); // (Studio) Settings is a tab: in place, not over the page
+  else openDialog($('#settings'));
   if (state.worker && !isGuest()) loadFriends();
   if (state.worker && !isGuest() && canDo('songs')) loadSongs();
   if (canPlan()) {
@@ -3513,7 +3615,8 @@ function renderSongsBox() {
 
 async function addSong(file) {
   if (!file || !state.worker || isGuest()) return;
-  if (!$('#settings').open) openSettings();
+  if (window.Studio) Studio.show('songs', { adding: true }); // (Studio) My songs has its own tab
+  else if (!$('#settings').open) openSettings();
   const noteEl = $('#songsNote');
   if ((state.songs || []).length >= SONG_MAX) {
     note(noteEl, `You can keep ${SONG_MAX} songs. Delete one to add another.`, 'bad');
@@ -3634,6 +3737,7 @@ async function saveSongPanel() {
     if (saved.default) pickSong(saved.id); // new videos get it
     await loadSongs();
     toast(`Saved. Videos with ${saved.name} start at ${clock(saved.start)}.`);
+    if (window.Studio) Studio.songSaved(); // (Studio) added from a video's Music step: back to that video
   } catch (e) {
     note($('#songsNote'), e.waking ? 'Your worker is waking up. Try Save again in a moment.' : e.message, 'bad');
   } finally {
@@ -3737,8 +3841,13 @@ function planCall(path, opts = {}, quiet = false) {
   return run;
 }
 
-// The plan as the worker has it (quietly: when it sleeps, the next check tries again).
-const loadPlan = () => (canPlan() ? planCall('/plan', {}, true) : Promise.resolve(null));
+// The plan as the worker has it (quietly: when it sleeps, the next check tries again). (Studio) Whether the last load
+// failed is kept (state.planFailed): the Posting plan tab then says so, and tries again while it shows.
+const loadPlan = () => (canPlan() ? planCall('/plan', {}, true).then((body) => {
+  state.planFailed = !body;
+  if (window.Studio) Studio.sync();
+  return body;
+}) : Promise.resolve(null));
 
 function setPlan(body) {
   if (!body || !body.plan || !Array.isArray(body.queue)) return;
@@ -3859,10 +3968,15 @@ function planStripAct() {
   else setPlanOn(true);
 }
 
-// ---------- Posting plan: the box in Settings ----------
+// ---------- Posting plan: the box (its own tab, Posting plan) ----------
 
 function openPlanBox() {
   if (!canPlan()) return;
+  if (window.Studio) { // (Studio) the plan has its own tab: in sight, like the Settings sheet was over anything open
+    [...document.querySelectorAll('dialog')].forEach((d) => d.open && d.id !== 'settings' && closeDialog(d));
+    Studio.show('plan');
+    return;
+  }
   if (!$('#settings').open) openSettings();
   const box = $('#planBox');
   if (!box.hidden) box.scrollIntoView({ block: 'start' });
@@ -3879,6 +3993,10 @@ function renderPlanBox() {
   $('#planState').textContent = !plan.on ? 'Off' : first && first.at ? `On · next reminder ${whenLabel(first.at, true)}` : 'On';
   // The reminders come as notifications: without them, the plan can't remind anyone.
   $('#planNotify').hidden = Boolean(body.notify) || pings.on || !(plan.on || body.queue.length);
+  // (Desktop) the antics app for Windows can't get notifications: the phone gets the reminders
+  $('#planNotifyText').textContent = desktopApp() ? 'Turn on notifications in antics on your phone to get reminders'
+    : 'Turn on notifications to get reminders';
+  $('#planNotifyBtn').hidden = desktopApp();
   setSeg('planPerDay', plan.per_day);
   renderPlanTimes(plan);
   const tz = planTz();
@@ -3968,7 +4086,8 @@ let planTzSent = ''; // the time zone this page sent (once a visit: a worker tha
 function syncPlanTz() {
   const tz = deviceTz();
   const plan = state.plan && state.plan.plan;
-  if (!plan || !tz || plan.tz === tz || planTzSent === tz || !$('#settings').open || $('#planBox').hidden) return;
+  const shown = window.Studio ? Studio.current() === 'plan' : $('#settings').open; // (Studio) the plan's own tab
+  if (!plan || !tz || plan.tz === tz || planTzSent === tz || !shown || $('#planBox').hidden) return;
   planTzSent = tz;
   planCall('/plan', jsonPost({ tz }), true);
 }
@@ -4503,6 +4622,7 @@ function renderGpu() {
   line.hidden = !numbers && !GPU_BLIND[blind];
   if (!numbers) {
     line.textContent = GPU_BLIND[blind] || '';
+    if (window.Studio) Studio.sync(); // (Studio)
     return;
   }
   const left = Math.max(0, Math.floor(g.left / 60));
@@ -4510,6 +4630,7 @@ function renderGpu() {
   const resets = g.resets_at
     ? `\u00a0· resets ${new Date(g.resets_at * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : '';
   line.textContent = `Free AI time today: ${Math.min(left, base)} of ${base} min left${resets}`;
+  if (window.Studio) Studio.sync(); // (Studio) the same line at the bottom of the sidebar
 }
 
 let resuming = false;
@@ -4547,8 +4668,12 @@ function renderPc() {
   $('#pcChip').hidden = !pcOn;
   const broken = keyBroken();
   const outdated = Boolean(state.worker && h && h.version !== WORKER_VERSION);
-  $('#updateNote').hidden = !(outdated || broken);
-  $('#updateBanner').hidden = !(outdated || broken);
+  // (Studio) not while an update or setup runs: its steps show in Settings, and the other tabs say it is on
+  $('#updateNote').hidden = !(outdated || broken) || setupRunning;
+  $('#updateBanner').hidden = !(outdated || broken) || setupRunning;
+  $('#setupBusy').hidden = !setupRunning;
+  $('#setupBusyText').textContent = state.setupMode === 'rebuild' ? 'Rebuilding your worker (about 10–20 min)…'
+    : state.setupMode === 'update' && state.worker ? 'Updating your worker…' : 'Setting up your worker (about 10–20 min)…';
   $('#updateText').textContent = broken
     ? "Your worker's Hugging Face key stopped working, so videos can't be made. Paste a new Write key to fix it."
     : 'A new version of antics is ready, with more options.';
@@ -4592,7 +4717,7 @@ function renderSettings() {
   }
   const rebuilding = state.setupMode === 'rebuild' && Boolean(state.worker);
   const updating = (state.setupMode === 'update' || rebuilding) && Boolean(state.worker);
-  const ready = Boolean(state.worker) && !updating;
+  const ready = Boolean(state.worker) && !updating && !setupRunning; // (Studio) a running setup shows its steps
   $('#setupPane').hidden = ready;
   $('#optionsPane').hidden = !ready;
   $('#setupTitle').textContent = rebuilding ? 'Rebuild your worker' : updating ? 'Update your worker' : 'One-time setup';
@@ -4606,9 +4731,11 @@ function renderSettings() {
         ? `Paste a Hugging Face Write key. Your worker gets the newest version (${time}). Nothing is deleted: your videos and connections stay.`
         : 'Your videos are made on your own free Hugging Face worker, so it keeps going when your phone is locked.';
   $('#setupBtn').textContent = rebuilding ? 'Rebuild my worker' : updating ? 'Update my worker' : 'Set up my worker';
-  $('#steps [data-step="create"]').textContent = rebuild ? 'Making your worker again'
-    : rebuilding ? 'Asking Hugging Face to build it again' : updating ? 'Sending the new version' : 'Creating your worker';
-  $('#steps [data-step="build"]').textContent = `Building it (${updating ? time : 'about 10–20 min'})`;
+  if (!setupRunning) { // (while it runs, the steps say how far it is: "Building the new version (3 min so far…)")
+    $('#steps [data-step="create"]').textContent = rebuild ? 'Making your worker again'
+      : rebuilding ? 'Asking Hugging Face to build it again' : updating ? 'Sending the new version' : 'Creating your worker';
+    $('#steps [data-step="build"]').textContent = `Building it (${updating ? time : 'about 10–20 min'})`;
+  }
   if (ready) {
     const link = $('#workerLink');
     link.href = `${HF}/spaces/${state.worker.space}`;
@@ -4623,6 +4750,9 @@ function renderSettings() {
 }
 
 function init() {
+  // (Desktop) the antics app for Windows: where to get it, and whether this one is older than the newest
+  for (const id of ['appUpdateLink', 'winAppLink', 'desktopGet']) $(`#${id}`).href = DESKTOP_APP.url;
+  renderAppUpdate();
   state.worker = load(KEYS.worker, null);
   state.clips = load(KEYS.clips, 3);
   state.captions = load(KEYS.captions, true);
@@ -4696,8 +4826,7 @@ function init() {
     });
   }
   for (const ev of ['play', 'pause', 'ended']) preview.addEventListener(ev, renderHear);
-  // Extras are open on a PC (every option in sight) and folded on a phone.
-  if (matchMedia('(min-width: 960px)').matches) $('#extras').open = true;
+  // (Studio) Extras are in the "Change song, length and extras" panel, folded on every screen until it is opened.
 
   // The edit window
   const onEditSeg = (id, apply) => document.querySelectorAll(`#${id} button`).forEach((b) => b.addEventListener('click', () => {
@@ -4815,8 +4944,7 @@ function init() {
   $('#gpuResumeMain').addEventListener('click', resumeGpu);
   $('#gpuResume').addEventListener('click', resumeGpu);
   onClosed($('#settings'), () => {
-    state.setupMode = 'setup';
-    $('#steps').hidden = true;
+    if (!setupRunning) endSetupPane(); // (Studio) a setup still running keeps its steps for when Settings shows again
     if (previewing.startsWith('song:')) preview.pause();
   });
   $('#redoSetup').addEventListener('click', () => {
@@ -4855,7 +4983,7 @@ function init() {
     state.playing = null;
   });
 
-  // Posting plan: the strip, the box in Settings, and the Post screen
+  // Posting plan: the strip, the box (its own tab), and the Post screen
   $('#planStripMain').addEventListener('click', openPlanBox);
   $('#planStripAct').addEventListener('click', planStripAct);
   $('#planOn').addEventListener('change', (e) => setPlanOn(e.target.checked));
@@ -4867,7 +4995,10 @@ function init() {
     addPlanTags();
   });
   $('#planNotifyBtn').addEventListener('click', () => {
-    if (iosTab()) $('#appBox').scrollIntoView({ behavior: 'smooth', block: 'center' }); // (the Home Screen steps)
+    if (iosTab()) { // (the Home Screen steps: in Settings, its own tab)
+      if (window.Studio) openSettings();
+      $('#appBox').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
     turnOnPings();
   });
   $('#postCopy').addEventListener('click', () => copyText($('#postCaption').value, 'Caption copied', $('#postDialog')));

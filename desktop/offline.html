@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src file:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+  <title>antics</title>
+  <style>
+    :root {
+      --paper: #fff3dc;
+      --ink: #161310;
+      --soft: #6d6257;
+      --tomato: #ff5a36;
+      --line: 2.5px solid var(--ink);
+      --pop: 4px 4px 0 var(--ink);
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px 16px;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: "Bricolage Grotesque", system-ui, "Segoe UI", Roboto, sans-serif;
+      font-size: 17px;
+      line-height: 1.45;
+    }
+    main {
+      width: 100%;
+      max-width: 440px;
+      text-align: center;
+    }
+    img {
+      width: 96px;
+      height: 96px;
+      border-radius: 50%;
+      border: var(--line);
+      box-shadow: var(--pop);
+    }
+    h1 {
+      margin: 20px 0 8px;
+      font-size: 1.6rem;
+      line-height: 1.2;
+      letter-spacing: -0.01em;
+    }
+    p { margin: 0 0 18px; }
+    button {
+      display: block;
+      width: 100%;
+      border: var(--line);
+      border-radius: 14px;
+      background: var(--tomato);
+      color: var(--ink);
+      box-shadow: var(--pop);
+      font: inherit;
+      font-size: 1.25rem;
+      font-weight: 800;
+      padding: 14px 16px;
+      cursor: pointer;
+    }
+    button:active { transform: translate(3px, 3px); box-shadow: 1px 1px 0 var(--ink); }
+    button.second { margin-top: 14px; background: #fff; font-size: 1.05rem; padding: 11px 16px; }
+    button[hidden] { display: none; }
+    button:disabled { opacity: 0.6; cursor: wait; }
+    button:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+    .fine {
+      margin-top: 16px;
+      color: var(--soft);
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <img src="assets/icon.png" alt="">
+    <h1 id="title">antics can't load right now</h1>
+    <p id="why">Check that this computer is online, then try again.</p>
+    <button type="button" id="retry">Retry</button>
+    <button type="button" id="browser" class="second" hidden>Open it in my browser</button>
+    <p class="fine" id="detail"></p>
+  </main>
+  <script>
+    'use strict';
+    (() => {
+      const q = new URLSearchParams(location.search);
+      const url = q.get('url') || '';
+      const reason = q.get('reason') || 'offline';
+      const tries = Number(q.get('tries')) || 1;
+      const $ = (id) => document.getElementById(id);
+      if (reason === 'crash') {
+        $('title').textContent = 'antics stopped unexpectedly';
+        $('why').textContent = 'Nothing on your worker is lost. Tap Retry to open it again.';
+      } else if (reason === 'server') {
+        $('title').textContent = "antics' website is having a problem";
+        $('why').textContent = 'It is usually back in a few minutes. Try again soon.';
+      } else if (reason === 'moved') {
+        // The site's address now sends everyone to another one: this app only opens the address built into it.
+        let host = '';
+        try {
+          host = new URL(q.get('to') || '').host;
+        } catch {
+          host = '';
+        }
+        $('title').textContent = 'antics has moved';
+        $('why').textContent = host
+          ? `antics now lives at ${host}. Open it in your browser, or get the new antics app there (Settings).`
+          : "antics' address has changed. Open it in your browser, or get the new antics app there (Settings).";
+        $('browser').hidden = false;
+      } else if (!navigator.onLine) {
+        $('why').textContent = 'This computer is offline. Connect to the internet; antics opens again by itself.';
+      }
+      const bits = [];
+      if (tries > 1) bits.push(`Tried ${tries} times.`);
+      if (q.get('desc')) bits.push(`(${q.get('desc')})`);
+      else if (q.get('code')) bits.push(`(${q.get('code')})`);
+      $('detail').textContent = bits.join(' ');
+
+      const go = () => {
+        if (!/^https?:\/\//i.test(url)) return;
+        $('retry').disabled = true;
+        $('retry').textContent = 'Opening…';
+        location.replace(url);
+      };
+      $('retry').addEventListener('click', go);
+      // (the app sends this page's links to the default browser: the new address, or the old one, which forwards there)
+      $('browser').addEventListener('click', () => {
+        const to = q.get('to') || url;
+        if (/^https?:\/\//i.test(to)) location.href = to;
+      });
+      $('retry').focus();
+      window.addEventListener('online', go); // the connection came back: try at once
+    })();
+  </script>
+</body>
+</html>
