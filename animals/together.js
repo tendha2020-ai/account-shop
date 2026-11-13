@@ -635,6 +635,7 @@
 
   function nudge(sel) {
     const el = $(sel);
+    if (window.Studio) Studio.reveal(el); // (Studio) a part of the folded panel opens first
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     el.classList.remove('nudge');
     void el.offsetWidth; // restart the shake
@@ -1342,7 +1343,7 @@
       next: 'Now pick any clip of your pet.' },
     { id: 'o-goose', emoji: '🦆', title: 'The office goose', who: 'No video',
       set: { mode: 'one', surprise: true, style: 'random', idea: 'A goose in a tiny suit types furiously at an office desk, then slams the desk', music: 'track', track: 'Hitman', voice: 'narrator', clips: 2, count: 1 },
-      next: 'No video needed: just tap Make it.' },
+      next: 'No video needed: just tap the Make button.' }, // (Studio) its name says what it makes
     { id: 'o-takes', emoji: '🎬', title: 'Three takes, keep the best', who: '1 pet',
       set: { mode: 'one', style: 'twerk', idea: '', music: 'track', track: 'Monkeys Spinning Monkeys', voice: 'squeaky', clips: 2, count: 3, preview: true },
       next: 'Now pick any clip of your pet. Then Finish only the funniest preview.' },
@@ -1365,14 +1366,26 @@
   const recipes = () => RECIPES.filter((r) => !r.together || ready() || !state.worker);
 
   function renderIdeas() {
-    const list = recipes();
-    const sig = `${list.map((r) => r.id).join()}|${T.recipe ? T.recipe.id : ''}`;
+    // (Studio) the ideas for the tab showing come first (Make video: one animal; Together: 2 or more); the others
+    // follow after a small label. (A tap on one of those still goes to its own tab.)
+    const together = on();
+    const all = recipes();
+    const mine = all.filter((r) => Boolean(r.together) === together);
+    const list = [...mine, ...all.filter((r) => Boolean(r.together) !== together)];
+    const sig = `${together ? 'together' : 'one'}|${list.map((r) => r.id).join()}|${T.recipe ? T.recipe.id : ''}`;
     $('#ideasBox').hidden = false;
     if (sig === T.sigs.ideas) return;
     T.sigs.ideas = sig;
     const box = $('#ideaCards');
     box.innerHTML = '';
     for (const r of list) {
+      if (r === list[mine.length] && mine.length) { // where the other tab's ideas start
+        const sep = document.createElement('p');
+        sep.className = 'ideas-sep';
+        sep.id = 'ideasSep';
+        sep.textContent = together ? 'More ideas: one animal' : 'More ideas: Together';
+        box.appendChild(sep);
+      }
       const b = document.createElement('button');
       b.type = 'button';
       b.className = `idea-card${r.together ? ' together' : ''}`;
@@ -1623,7 +1636,8 @@
   }
 
   window.Together = {
-    on, noRealVideo: () => !T.cast.some((s) => s.real), noPreview: () => on() && T.look !== 'ai',
+    on, allowed, outdated, // (Studio) the Together tab: shown when allowed, "Update needed" when outdated
+    noRealVideo: () => !T.cast.some((s) => s.real), noPreview: () => on() && T.look !== 'ai',
     render, renderMake: renderStep4, make, addCast, sent,
     actions, decorate, playerReset, tip,
     editorOpen, editorRender, editAnimates, editLoses, editFields, editParts,
