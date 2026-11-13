@@ -1741,6 +1741,17 @@ function songNameFrom(file) {
 }
 
 let songsAsked = 0; // a list fetched before the latest change is out of date
+// Why My songs isn't there yet, in plain words ('' while it's simply on its way).
+function songsWaitText() {
+  const why = state.songsError;
+  if (state.keyRefused || why === 'key') return "This device's connection to your worker is out of date: open your app link here (see the note at the top).";
+  if (why === 'loading') return 'Your worker is still reading your songs from its storage. Trying again…';
+  if (why === 'waking') return 'Waking up your worker… (up to a minute)';
+  if (why) return `Couldn't get your songs (${why}). Trying again…`;
+  return 'Getting your songs…';
+}
+
+let songsRetry = 0;
 async function loadSongs() {
   if (!state.worker || !canDo('songs')) return;
   const asked = state.worker;
@@ -1749,8 +1760,17 @@ async function loadSongs() {
     const { songs } = await api('/songs');
     if (state.worker !== asked || n !== songsAsked) return;
     state.songs = songs;
-  } catch {
-    return; // asleep or offline: the next check tries again
+    state.songsError = null;
+  } catch (e) {
+    if (state.worker !== asked) return;
+    // Asleep, busy, still reading its storage or a refused key: say why, and keep trying while the list is missing.
+    state.songsError = e.status === 401 ? 'key' : e.status === 503 ? 'loading'
+      : e.waking || e instanceof TypeError ? 'waking' : (e.message || 'error');
+    clearTimeout(songsRetry);
+    songsRetry = setTimeout(() => { if (!Array.isArray(state.songs)) loadSongs(); }, state.songsError === 'key' ? 60000 : 10000);
+    renderSongsBox();
+    renderOptions();
+    return;
   }
   settleSongChoice();
   renderOptions();
@@ -3451,6 +3471,11 @@ function renderSongsBox() {
   $('#songsBox').hidden = !show;
   if (!show) return;
   const songs = state.songs || [];
+  const waiting = $('#songsWait');
+  if (waiting) {
+    waiting.hidden = Array.isArray(state.songs);
+    waiting.textContent = Array.isArray(state.songs) ? '' : songsWaitText();
+  }
   $('#songsCount').textContent = songs.length ? `${songs.length} of ${SONG_MAX}` : '';
   $('#songAddBtn').hidden = songAdd.busy || songs.length >= SONG_MAX;
   const list = $('#songRows');
@@ -3503,7 +3528,7 @@ async function addSong(file) {
   songAdd.song = null;
   $('#songAdd').hidden = false;
   $('#songAddBody').hidden = true;
-  $('#songAddHead').textContent = 'Finding the meme part… (about 20 s)';
+  $('#songAddHead').textContent = 'Adding your song and finding its meme part… (about 20 s, longer while your worker is busy)';
   renderSongsBox();
   $('#songAdd').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   try {
@@ -3516,8 +3541,17 @@ async function addSong(file) {
     songAdd.song = song;
     showSongPanel(song);
   } catch (e) {
-    $('#songAdd').hidden = true;
-    note(noteEl, e.waking ? 'Your worker is waking up (up to a minute). Try again then.' : e.message, 'bad');
+    // A busy worker can finish the song after the connection gave up: look for it before saying it failed.
+    const arrived = e.waking || e instanceof TypeError ? await songArrived(file, 6) : null;
+    if (arrived) {
+      songsAsked++;
+      state.songs = [...(state.songs || []).filter((x) => x.id !== arrived.id), arrived];
+      songAdd.song = arrived;
+      showSongPanel(arrived);
+    } else {
+      $('#songAdd').hidden = true;
+      note(noteEl, e.waking ? 'Your worker is busy or waking up, so the song didn\'t arrive. Try again in a minute.' : e.message, 'bad');
+    }
   } finally {
     songAdd.busy = false;
     $('#songAddFile').value = '';
@@ -3525,6 +3559,24 @@ async function addSong(file) {
     renderSongsBox();
     renderOptions();
   }
+}
+
+// After an add whose answer got lost: polls My songs a few times for a song with this file's name.
+async function songArrived(file, tries) {
+  const want = songNameFrom(file).toLowerCase();
+  const before = new Set((state.songs || []).map((x) => x.id));
+  for (let i = 0; i < tries; i++) {
+    await sleep(10000);
+    try {
+      const { songs } = await api('/songs');
+      const found = songs.find((x) => !before.has(x.id) && (!want || String(x.name || '').toLowerCase() === want))
+        || songs.find((x) => !before.has(x.id));
+      if (found) return found;
+    } catch {
+      // still busy
+    }
+  }
+  return null;
 }
 
 // The song just added: where its meme part was found, ▶ Hear, a slider and a few other good places to start.
