@@ -938,27 +938,6 @@ dialog::backdrop {
   font-size: 16px;
 }
 
-/* Two columns on a computer: options on the left, your videos on the right */
-@media (min-width: 960px) {
-  .bar,
-  main.layout {
-    max-width: 1180px;
-  }
-
-  main.layout {
-    display: grid;
-    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
-    gap: 36px;
-    align-items: start;
-  }
-
-  main.layout .list {
-    margin-top: 14px;
-    position: sticky;
-    top: 16px;
-  }
-}
-
 /* "New version ready" banner */
 .banner-wrap {
   max-width: 560px;
@@ -1002,12 +981,6 @@ dialog::backdrop {
 
 .gpu-line.bad {
   color: #b3261e;
-}
-
-@media (min-width: 960px) {
-  .banner-wrap {
-    max-width: 1180px;
-  }
 }
 
 /* Song part: Pick myself */
@@ -1891,8 +1864,8 @@ dialog {
   width: auto;
 }
 
-/* PC */
-@media (min-width: 960px) {
+/* PC or tablet (the sidebar): Make it in the column */
+@media (min-width: 900px) {
   .jump {
     display: none !important;
   }
@@ -1900,93 +1873,6 @@ dialog {
   .make-bar {
     margin: -6px 0 0;
     padding: 16px 0 14px;
-  }
-
-  /* Your videos scroll on their own, so the newest stay next to the form */
-  main.layout .list {
-    max-height: calc(100vh - 32px);
-    overflow-y: auto;
-    padding: 0 8px 8px 0;
-  }
-}
-
-/* Wide PC: the four steps in two columns, your videos on the right */
-@media (min-width: 1240px) {
-  .bar,
-  main.layout,
-  .banner-wrap {
-    max-width: 1400px;
-  }
-
-  main.layout {
-    grid-template-columns: minmax(0, 2.2fr) minmax(320px, 1fr);
-    gap: 28px;
-  }
-
-  /* Steps 1–2 on the left; 3, 4 and Make it on the right; Extras across the bottom */
-  .maker {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    grid-template-areas:
-      "a s3"
-      "a s4"
-      "a mk"
-      "ex ex";
-    column-gap: 20px;
-    align-items: start;
-  }
-
-  .maker-a {
-    display: block;
-    grid-area: a;
-  }
-
-  #step3 {
-    grid-area: s3;
-  }
-
-  #step4 {
-    grid-area: s4;
-  }
-
-  .make-bar {
-    grid-area: mk;
-    margin: -6px 0 18px;
-    padding: 0;
-    background: none;
-  }
-
-  .extras {
-    grid-area: ex;
-  }
-
-  .extras .toggles {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .extras .voices {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-
-  .extras-body {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    column-gap: 20px;
-  }
-
-  .extras-body .toggles {
-    grid-column: 1 / -1;
-  }
-
-  .extras-body > .opt-line {
-    border-bottom: 0;
-  }
-
-  /* The song list scrolls inside step 3, so Make it stays on the first screen */
-  .song-list {
-    max-height: 220px;
-    overflow-y: auto;
-    padding-right: 4px;
   }
 }
 
@@ -3594,4 +3480,1247 @@ a.post-btn.off {
   .sing-animals {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+/* ===================== Studio (v17): one tab at a time (studio.js) ===================== */
+/* Phone: the top bar with ⚙, and the tabs in a bar at the bottom (Posting plan, My songs and Settings under More).
+   PC or tablet (900 px and wider): the header is a sidebar with the brand, the tabs and the worker at the bottom. */
+
+:root {
+  --tabbar: 64px; /* the phone's tab bar, without the home indicator's inset */
+  --side: 264px; /* the sidebar */
+}
+
+/* The old One animal | Together | Sing switch: the tabs do that now (it stays for the code: tapping a tab taps it) */
+#modeSeg {
+  display: none !important;
+}
+
+.side-foot,
+.bar .tab-label {
+  display: none;
+}
+
+/* Phone: the tab bar */
+.tabs {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  align-items: stretch;
+  justify-content: space-around;
+  height: calc(var(--tabbar) + env(safe-area-inset-bottom));
+  padding: 4px max(6px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(6px, env(safe-area-inset-left));
+  background: var(--card);
+  border-top: var(--line);
+}
+
+.tab {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: var(--soft);
+  font-size: 0.74rem;
+  font-weight: 800;
+  line-height: 1.15;
+  cursor: pointer;
+}
+
+.tab .tab-ico {
+  flex: 0 0 auto;
+  width: 48px;
+  height: 30px;
+  padding: 3px 12px;
+  border: 2px solid transparent;
+  border-radius: 99px;
+}
+
+.tab-short {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab[aria-current="page"],
+.tab-more.on,
+.tab-more[aria-expanded="true"] {
+  color: var(--ink);
+}
+
+.tab[aria-current="page"] .tab-ico,
+.tab-more.on .tab-ico {
+  background: var(--lime);
+  border-color: var(--ink);
+}
+
+.tab:focus-visible,
+.more-menu button:focus-visible,
+.side-settings:focus-visible {
+  outline: 3px solid var(--grape);
+  outline-offset: 2px;
+}
+
+.tabs > .tab-extra {
+  display: none;
+}
+
+/* Phone: ⚙ at the top lights up while Settings shows */
+.bar .side-settings[aria-current="page"] {
+  background: var(--lime);
+}
+
+/* "Update needed" is a red dot on a phone's tab */
+.tab-need {
+  position: absolute;
+  top: 3px;
+  left: calc(50% + 14px);
+  width: 12px;
+  height: 12px;
+  overflow: hidden;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background: var(--tomato);
+  font-size: 0;
+}
+
+/* Videos being made, videos ready to post */
+.tab-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border: 2px solid var(--ink);
+  border-radius: 99px;
+  background: var(--tomato);
+  color: var(--ink);
+  font-size: 0.7rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.tab > .tab-count {
+  position: absolute;
+  top: 1px;
+  left: calc(50% + 10px);
+}
+
+/* Phone: More */
+.more-menu {
+  position: absolute;
+  right: max(8px, env(safe-area-inset-right));
+  bottom: calc(100% + 8px);
+  display: grid;
+  min-width: 220px;
+  padding: 6px;
+  background: var(--card);
+  border: var(--line);
+  border-radius: 16px;
+  box-shadow: var(--pop);
+}
+
+.more-menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  font-size: 1rem;
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+}
+
+.more-menu button[aria-current="page"] {
+  background: var(--lime);
+}
+
+.more-menu svg {
+  flex: 0 0 auto;
+}
+
+.more-menu .tab-count {
+  margin-left: auto;
+}
+
+/* Phone: room for the tab bar under everything */
+main {
+  padding-bottom: calc(var(--tabbar) + 44px + env(safe-area-inset-bottom));
+}
+
+.make-bar {
+  bottom: calc(var(--tabbar) + env(safe-area-inset-bottom));
+}
+
+.toast {
+  bottom: calc(var(--tabbar) + 16px + env(safe-area-inset-bottom));
+}
+
+dialog .toast {
+  bottom: calc(18px + env(safe-area-inset-bottom));
+}
+
+/* The worker is waking up (or this device's connection is out of date): above every tab */
+.banner-wrap .wake {
+  margin: 12px 0 0;
+  padding: 9px 12px;
+  border: 2px dashed rgba(22, 19, 16, 0.4);
+  border-radius: 12px;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+/* Each tab's heading */
+.panel-head {
+  margin: 6px 0 16px;
+}
+
+.panel-title {
+  margin: 0;
+  font-size: 1.65rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+
+.panel-title:focus {
+  outline: none;
+}
+
+.panel-sub {
+  margin: 4px 0 0;
+  color: var(--soft);
+  font-size: 0.98rem;
+}
+
+.panel-make .jump {
+  margin: 0 0 4px;
+}
+
+.jump::after {
+  content: "→";
+}
+
+.panel-make .maker {
+  margin-top: 0;
+}
+
+/* My videos */
+.panel.list {
+  margin-top: 0;
+}
+
+.panel.list .list-head {
+  margin: 6px 0 16px;
+}
+
+.panel.list .list-head .panel-title {
+  font-size: 1.65rem;
+}
+
+.job.fresh {
+  box-shadow: 0 0 0 4px var(--lime), 0 0 0 6.5px var(--ink), var(--pop);
+}
+
+#emptyNote {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding: 26px 18px;
+  border: 2.5px dashed rgba(22, 19, 16, 0.35);
+  border-radius: var(--round);
+  text-align: center;
+}
+
+#emptyNote p {
+  margin: 0;
+  max-width: 34ch;
+}
+
+#emptyNote .go {
+  width: auto;
+  padding: 11px 22px;
+}
+
+#jobs:not(:empty) + #emptyNote {
+  display: none;
+}
+
+/* Posting plan and My songs: their box, full size */
+.panel > .friends-box {
+  margin-top: 0;
+  padding: 6px 18px 18px;
+  border: var(--line);
+  box-shadow: var(--pop);
+}
+
+.panel-wait {
+  margin: 0 0 14px;
+}
+
+.panel-songs #songAddBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 15px 16px;
+  border: var(--line);
+  border-radius: var(--round);
+  background: var(--lime);
+  box-shadow: var(--pop);
+  font-size: 1.2rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.panel-songs #songAddBtn:active {
+  transform: translate(3px, 3px);
+  box-shadow: 1px 1px 0 var(--ink);
+}
+
+.panel-songs .songs-box .row {
+  margin-top: 16px;
+}
+
+/* Settings: the settings "dialog" in place, as the page */
+.panel dialog#settings {
+  position: static;
+  display: block;
+  width: auto;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  color: inherit;
+}
+
+.panel dialog#settings:not([open]) {
+  display: none;
+}
+
+.panel #settings .sheet-body {
+  padding: 0;
+}
+
+.panel #optionsPane > h2,
+.panel #closeSettings {
+  display: none;
+}
+
+.panel #settings .worker-line {
+  margin-top: 0;
+}
+
+/* The bottom of the sidebar: the worker and today's free AI time */
+.side-foot p {
+  margin: 0;
+}
+
+.side-worker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.side-worker .dot {
+  position: static;
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+}
+
+.side-gpu {
+  margin-top: 4px !important;
+  color: var(--soft);
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.side-gpu.bad {
+  color: #b3261e;
+}
+
+/* A tablet held upright: a little more room */
+@media (min-width: 600px) and (max-width: 899px) {
+  .bar,
+  main,
+  .banner-wrap {
+    max-width: 640px;
+  }
+}
+
+/* PC or tablet: the sidebar */
+@media (min-width: 900px) {
+  body {
+    display: grid;
+    grid-template-columns: var(--side) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .bar.side {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    height: 100vh;
+    height: 100dvh;
+    max-width: none;
+    margin: 0;
+    padding: 22px 14px 18px;
+    overflow-y: auto;
+    border-right: var(--line);
+    background: #fff8ea;
+  }
+
+  .bar .brand {
+    gap: 10px;
+    margin: 0 0 14px;
+    padding: 0 6px 18px;
+    border-bottom: 2px dashed rgba(22, 19, 16, 0.2);
+  }
+
+  .bar .avatar {
+    width: 44px;
+    height: 44px;
+  }
+
+  .bar .logo {
+    font-size: 1.4rem;
+  }
+
+  .bar .app-tag {
+    margin-left: 5px;
+    padding: 0 7px 1px;
+    font-size: 0.68rem;
+  }
+
+  .bar .sub {
+    font-size: 0.82rem;
+    line-height: 1.25;
+  }
+
+  .tabs {
+    position: static;
+    order: 1;
+    display: grid;
+    justify-content: stretch;
+    gap: 4px;
+    height: auto;
+    padding: 0;
+    border: 0;
+    background: none;
+  }
+
+  .tab,
+  .bar .side-settings {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 12px;
+    width: 100%;
+    height: auto;
+    padding: 10px 12px;
+    border: 2px solid transparent;
+    border-radius: 12px;
+    background: none;
+    box-shadow: none;
+    color: var(--ink);
+    font-size: 1rem;
+    font-weight: 700;
+    text-align: left;
+  }
+
+  .bar .side-settings {
+    order: 2;
+    margin-top: 4px;
+  }
+
+  .tab:hover,
+  .bar .side-settings:hover {
+    background: rgba(201, 240, 74, 0.4);
+  }
+
+  .tab[aria-current="page"],
+  .bar .side-settings[aria-current="page"] {
+    border-color: var(--ink);
+    background: var(--lime);
+    box-shadow: 3px 3px 0 var(--ink);
+    font-weight: 800;
+  }
+
+  .tab .tab-ico,
+  .tab[aria-current="page"] .tab-ico {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    background: none;
+  }
+
+  .bar .side-settings svg {
+    flex: 0 0 auto;
+    width: 24px;
+    height: 24px;
+  }
+
+  .tab-short,
+  .bar .side-settings .dot {
+    display: none;
+  }
+
+  .bar .tab-label {
+    display: inline;
+  }
+
+  .tabs > .tab-extra {
+    display: flex;
+  }
+
+  .tabs > .tab-extra[hidden] {
+    display: none;
+  }
+
+  .tab-more,
+  .more-menu {
+    display: none !important;
+  }
+
+  .tab-need {
+    position: static;
+    width: auto;
+    height: auto;
+    margin-left: auto;
+    padding: 1px 7px;
+    overflow: visible;
+    border: 1.5px solid var(--ink);
+    border-radius: 99px;
+    background: #ffd9cf;
+    font-size: 0.68rem;
+    font-weight: 800;
+    white-space: nowrap;
+  }
+
+  .tab > .tab-count {
+    position: static;
+    margin-left: auto;
+  }
+
+  .side-foot {
+    order: 3;
+    display: block;
+    margin-top: auto;
+    padding: 16px 8px 0;
+  }
+
+  .studio-main {
+    min-width: 0;
+    padding: 0 36px;
+  }
+
+  main.layout,
+  .banner-wrap {
+    max-width: 760px;
+    margin: 0 auto;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .banner-wrap {
+    padding-top: 18px;
+  }
+
+  main.layout {
+    padding-top: 26px;
+    padding-bottom: 64px;
+  }
+
+  .make-bar {
+    bottom: 0;
+  }
+
+  .toast {
+    bottom: calc(18px + env(safe-area-inset-bottom));
+  }
+
+  .panel-title,
+  .panel.list .list-head .panel-title {
+    font-size: 2rem;
+  }
+}
+
+/* ===================== Studio, simpler (v17): calm steps, one folded panel, clear cards ===================== */
+/* Make video, Together and Sing: 1 Your video, 2 What happens (Sing: the song), the Make button. Everything else is
+   in one panel (#makeMore), closed until opened, with a one-line summary of the choices. Big touch targets. */
+
+.panel-make .jump {
+  display: none !important; /* (the Videos tab has the count) */
+}
+
+.panel-make .maker {
+  display: block;
+}
+
+.panel-make .block {
+  margin-bottom: 14px;
+  padding: 16px;
+}
+
+.panel-make .step-title {
+  margin-bottom: 12px;
+}
+
+/* "Need an idea?": a small button at the top right, next to the tab's heading; the recipes open under the heading */
+.panel-make {
+  position: relative;
+}
+
+.panel-make .panel-head {
+  min-height: 44px;
+  padding-right: 184px;
+}
+
+.panel-make .panel-head:has(+ .jump + .maker > #ideasMore[hidden]) {
+  padding-right: 0;
+}
+
+.need-idea {
+  margin: 0;
+}
+
+.need-idea[open] {
+  margin: 0 0 14px;
+}
+
+.need-idea > summary {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 16px;
+  border: 2px solid var(--ink);
+  border-radius: 99px;
+  background: var(--card);
+  font-weight: 800;
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+.need-idea > summary::-webkit-details-marker {
+  display: none;
+}
+
+.need-idea > summary::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  margin: -4px 2px 0 2px;
+  border-right: 2.5px solid var(--ink);
+  border-bottom: 2.5px solid var(--ink);
+  transform: rotate(45deg);
+}
+
+.need-idea[open] > summary {
+  background: var(--lime);
+  box-shadow: 2px 2px 0 var(--ink);
+}
+
+.need-idea[open] > summary::after {
+  margin-top: 4px;
+  transform: rotate(-135deg);
+}
+
+.need-idea .ideas-box {
+  margin: 12px 0 0;
+}
+
+.need-idea .ideas-title {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.need-idea .idea-card {
+  min-height: 96px;
+}
+
+/* Sing's 5-second test: in sight, above the Make button */
+.sing-lead {
+  margin: 0 0 14px;
+}
+
+.sing-lead .sing-test {
+  margin: 0;
+  padding: 14px 16px;
+  box-shadow: var(--pop);
+}
+
+.sing-lead .sing-test-head {
+  font-size: 1.2rem;
+}
+
+.sing-lead .sing-allbad {
+  margin: 0;
+}
+
+.sing-lead .sing-test + .sing-allbad:not([hidden]) {
+  margin-top: 12px;
+}
+
+/* The panel: one heading with the summary next to it; open, its parts one under the other */
+.more-opts {
+  padding: 0 !important;
+  overflow: hidden;
+}
+
+.more-opts > summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 64px;
+  padding: 12px 16px;
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+.more-opts > summary::-webkit-details-marker {
+  display: none;
+}
+
+.more-opts > summary::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  background: var(--sky) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='%23161310' stroke-width='2.4' stroke-linecap='round' d='M4 7h10M18 7h2M4 17h4M12 17h8'/%3E%3Ccircle cx='16' cy='7' r='2.3' fill='none' stroke='%23161310' stroke-width='2.4'/%3E%3Ccircle cx='10' cy='17' r='2.3' fill='none' stroke='%23161310' stroke-width='2.4'/%3E%3C/svg%3E") center / 22px no-repeat;
+}
+
+.more-opts > summary::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  margin: -5px 4px 0 auto;
+  border-right: 2.5px solid var(--ink);
+  border-bottom: 2.5px solid var(--ink);
+  transform: rotate(45deg);
+}
+
+.more-opts[open] > summary::after {
+  margin-top: 5px;
+  transform: rotate(-135deg);
+}
+
+.more-opts[open] > summary {
+  border-bottom: 2px dashed rgba(22, 19, 16, 0.18);
+}
+
+.more-text {
+  display: grid;
+  min-width: 0;
+}
+
+.more-title {
+  font-size: 1.08rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.more-sum {
+  overflow: hidden;
+  color: var(--soft);
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.more-body {
+  padding: 4px 16px 16px;
+}
+
+.more-group {
+  padding: 14px 0;
+  border-bottom: 2px dashed rgba(22, 19, 16, 0.15);
+}
+
+.more-group:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.more-group.blank {
+  display: none;
+}
+
+.group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.more-group > .opt-line:first-child,
+.more-group > .look-line:first-child {
+  padding-top: 0;
+}
+
+.more-group .toggles {
+  margin-top: -6px;
+}
+
+.more-group .song-list {
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+/* (Sing's stage and voices, now a part of the panel: no card of its own) */
+.more-opts #singStageStep {
+  margin: 0;
+  padding: 14px 0;
+  border: 0;
+  border-bottom: 2px dashed rgba(22, 19, 16, 0.15);
+  border-radius: 0;
+  box-shadow: none;
+  background: none;
+}
+
+/* The Make button: one big button, above the phone's tab bar, never over the steps */
+.panel-make .make-bar {
+  margin: 0 -18px;
+  padding: 12px 18px calc(12px + env(safe-area-inset-bottom));
+  background: var(--paper);
+  box-shadow: 0 -10px 12px -6px var(--paper);
+}
+
+.panel-make .make-bar .go {
+  min-height: 60px;
+  font-size: 1.4rem;
+}
+
+/* Touch targets: 44 px or more */
+.chips-wrap button,
+.seg button,
+.mini,
+.job-actions .plain,
+.plain,
+.add-song-link,
+.link-btn.add-song-link,
+.tile {
+  min-height: 44px;
+}
+
+.seg button {
+  min-width: 44px;
+}
+
+.mic {
+  min-height: 44px;
+}
+
+.add-song-link {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* ---------- My videos: big pictures, one clear button, the rest under ⋯ ---------- */
+.panel-videos #jobs {
+  gap: 16px;
+}
+
+.job {
+  grid-template-columns: 116px minmax(0, 1fr);
+  gap: 14px;
+  padding: 12px;
+}
+
+.job .thumb {
+  width: 116px;
+  aspect-ratio: 3 / 4;
+}
+
+.job .play span {
+  width: 44px;
+  height: 44px;
+}
+
+.job .play svg {
+  width: 20px;
+  height: 20px;
+}
+
+.job-body {
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 8px;
+}
+
+.job-body > * {
+  grid-column: 1 / -1;
+}
+
+.job-body > .job-title {
+  grid-column: 1;
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 1.05rem;
+  line-height: 1.25;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.job-body > .job-actions {
+  grid-column: 1;
+}
+
+.job-body > .job-more-btn {
+  grid-column: 2;
+  grid-row: auto;
+  align-self: start;
+  margin-top: 10px;
+}
+
+.job-actions {
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.job-actions .plain {
+  padding: 9px 14px;
+  font-size: 0.95rem;
+}
+
+.job-actions .main-act {
+  order: -1; /* (first in sight, wherever it is among the card's buttons) */
+  flex: 1 1 auto;
+  border-width: 2.5px;
+  box-shadow: 3px 3px 0 var(--ink);
+  font-size: 1.02rem;
+  font-weight: 800;
+}
+
+.job-actions .main-act:not(.finish):not(.open) {
+  background: var(--sky);
+}
+
+.job-actions .in-menu {
+  display: none;
+}
+
+/* ⋯ open: the rest, one per line, under the main buttons */
+.job.menu-open .job-actions .in-menu {
+  display: flex;
+  order: 2;
+  flex: 1 1 100%;
+  align-items: center;
+  justify-content: flex-start;
+  margin: 0;
+  padding: 10px 14px;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: none;
+  color: var(--ink);
+  font-size: 0.98rem;
+  font-weight: 700;
+  text-align: left;
+  text-decoration: none;
+}
+
+.job.menu-open .job-actions .in-menu.del {
+  color: #b3261e;
+}
+
+.job-more-btn {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: var(--card);
+  cursor: pointer;
+}
+
+.job-more-btn[aria-expanded="true"] {
+  background: var(--lime);
+}
+
+.job-more-btn:focus-visible,
+.job-actions button:focus-visible {
+  outline: 3px solid var(--grape);
+  outline-offset: 2px;
+}
+
+/* (a card with only ⋯, e.g. waiting in line: ⋯ on the title's line) */
+.job:not(.has-main) .job-body > .job-more-btn {
+  grid-row: 1;
+  margin-top: -4px;
+}
+
+/* Phone: compact top bar, the steps fit the screen */
+@media (max-width: 899px) {
+  .bar.side {
+    padding-top: calc(10px + env(safe-area-inset-top));
+    padding-bottom: 2px;
+  }
+
+  .bar .avatar {
+    width: 48px;
+    height: 48px;
+  }
+
+  .bar .logo {
+    font-size: 1.75rem;
+  }
+
+  .bar .sub {
+    font-size: 0.86rem;
+  }
+
+  .panel-head {
+    margin: 4px 0 12px;
+  }
+
+  .panel-title,
+  .panel.list .list-head .panel-title {
+    font-size: 1.55rem;
+  }
+
+  .panel-make .panel-sub {
+    display: none; /* (the tab says it: room for the steps) */
+  }
+
+  .panel-sub {
+    font-size: 0.92rem;
+  }
+
+  main {
+    padding-bottom: calc(var(--tabbar) + 24px + env(safe-area-inset-bottom));
+  }
+
+  .panel-make .block {
+    padding: 14px;
+  }
+
+  .panel-make .or {
+    margin: 8px 0;
+  }
+
+  .panel-make .tile {
+    min-height: 74px;
+  }
+
+  .panel-make .idea-wrap .idea {
+    height: 112px;
+  }
+
+  .more-opts > summary {
+    padding: 12px 14px;
+  }
+
+  .more-sum {
+    display: -webkit-box;
+    white-space: normal;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .more-body {
+    padding: 4px 14px 14px;
+  }
+
+  .job-actions .main-act {
+    flex: 1 1 100%;
+  }
+
+  /* (the bar sits on the tab bar, which already leaves room for the home indicator: not twice) */
+  .panel-make .make-bar {
+    padding-bottom: 12px;
+  }
+}
+
+/* PC or tablet: a comfortable column; bigger video pictures */
+@media (min-width: 900px) {
+  .panel-make .make-bar {
+    margin: 0;
+    padding: 12px 0 16px;
+  }
+
+  .job {
+    grid-template-columns: 150px minmax(0, 1fr);
+    gap: 18px;
+    padding: 14px;
+  }
+
+  .job .thumb {
+    width: 150px;
+  }
+
+  .job-actions .main-act {
+    flex: 0 1 auto;
+    min-width: 160px;
+  }
+
+  .job.menu-open .job-actions .in-menu {
+    flex: 0 1 auto;
+    order: 2;
+  }
+
+  .job.menu-open .job-actions::before {
+    content: "";
+    order: 1;
+    flex: 1 1 100%;
+    height: 0;
+  }
+}
+
+/* Touch targets on the other tabs: 44 px or more */
+.voice-name,
+.small-input,
+.plan-strip-main,
+.plan-strip-act,
+.plan-name {
+  min-height: 44px;
+}
+
+.voice .hear {
+  flex-basis: 44px;
+}
+
+.tag-chip button {
+  width: 38px;
+  height: 44px;
+}
+
+.plan-acts button {
+  width: 44px;
+  height: 44px;
+}
+
+/* ===================== Studio fixes (v17 review) ===================== */
+
+/* Under the Make button, with a quick preview: what Finish does, and Change (to its switch in the panel). One short
+   line: on a phone the Make bar is fixed above the tab bar. */
+.make-hint {
+  margin: 14px 0 0; /* (room for Change's 44 px target, which reaches above and below its line) */
+  color: var(--soft);
+  font-size: 0.84rem;
+  font-weight: 700;
+  line-height: 1.25;
+  text-align: center;
+}
+
+.make-hint .link-btn {
+  min-height: 44px;
+  margin: -14px 0; /* (a 44 px target that doesn't make the line taller) */
+  padding: 4px 6px;
+  color: var(--ink);
+  font-size: 0.84rem;
+}
+
+/* My videos' tab: ✓ while videos got ready that you haven't seen (the tomato count is videos being made) */
+.tab-count.ready {
+  background: var(--lime);
+}
+
+/* A toast with a button ("Your video is ready. See My videos"): at the top, so for the seconds it shows it never covers
+   the Make button or the tab bar */
+.toast.has-act,
+dialog .toast.has-act {
+  top: calc(12px + env(safe-area-inset-top));
+  bottom: auto;
+  transform: translate(-50%, -200%);
+  width: max-content; /* (not squeezed into the right half: it starts at the middle and is moved back by half its width) */
+  display: flex;
+  align-items: center;
+  gap: 4px 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.toast.has-act.show {
+  transform: translate(-50%, 0);
+}
+
+.toast-act {
+  min-height: 40px;
+  padding: 6px 14px;
+  border: 2px solid var(--paper);
+  border-radius: 10px;
+  background: var(--lime);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+/* Settings says these itself (the update form, the GPU alert, the app's version): not twice on its tab */
+body[data-studio="settings"] #updateBanner,
+body[data-studio="settings"] #gpuBanner,
+body[data-studio="settings"] #setupBusy,
+body[data-studio="settings"] #appUpdateBanner {
+  display: none !important;
+}
+
+/* An update or setup running while another tab shows */
+.banner.busy {
+  background: #fff6c8;
+}
+
+/* "Need an idea?": where the other tab's ideas start */
+.ideas-sep {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 96px;
+  min-height: 92px;
+  margin: 0;
+  padding: 8px;
+  border: 2px dashed rgba(22, 19, 16, 0.35);
+  border-radius: 12px;
+  color: var(--soft);
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.25;
+  text-align: center;
 }

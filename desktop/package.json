@@ -1,0 +1,91 @@
+{
+  "name": "antics-desktop",
+  "productName": "antics",
+  "version": "1.0.1",
+  "description": "antics by TENDHA2 in its own window on Windows",
+  "author": "TENDHA2",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win --x64 --publish never",
+    "dist:linux-dir": "electron-builder --linux dir --x64 --publish never",
+    "test": "node test/unit.js",
+    "test:e2e": "node test/e2e.js",
+    "test:packaged": "node test/packaged.js dist/linux-unpacked/antics"
+  },
+  "devDependencies": {
+    "electron": "45.3.2",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "com.tendha2.antics",
+    "productName": "antics",
+    "copyright": "TENDHA2",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "package.json",
+      "main.js",
+      "preload.js",
+      "lib/**/*.js",
+      "offline.html",
+      "assets/icon.ico",
+      "assets/icon.png"
+    ],
+    "asar": true,
+    "publish": null,
+    "electronFuses": {
+      "runAsNode": false,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "onlyLoadAppFromAsar": true
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico",
+      "executableName": "antics",
+      "signAndEditExecutable": true
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "antics",
+      "uninstallDisplayName": "antics",
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "antics-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "antics-${version}-portable.${ext}"
+    },
+    "linux": {
+      "icon": "assets/icon.png",
+      "executableName": "antics",
+      "category": "Video"
+    }
+  }
+}
