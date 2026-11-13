@@ -1,0 +1,625 @@
+{
+ "format": "glow-scenes",
+ "version": 1,
+ "defaultScene": "party-hall",
+ "cloud": {
+  "stillRules": " Keep the exact same person from the reference photo: the same face and facial features, eye shape, nose, lips, skin tone, hairstyle, hair color, body type and apparent age, so it is clearly them and not a look-alike. Do not beautify, slim or restyle their face. Keep their outfit from the photo if it is visible and suits the scene; otherwise dress them in a tasteful, casual party outfit that fits the scene. Everyone in the image is fully and appropriately dressed. Photorealistic candid vertical smartphone photo (9:16), natural skin texture, realistic hands and proportions, natural depth of field, no text, no captions, no logos, no watermark, no borders.",
+  "motionRules": " Natural, realistic human motion. The main person keeps exactly the same face, hairstyle and outfit as in the first frame for the whole video.",
+  "negative": "blur, distortion, low quality, warped face, face morphing, different person, identity change, extra limbs, extra fingers, deformed hands, flicker, text, subtitles, watermark, logo"
+ },
+ "local": {
+  "who": {
+   "qwen": "Create a realistic vertical smartphone photo of the exact same person from Picture 1, ",
+   "klein": "image 1 is a selfie. Create a realistic vertical photo of the exact same person from image 1, "
+  },
+  "rulesBefore": " Keep the same person’s face, hairstyle and skin tone: identical facial features, eye shape, hair colour and age, so it is clearly them and not a look-alike. ",
+  "defaultFraming": "Knees-up framing, the person centered",
+  "rulesAfter": ", face large in frame and in sharp focus. Keep their outfit if it suits the scene, otherwise a tasteful casual party outfit; everyone is fully and appropriately dressed. Candid vertical smartphone photo, natural skin texture, realistic hands, no text, no logos, no watermark.",
+  "negative": "blurry, distorted face, face morphing, different person, identity change, extra limbs, extra fingers, deformed hands, flicker, static frame, text, subtitles, watermark, logo",
+  "motionEnd": "; realistic natural motion.",
+  "songHint": " Everyone moves in time with the upbeat rhythm of the song.",
+  "tempoHints": {
+   "fast": " Everyone moves in time with a fast {bpm} BPM beat, big energetic moves right on the beat.",
+   "upbeat": " Everyone moves in time with an upbeat {bpm} BPM beat, bouncy moves on the beat.",
+   "slow": " Everyone moves in time with a slow {bpm} BPM groove, smooth and relaxed."
+  },
+  "songLanguage": "es"
+ },
+ "timing": {
+  "shotSeconds": 5,
+  "planDanceSeconds": 5.03,
+  "planLipSeconds": 4.8125,
+  "danceClipSeconds": 5.03125,
+  "lipClipSeconds": 4.8125,
+  "lipAudioSeconds": 5,
+  "songMinSeconds": 10,
+  "songMaxSeconds": 60,
+  "songPadSeconds": 2
+ },
+ "variants": [
+  {
+   "id": "main",
+   "title": "The scene",
+   "still": "",
+   "motion": "",
+   "lstill": "",
+   "lmotion": ""
+  },
+  {
+   "id": "closer",
+   "title": "Closer",
+   "still": " Closer framing, from the waist up.",
+   "motion": " The camera moves in a little closer.",
+   "lstill": ", closer, from the waist up",
+   "lmotion": "; the camera moves in a little closer",
+   "framing": "Waist-up framing, the person centered"
+  },
+  {
+   "id": "angle",
+   "title": "Another angle",
+   "still": " Seen from a slightly different angle, a little to the side.",
+   "motion": " The camera slowly circles around them.",
+   "lstill": ", seen from a slightly different angle",
+   "lmotion": "; the camera slowly circles around them"
+  },
+  {
+   "id": "closeup",
+   "title": "Close-up",
+   "still": " A head-and-shoulders close-up, the face large and sharp.",
+   "motion": " Close-up, they smile right into the camera.",
+   "lstill": ", in a head-and-shoulders close-up",
+   "lmotion": "; Close-up, they smile right into the camera",
+   "framing": "Head-and-shoulders close-up, the face large and centered"
+  }
+ ],
+ "scenes": [
+  {
+   "id": "vip-exit",
+   "name": "VIP Exit",
+   "alt": "Bodyguards & Spanish sing-along",
+   "line": "Walked out by security, then sing with the crowd",
+   "badges": [
+    "With singing",
+    "New"
+   ],
+   "audio": "required",
+   "defaultTrack": "sun",
+   "length": 20,
+   "story": true,
+   "transition": "flash",
+   "soundPrompt": "Audio: an upbeat Spanish rumba-pop song sung by the person and their friends, a cheering crowd, camera shutters, acoustic guitar and handclaps on a city street at night.",
+   "pick": {
+    "5": [
+     "chorus"
+    ],
+    "10": [
+     "escort",
+     "chorus"
+    ],
+    "20": [
+     "escort",
+     "crowd",
+     "sing",
+     "chorus"
+    ]
+   },
+   "song": {
+    "style": "rumba pop, flamenco rumba guitar strumming, handclaps, cajon, festive group chorus, male and female vocals, upbeat, Spanish",
+    "lyrics": "[Verse]\nSe cierra la puerta, se enciende la calle,\nsalimos cantando, ¡que nadie se calle!\n\n[Chorus]\n¡Oé, oé, oé, cantamos hasta el sol!\n¡Oé, oé, oé, con palmas y con voz!\nQue suene la guitarra, que baile el corazón,\n¡oé, oé, oé, la calle es de todos!"
+   },
+   "shots": [
+    {
+     "id": "escort",
+     "title": "Walked out by security",
+     "still": "Place this person walking out of a nightclub door at night like a celebrity, escorted by two tall bodyguards in black suits and earpieces on each side, one bodyguard's hand guiding their shoulder. A friendly crowd behind a rope films them with glowing phones, camera flashes. Three-quarter shot from a phone at chest height, the person centered and sharp, smiling confidently. Deep red and magenta neon light, light haze, the same outfit throughout.",
+     "motion": "Handheld smartphone video. Two bodyguards in black suits walk the person out of the nightclub toward the camera through a cheering crowd filming with phones; camera flashes; the camera moves backward with them.",
+     "local": {
+      "still": "walking out of a nightclub door at night like a celebrity, escorted by two tall bodyguards in black suits on each side, a friendly crowd behind a rope filming with glowing phones, camera flashes, red and magenta neon light, haze",
+      "motion": "The person walks out of the club toward the camera between two bodyguards in black suits; fans cheer and film with phones; flashes twinkle; the handheld camera moves slowly backward; realistic natural motion.",
+      "sing": "The person sings the song with feeling to the camera while bodyguards walk beside them, realistic."
+     }
+    },
+    {
+     "id": "crowd",
+     "title": "Through the fans",
+     "still": "Place this person on a night street outside a nightclub, bodyguards in black suits clearing a path through a big excited crowd of fans holding up phones and reaching for high-fives. Medium shot from a phone at chest height, the person centered, smiling and waving, the same outfit as before. Neon signs, warm streetlights, camera flashes.",
+     "motion": "Handheld smartphone video. The bodyguards clear a path as the person walks through the cheering fans, waving and giving a high-five, while phones film from every side.",
+     "local": {
+      "still": "walking through a big excited crowd of fans on a night street outside a nightclub, bodyguards in black suits clearing a path, fans holding up phones and reaching for high-fives, neon signs, camera flashes",
+      "motion": "The person walks through the cheering fans, waving and giving a high-five while bodyguards clear the way; phones film from every side; handheld camera follows; realistic natural motion.",
+      "sing": "The person sings the song with feeling to the camera among cheering fans, realistic."
+     }
+    },
+    {
+     "id": "sing",
+     "title": "Singing with the group",
+     "still": "Place this person on the night street outside the club, arm in arm with a happy group of Spanish friends, everyone singing loudly together, one friend playing an acoustic guitar, a bodyguard smiling in the background. Three-quarter shot from a phone at chest height, the person centered, the same outfit as before. Neon pink and blue light, warm streetlights.",
+     "motion": "Handheld smartphone video. The person and the group sing loudly together arm in arm, swaying to the rhythm, one friend strumming a guitar, others clapping.",
+     "motionStd": "Handheld smartphone video. The person and the group laugh arm in arm, swaying to the rhythm and clapping, one friend strumming a guitar.",
+     "lyric": {
+      "who": "Everyone sings together in Spanish",
+      "line": "¡Salimos cantando, que nadie se calle!"
+     },
+     "local": {
+      "still": "arm in arm with a happy group of friends on a night street outside a nightclub, everyone singing together, one friend playing an acoustic guitar, a bodyguard in the background, neon pink and blue light",
+      "motion": "The person and friends sway arm in arm to the rhythm, clapping, a friend strumming a guitar; neon lights glow; handheld camera moves slowly backward; realistic natural motion.",
+      "sing": "The person sings the song joyfully in Spanish to the camera, arm in arm with friends singing along, a guitar strumming, realistic."
+     }
+    },
+    {
+     "id": "chorus",
+     "title": "The big chorus",
+     "lipSync": true,
+     "still": "Place this person in a close-up on the night street, singing joyfully with the mouth open mid-song, the group of friends around them singing along with arms raised, fans filming behind them. Head-and-shoulders shot from a phone at face height, the face large and sharp, the same outfit as before. Neon pink and blue light.",
+     "motion": "Handheld smartphone video, close-up. The person sings the chorus with joy while friends around them sing along and raise their arms, phones filming behind.",
+     "motionStd": "Handheld smartphone video, close-up. The person laughs and cheers with a big smile, swaying, while friends raise their arms.",
+     "lyric": {
+      "who": "The person sings the chorus in Spanish",
+      "line": "¡Oé, oé, oé, cantamos hasta el sol!"
+     },
+     "local": {
+      "still": "in a close-up, singing joyfully with the mouth open mid-song on a night street, friends around singing along with raised arms, fans filming behind, neon pink and blue light",
+      "motion": "Close-up: the person smiles widely and sways to the music while friends raise their arms; neon lights glow; slow handheld push-in; realistic natural motion.",
+      "sing": "The person sings the chorus joyfully in Spanish to the camera, friends singing along with raised arms around them, neon lights, realistic.",
+      "framing": "Head-and-shoulders close-up, the face large and centered"
+     }
+    }
+   ]
+  },
+  {
+   "id": "famous-street",
+   "name": "Famous on the Street",
+   "line": "Fans, flashes & high-fives on the way out",
+   "badges": [
+    "Trending"
+   ],
+   "audio": "optional",
+   "defaultTrack": "hype",
+   "length": 20,
+   "story": true,
+   "transition": "flash",
+   "soundPrompt": "Audio: an excited, friendly crowd cheering and whooping, phone camera shutter sounds, upbeat club music spilling from the doorway, no dialogue.",
+   "shots": [
+    {
+     "id": "stairs",
+     "title": "Down the red stairs",
+     "still": "Place this person walking down a wide staircase outside a nightclub at night, smiling in happy surprise. The stairs and walls glow in deep red neon light. A friendly crowd of fans lines both sides of the stairs, holding up their phones to film them, cheering and smiling. Three-quarter shot from a phone at chest height a few steps below, the person centered and sharp. Glowing phone screens, light haze, vivid red and magenta light with warm highlights on their face.",
+     "motion": "Handheld smartphone video. The person walks down the red-lit stairs toward the camera, smiling in happy disbelief, while the crowd on both sides cheers and films them with their phones. The camera moves slowly backward down the stairs.",
+     "local": {
+      "still": "walking down wide nightclub stairs at night, smiling in happy surprise: deep red neon light on the stairs and walls, a friendly crowd of fans on both sides holding up glowing phones to film them, light haze, warm highlights on their face",
+      "motion": "The person walks down the red-lit stairs toward the camera, smiling; fans on both sides cheer and film with their phones; the handheld camera moves slowly backward; realistic natural motion.",
+      "sing": "The person sings the song with feeling right to the camera, smiling in happy surprise, moving to the music, realistic."
+     }
+    },
+    {
+     "id": "highfive",
+     "title": "High-fives & selfies",
+     "still": "Place this person at the bottom of red-lit nightclub stairs at night, laughing as friendly fans reach out to give them high-fives and take selfies with them. Medium shot from a phone at chest height, the person centered, one hand raised for a high-five. Fans hold up glowing phones, a few camera flashes, deep red neon light and light haze.",
+     "motion": "Handheld smartphone video. The person laughs and gives high-fives to the fans reaching toward them, leans in for a quick selfie with one fan, and keeps smiling while phone screens glow all around.",
+     "local": {
+      "still": "laughing with one hand raised for a high-five at the bottom of red-lit nightclub stairs at night: friendly fans reaching out for high-fives and selfies, glowing phone screens, a few camera flashes, deep red light and haze",
+      "motion": "The person laughs and gives high-fives to the fans reaching toward them; phone screens glow; camera flashes twinkle; the handheld camera sways gently; realistic natural motion.",
+      "sing": "The person sings the song with feeling right to the camera, moving to the music, realistic."
+     }
+    },
+    {
+     "id": "wave",
+     "title": "Smile & wave",
+     "still": "Place this person in a close-up outside a nightclub at night, smiling warmly and waving at the camera, with red neon lights and a blurred, cheering crowd holding up phones behind them. Head-and-shoulders shot from a phone at face height, the face large, sharp and well lit.",
+     "motion": "Handheld smartphone video, close-up. The person smiles warmly, waves at the camera and laughs, while the cheering crowd behind them films with their phones and camera flashes twinkle.",
+     "local": {
+      "still": "in a close-up, smiling warmly and waving at the camera outside a nightclub at night: red neon lights and a blurred cheering crowd with phone screens behind them",
+      "motion": "Close-up: the person smiles, waves at the camera and laughs; the blurred crowd behind cheers and films; camera flashes twinkle; slow handheld push-in; realistic natural motion.",
+      "framing": "Head-and-shoulders close-up, the face large and centered",
+      "sing": "The person sings the song with feeling right to the camera, smiling warmly and waving at the camera outside a nightclub at night, moving to the music, realistic."
+     }
+    },
+    {
+     "id": "escort",
+     "title": "Through the crowd",
+     "still": "Place this person walking along a city sidewalk at night outside a club, smiling and waving, while a friendly security guard in a black suit walks beside them and gently clears the way through a cheering crowd of fans holding up phones. Camera flashes, red and white city lights, wet street reflections. Three-quarter shot from a phone at chest height, the person centered.",
+     "motion": "Handheld smartphone video. The person walks forward along the sidewalk, waving to the cheering fans, while a friendly security guard walks beside them and gently guides the way. Camera flashes pop all around. The camera tracks slowly backward.",
+     "local": {
+      "still": "walking along a city sidewalk at night outside a club, smiling and waving, a friendly security guard in a black suit beside them clearing the way through a cheering crowd of fans holding up phones, camera flashes, red city lights, wet street reflections",
+      "motion": "The person walks forward waving to cheering fans while a friendly security guard walks beside them; camera flashes pop; the handheld camera tracks slowly backward; realistic natural motion.",
+      "sing": "The person sings the song with feeling right to the camera, smiling and waving, a friendly security guard in a black suit beside them clearing the way through a cheering crowd of fans holding up phones, camera flashes, red city lights, wet street reflections, moving to the music, realistic."
+     }
+    }
+   ],
+   "pick": {
+    "5": [
+     "stairs"
+    ],
+    "10": [
+     "stairs",
+     "wave"
+    ],
+    "20": [
+     "stairs",
+     "highfive",
+     "wave",
+     "escort"
+    ]
+   }
+  },
+  {
+   "id": "club-exit-sing",
+   "name": "Leaving the Club",
+   "alt": "Sing in Spanish",
+   "line": "Sing out the door with your friends",
+   "badges": [
+    "With singing",
+    "New"
+   ],
+   "audio": "required",
+   "defaultTrack": "sun",
+   "length": 20,
+   "story": true,
+   "transition": "whip",
+   "soundPrompt": "Audio: an upbeat Spanish rumba-pop song sung by the person and their friends, acoustic guitar strumming, handclaps and happy cheering on a city street at night, no other music.",
+   "shots": [
+    {
+     "id": "door",
+     "title": "Out the club door",
+     "still": "Place this person walking out of a nightclub door at night with their arms around two friends, all laughing. Behind them a glowing pink and blue neon sign above the door and a friendly bouncer in a black jacket holding the door open. Three-quarter shot from a phone at chest height on the sidewalk, the person centered and sharp. Night city street, warm streetlights, neon reflections on the pavement.",
+     "motion": "Handheld smartphone video outside a nightclub at night. The person walks out of the club door arm in arm with their friends, laughing and starting to sing, while the bouncer smiles and holds the door. Neon lights glow above them.",
+     "motionStd": "Handheld smartphone video outside a nightclub at night. The person walks out of the club door arm in arm with their friends, laughing and cheering with big smiles, while the bouncer smiles and holds the door. Neon lights glow above them.",
+     "lyric": {
+      "who": "The person and their friends laugh and start singing in Spanish",
+      "line": "¡Se cierra la puerta, se enciende la calle!"
+     },
+     "local": {
+      "still": "walking out of a nightclub door at night with their arms around two friends, all laughing: a glowing pink and blue neon sign above the door, a friendly bouncer holding the door, a night street with warm streetlights and neon reflections",
+      "motion": "The person walks out of the club door toward the camera arm in arm with laughing friends; the bouncer smiles; neon lights glow; the handheld camera moves slowly backward; realistic natural motion.",
+      "sing": "The person sings the song with feeling right to the camera, all laughing, moving to the music, realistic."
+     }
+    },
+    {
+     "id": "street",
+     "title": "Arm in arm, singing",
+     "still": "Place this person on a lively city street at night just outside a nightclub, arm in arm with a group of friends, everyone singing loudly together with happy faces, one friend clapping. Three-quarter shot from a phone at chest height, the person centered. Neon signs, warm streetlights, a few passers-by smiling.",
+     "motion": "Handheld smartphone video on a city street at night. The person and their friends walk arm in arm, singing loudly together and swaying to the rhythm, one friend clapping along.",
+     "motionStd": "Handheld smartphone video on a city street at night. The person and their friends walk arm in arm, laughing, swaying to the rhythm and clapping along with big smiles.",
+     "lyric": {
+      "who": "Everyone sings together in Spanish",
+      "line": "¡Salimos cantando, que nadie se calle!"
+     },
+     "local": {
+      "still": "arm in arm with a group of friends on a lively city street at night outside a nightclub, everyone singing together with happy faces: neon signs, warm streetlights, a friend clapping",
+      "motion": "The person and friends walk arm in arm, swaying to the rhythm and clapping, friends singing along; neon lights glow; the handheld camera moves slowly backward; realistic natural motion.",
+      "sing": "The person sings the song with feeling right to the camera, arm in arm with a group of friends on a lively city street at night outside a nightclub, everyone singing together with happy faces, moving to the music, realistic."
+     }
+    },
+    {
+     "id": "chorus",
+     "title": "The chorus",
+     "lipSync": true,
+     "still": "Place this person in a close-up on a city street at night, singing joyfully with the mouth open mid-song, friends around them singing along with their arms raised. Head-and-shoulders shot from a phone at face height, the face large and sharp, neon pink and blue light with warm streetlight.",
+     "motion": "Handheld smartphone video, close-up. The person sings the chorus with joy, eyes bright, while the friends around them sing along and raise their arms.",
+     "motionStd": "Handheld smartphone video, close-up. The person laughs and cheers with a big smile, swaying to the rhythm, while the friends around them raise their arms.",
+     "lyric": {
+      "who": "The person sings the chorus in Spanish",
+      "line": "¡Oé, oé, oé, cantamos hasta el sol!"
+     },
+     "local": {
+      "still": "in a close-up, singing joyfully with the mouth open mid-song on a city street at night: friends around them singing along with raised arms, neon pink and blue light",
+      "motion": "Close-up: the person smiles widely and sways to the music while friends raise their arms; neon lights glow; slow handheld push-in; realistic natural motion.",
+      "sing": "The person sings the chorus joyfully in Spanish to the camera on a city street at night, friends singing along with raised arms around them, neon lights, realistic.",
+      "framing": "Head-and-shoulders close-up, the face large and centered"
+     }
+    },
+    {
+     "id": "jump",
+     "title": "Everyone jumps",
+     "still": "Place this person in the middle of a group of friends jumping and cheering on a city street at night outside a nightclub, arms in the air, huge smiles, phone flashes from people filming. Full-body to three-quarter shot from a phone at chest height, the person centered. Neon lights and warm streetlights.",
+     "motion": "Handheld smartphone video. The person and their friends jump and cheer together with arms in the air, singing the last line, while phone flashes go off around them.",
+     "motionStd": "Handheld smartphone video. The person and their friends jump and cheer together with arms in the air, laughing, while phone flashes go off around them.",
+     "lyric": {
+      "who": "Everyone sings and cheers in Spanish",
+      "line": "¡Oé, oé, oé, la calle es de todos!"
+     },
+     "local": {
+      "still": "jumping and cheering with arms in the air in the middle of a group of friends on a city street at night outside a nightclub: huge smiles, phone flashes from people filming, neon lights",
+      "motion": "The person and friends jump and cheer with arms in the air; phone flashes go off; neon lights glow; the handheld camera bobs with the crowd; realistic natural motion.",
+      "sing": "The person sings the song with feeling right to the camera, moving to the music, realistic."
+     }
+    }
+   ],
+   "pick": {
+    "5": [
+     "chorus"
+    ],
+    "10": [
+     "street",
+     "chorus"
+    ],
+    "20": [
+     "door",
+     "street",
+     "chorus",
+     "jump"
+    ]
+   },
+   "song": {
+    "style": "rumba pop, flamenco rumba guitar strumming, handclaps, cajon, festive group chorus, male and female vocals, upbeat, Spanish",
+    "lyrics": "[Verse]\nSe cierra la puerta, se enciende la calle,\nsalimos cantando, ¡que nadie se calle!\n\n[Chorus]\n¡Oé, oé, oé, cantamos hasta el sol!\n¡Oé, oé, oé, con palmas y con voz!\nQue suene la guitarra, que baile el corazón,\n¡oé, oé, oé, la calle es de todos!"
+   }
+  },
+  {
+   "id": "party-hall",
+   "name": "Party Hall Dance",
+   "line": "Dance toward the camera at a glam party",
+   "badges": [
+    "Trending"
+   ],
+   "audio": "optional",
+   "defaultTrack": "glow",
+   "length": 5,
+   "stillPrompt": "Place this person in the middle of a big, elegant party hall at night, dancing toward the camera with a big joyful smile. Full-body to three-quarter shot from a phone held at chest height a few steps away, the person centered. Round tables with white cloths, glowing fairy-light trees, warm string lights across the ceiling, pastel balloons and a shiny dance floor. Other guests in nice party clothes dance and laugh all around them, slightly out of focus. Warm pink, violet and golden party lighting with a soft glow.",
+   "motion": "Handheld smartphone video at an elegant party hall. The person in the center dances toward the camera with a big happy smile, moving their shoulders, hips and arms to the beat with playful, confident dance moves, hair swinging, stepping closer to the lens. Guests around them dance, laugh and clap. Fairy lights and balloons twinkle in the background. The camera moves slowly backward with a gentle handheld sway.",
+   "soundPrompt": "Audio: upbeat dance-pop music filling the hall, guests cheering and laughing, the warm buzz of a big party, no dialogue.",
+   "local": {
+    "still": "dancing toward the camera with a big joyful smile in the middle of an elegant party hall at night: round tables with white cloths, glowing fairy-light trees, warm string lights, pastel balloons and a shiny dance floor, other guests dancing around them slightly out of focus, warm pink, violet and golden party lighting",
+    "motion": "The person dances happily toward the camera, smiling, shoulders, arms and hips moving to the beat, hair swaying; guests dance and clap around them; fairy lights twinkle; the handheld smartphone camera slowly moves backward; realistic natural motion.",
+    "sing": "The person sings the song with feeling right to the camera, moving to the music, realistic."
+   }
+  },
+  {
+   "id": "club",
+   "name": "Club Night",
+   "line": "Center of a packed dance floor",
+   "badges": [
+    "Trending"
+   ],
+   "audio": "optional",
+   "defaultTrack": "hype",
+   "length": 5,
+   "stillPrompt": "Place this person in the middle of a packed dance floor in a stylish nightclub, dancing with both hands in the air and a huge smile. Three-quarter shot from a phone at head height, the person centered and sharp. A big crowd of people dancing around them, a DJ booth glowing in the background, neon lights and colorful laser beams cutting through light haze. Vivid magenta, cyan and violet club lighting with bright highlights on their face.",
+   "motion": "Handheld smartphone video in a packed nightclub. The person in the center dances energetically to the beat, hands up, bouncing and turning toward the camera with a big smile, while the crowd around them jumps and cheers. Laser beams sweep through the haze and the lights pulse with the music. The camera bobs gently with the crowd and pushes in slightly.",
+   "soundPrompt": "Audio: pounding upbeat club music with a heavy bass beat, the crowd cheering and whistling, no dialogue.",
+   "local": {
+    "still": "dancing with both hands in the air and a huge smile in the middle of a packed nightclub dance floor: a crowd dancing around them, a glowing DJ booth behind, neon lights and colourful laser beams in light haze, vivid magenta, cyan and violet light on their face",
+    "motion": "The person dances energetically to the beat with hands up, bouncing and turning toward the camera with a big smile; the crowd jumps around them; laser beams sweep through the haze; the handheld camera bobs gently and pushes in slightly; realistic natural motion.",
+    "sing": "The person sings the song with feeling right to the camera, moving to the music, realistic."
+   }
+  },
+  {
+   "id": "spanish",
+   "name": "Canta en Español",
+   "alt": "Singing in Spanish",
+   "line": "Sing a fiesta song with friends",
+   "badges": [
+    "With singing",
+    "New"
+   ],
+   "audio": "required",
+   "defaultTrack": "sun",
+   "length": 10,
+   "stillPrompt": "Place this person in the middle of a joyful backyard fiesta at night, singing happily with a group of friends around them; one friend plays an acoustic guitar. Three-quarter shot from a phone at chest height, the person centered, mouth open mid-song, eyes bright. Warm string lights, colorful papel picado banners overhead and a long table with food and flowers. Warm golden and orange festive lighting.",
+   "motion": "Handheld smartphone video at a warm backyard fiesta at night. The person in the center sings joyfully toward the camera while their friends around them sing along, clap and sway; one friend strums an acoustic guitar.",
+   "lyrics": [
+    {
+     "from": 0,
+     "to": 5,
+     "who": "The person in the center smiles and sings in Spanish",
+     "line": "¡Esta noche brilla, ven y canta conmigo!"
+    },
+    {
+     "from": 5,
+     "to": 10,
+     "who": "The friends join in and everyone sings together in Spanish",
+     "line": "¡Con mis amigos, la vida es una fiesta!"
+    }
+   ],
+   "tail": "Lips matched to the Spanish words, natural happy expressions. The camera slowly circles with a gentle handheld sway.",
+   "soundPrompt": "Audio: a cheerful Latin acoustic song sung in Spanish by the person and their friends, acoustic guitar strumming, hand claps and happy laughter, no other music.",
+   "local": {
+    "still": "singing happily with the mouth open mid-song at a joyful backyard fiesta at night: friends singing around them, one friend playing an acoustic guitar, warm string lights, colourful papel picado banners, warm golden festive lighting",
+    "motion": "The person sings joyfully toward the camera while friends clap and sway around them; one friend strums an acoustic guitar; string lights glow; the handheld camera slowly circles; realistic natural motion.",
+    "sing": "The person sings joyfully in Spanish to the camera at a warm backyard fiesta at night, friends clapping and swaying around them, a friend strumming an acoustic guitar, string lights, realistic."
+   },
+   "song": {
+    "style": "latin acoustic pop, fiesta, acoustic guitar strumming, hand claps, joyful group chorus, female and male vocals, Spanish",
+    "lyrics": "[Verse]\n¡Esta noche brilla, ven y canta conmigo!\nLas luces del patio bailan con la guitarra\n\n[Chorus]\n¡Con mis amigos, la vida es una fiesta!\nCanta, canta, que la noche es nuestra\n¡Con mis amigos, la vida es una fiesta!"
+   }
+  },
+  {
+   "id": "karaoke",
+   "name": "Karaoke Night",
+   "line": "Take the mic, friends cheer you on",
+   "badges": [
+    "With singing"
+   ],
+   "audio": "required",
+   "defaultTrack": "disco",
+   "length": 10,
+   "stillPrompt": "Place this person on a small karaoke stage in a cozy karaoke bar, singing into a microphone with a big smile while friends cheer right in front of them. Three-quarter shot from a phone at chest height, the person centered. A lyrics screen glowing behind them, colorful stage lights and disco-ball sparkles. Purple, pink and blue lighting.",
+   "motion": "Handheld smartphone video in a fun karaoke bar. The person in the center sings into the microphone with confidence, swaying and pointing at their friends, who cheer, wave their arms and sing along.",
+   "lyrics": [
+    {
+     "from": 0,
+     "to": 5,
+     "who": "The person sings into the microphone",
+     "line": "Tonight we’re shining, turn the music up!"
+    },
+    {
+     "from": 5,
+     "to": 10,
+     "who": "Their friends cheer and sing along with them",
+     "line": "Sing it louder, we’re the stars tonight!"
+    }
+   ],
+   "tail": "Lips matched to the words. The camera moves with a gentle handheld sway.",
+   "soundPrompt": "Audio: the person singing an upbeat pop melody through the karaoke speakers over a backing track with drums and synths, friends cheering and clapping.",
+   "local": {
+    "still": "singing into a microphone with a big smile on a small karaoke stage in a cozy karaoke bar: friends cheering right in front of them, a glowing lyrics screen behind, colourful stage lights and disco-ball sparkles, purple, pink and blue lighting",
+    "motion": "The person sings into the microphone and sways, pointing at friends who cheer and wave; disco lights sparkle; the handheld camera sways gently; realistic natural motion.",
+    "sing": "The person sings confidently into a microphone on a small karaoke stage, swaying to the music, friends cheering in front of them, colourful stage lights, realistic."
+   },
+   "song": {
+    "style": "upbeat pop, karaoke backing track, drums, synths, catchy chorus, solo female vocal, Spanish",
+    "lyrics": "[Verse]\n¡Esta noche brillamos, sube la música!\nTomo el micrófono y canto para ti\n\n[Chorus]\n¡Canta más fuerte, somos las estrellas!\nTodos cantan conmigo esta noche\n¡Canta más fuerte, somos las estrellas!"
+   }
+  },
+  {
+   "id": "concert",
+   "name": "Concert Star",
+   "line": "Perform for a huge crowd",
+   "badges": [
+    "New"
+   ],
+   "audio": "recommended",
+   "defaultTrack": "epic",
+   "length": 5,
+   "stillPrompt": "Place this person performing on a big concert stage, holding a microphone and reaching toward a huge cheering crowd with a joyful, confident expression. Three-quarter shot from the front of the stage, the person centered and lit by bright spotlights. Thousands of fans with raised hands and phone lights, a giant light rig with beams overhead, light haze. Deep blue and violet stage lighting with warm white spotlights.",
+   "motion": "Smartphone video from the front of a huge concert. The person on stage performs with energy, singing into the microphone, raising one arm to the crowd and walking toward the edge of the stage, while thousands of fans jump and wave their hands and phone lights. Spotlights sweep across the stage.",
+   "motionStd": "Smartphone video from the front of a huge concert. The person on stage soaks up the moment, holding the microphone out toward the cheering crowd, dancing to the beat with a big closed-mouth smile, raising one arm and walking toward the edge of the stage, while thousands of fans jump and wave their hands and phone lights. Spotlights sweep across the stage.",
+   "lyrics": [
+    {
+     "from": 0,
+     "to": 5,
+     "who": "The person sings into the microphone",
+     "line": "Hands up high, this is our night!"
+    },
+    {
+     "from": 5,
+     "to": 10,
+     "who": "The crowd sings back as the person smiles and points at them",
+     "line": "This is our night!"
+    }
+   ],
+   "tail": "Lips matched to the words. The camera slowly pushes in.",
+   "soundPrompt": "Audio: a live pop-rock performance with drums, bass and guitar, the person singing, a huge crowd roaring and singing along.",
+   "local": {
+    "still": "performing on a big concert stage, holding a microphone and reaching toward a huge cheering crowd with a joyful, confident expression: bright spotlights on them, thousands of fans with raised hands and phone lights, a giant light rig with beams, light haze, deep blue and violet stage lighting",
+    "motion": "The person on stage dances to the beat with a big closed-mouth smile, holding the microphone out toward the crowd and raising one arm; fans jump and wave their phone lights; spotlights sweep across the stage; the camera slowly pushes in; realistic natural motion.",
+    "sing": "The person sings passionately into a microphone on a big concert stage, raising one arm to a huge cheering crowd, bright spotlights sweeping, realistic."
+   },
+   "song": {
+    "style": "pop rock anthem, live concert, drums, bass, electric guitar, crowd chanting, male vocal, Spanish",
+    "lyrics": "[Verse]\nLas luces se encienden, el público grita\n¡Manos arriba, esta es nuestra noche!\n\n[Chorus]\n¡Esta es nuestra noche!\nCantamos todos juntos bajo las luces\n¡Esta es nuestra noche!"
+   }
+  },
+  {
+   "id": "wedding",
+   "name": "Wedding Dance",
+   "line": "Own the reception dance floor",
+   "badges": [],
+   "audio": "optional",
+   "defaultTrack": "dream",
+   "length": 5,
+   "stillPrompt": "Place this person on the dance floor of a beautiful wedding reception, dancing happily with a radiant smile. Three-quarter shot from a phone at chest height, the person centered. Guests around them clap and dance, round tables with flowers and candles, hanging string lights and soft drapery. Warm champagne, blush and golden lighting with soft bokeh.",
+   "motion": "Handheld smartphone video at a wedding reception. The person in the center dances joyfully toward the camera with graceful, happy moves and one twirl, while guests around them clap, cheer and dance. String lights twinkle overhead.",
+   "soundPrompt": "Audio: a joyful upbeat wedding dance song, guests clapping along and cheering, no dialogue.",
+   "local": {
+    "still": "dancing happily with a radiant smile on the dance floor of a beautiful wedding reception: guests clapping and dancing around them, round tables with flowers and candles, hanging string lights, warm champagne, blush and golden lighting with soft bokeh",
+    "motion": "The person dances joyfully toward the camera with graceful, happy moves and one twirl; guests clap and cheer around them; string lights twinkle overhead; the handheld camera moves slowly backward; realistic natural motion.",
+    "sing": "The person sings the song with feeling right to the camera, moving to the music, realistic."
+   }
+  },
+  {
+   "id": "birthday",
+   "name": "Birthday Party",
+   "line": "Cake, confetti & your crew",
+   "badges": [],
+   "audio": "optional",
+   "defaultTrack": "glow",
+   "length": 5,
+   "stillPrompt": "Place this person at a fun birthday party at home, standing behind a birthday cake with lit candles and laughing, with friends around them cheering and throwing confetti. Three-quarter shot from a phone at chest height, the person centered. Colorful balloons and streamers, confetti in the air. Warm, bright party lighting.",
+   "motion": "Handheld smartphone video at a birthday party. The person in the center laughs, leans in and blows out the candles on the cake, then throws their arms up as their friends cheer, clap and toss confetti.",
+   "soundPrompt": "Audio: friends shouting \"Make a wish!\", then cheering, clapping and laughing, party poppers popping, light happy background music.",
+   "local": {
+    "still": "laughing behind a birthday cake with lit candles at a fun birthday party at home: friends around them cheering and throwing confetti, colourful balloons and streamers, warm, bright party lighting",
+    "motion": "The person laughs, leans in and blows out the candles, then throws their arms up; friends cheer, clap and toss confetti; the handheld camera sways gently; realistic natural motion.",
+    "sing": "The person sings the song with feeling right to the camera, moving to the music, realistic."
+   }
+  },
+  {
+   "id": "beach",
+   "name": "Beach Party",
+   "line": "Sunset dancing by the sea",
+   "badges": [],
+   "audio": "optional",
+   "defaultTrack": "sun",
+   "length": 5,
+   "stillPrompt": "Place this person at a beach party at sunset, dancing barefoot on the sand with a carefree smile while friends dance around them. Three-quarter shot from a phone at chest height, the person centered. A golden sun low over the sea, gentle waves, a small bonfire and string lights between palm trees. Warm orange, pink and gold sunset light with a soft rim light on their hair.",
+   "motion": "Handheld smartphone video at a sunset beach party. The person in the center dances happily on the sand, swaying and spinning toward the camera, while friends dance around them and waves roll in behind. Their hair moves in the sea breeze.",
+   "soundPrompt": "Audio: summery upbeat tropical house music, waves on the shore, friends laughing and cheering, no dialogue.",
+   "local": {
+    "still": "dancing barefoot on the sand with a carefree smile at a sunset beach party: friends dancing around them, a golden sun low over the sea, gentle waves, a small bonfire and string lights between palm trees, warm orange, pink and gold sunset light",
+    "motion": "The person dances happily on the sand, swaying and spinning toward the camera; friends dance around them; waves roll in behind; hair moves in the sea breeze; the handheld camera moves slowly backward; realistic natural motion.",
+    "sing": "The person sings the song with feeling right to the camera, moving to the music, realistic."
+   }
+  },
+  {
+   "id": "rooftop",
+   "name": "Rooftop Party",
+   "line": "City lights, night vibes",
+   "badges": [],
+   "audio": "optional",
+   "defaultTrack": "neon",
+   "length": 5,
+   "stillPrompt": "Place this person at a stylish rooftop party at night, dancing with a big smile with friends around them. Three-quarter shot from a phone at chest height, the person centered. A glittering city skyline behind them, warm string lights, lounge seating and plants. Deep blue night sky with warm golden lights and city bokeh.",
+   "motion": "Handheld smartphone video at a rooftop party at night. The person in the center dances with smooth, happy moves and turns toward the camera, while friends dance and laugh around them and the city skyline glitters behind.",
+   "soundPrompt": "Audio: smooth upbeat house music, friends laughing and chatting, a light city breeze, no dialogue.",
+   "local": {
+    "still": "dancing with a big smile at a stylish rooftop party at night: friends around them, a glittering city skyline behind, warm string lights, lounge seating and plants, a deep blue night sky with golden city bokeh",
+    "motion": "The person dances with smooth, happy moves and turns toward the camera; friends dance and laugh around them; the city lights glitter behind; the handheld camera drifts slowly sideways; realistic natural motion.",
+    "sing": "The person sings the song with feeling right to the camera, moving to the music, realistic."
+   }
+  },
+  {
+   "id": "street",
+   "name": "Street Dance",
+   "line": "Dance with a crew downtown",
+   "badges": [],
+   "audio": "optional",
+   "defaultTrack": "hype",
+   "length": 5,
+   "stillPrompt": "Place this person in the middle of a city street at golden hour, dancing with a crew of street dancers around them, mid-move in a confident pose. Full-body shot from a phone at waist height, the person centered. Colorful murals, shop fronts and a few passers-by watching and filming. Warm golden-hour sunlight with long shadows.",
+   "motion": "Handheld smartphone video on a city street. The person in the center dances a confident, energetic street-dance routine with sharp, rhythmic moves while the crew behind them dances in sync and passers-by cheer. The camera moves slightly backward, low and steady.",
+   "soundPrompt": "Audio: a punchy hip-hop beat from a portable speaker, the crew cheering and clapping, city ambience, no dialogue.",
+   "local": {
+    "still": "mid-move in a confident dance pose in the middle of a city street at golden hour: a crew of street dancers around them, colourful murals and shop fronts, a few passers-by watching, warm golden-hour sunlight with long shadows",
+    "motion": "The person dances a confident, energetic street-dance routine with sharp, rhythmic moves; the crew behind them dances in sync and passers-by cheer; the low handheld camera moves slowly backward; realistic natural motion.",
+    "sing": "The person sings the song with feeling right to the camera, mid-move in a confident dance pose in the middle of a city street at golden hour, moving to the music, realistic."
+   }
+  },
+  {
+   "id": "festival",
+   "name": "Festival",
+   "line": "Colors, confetti, big crowd",
+   "badges": [
+    "New"
+   ],
+   "audio": "optional",
+   "defaultTrack": "disco",
+   "length": 5,
+   "stillPrompt": "Place this person in a big outdoor music festival crowd in the afternoon, dancing with arms up and a huge smile while colorful confetti falls. Three-quarter shot from a phone at head height, the person centered. Happy festival-goers around them, colorful flags and a big stage in the distance. Bright, warm sunlight with vivid colors.",
+   "motion": "Handheld smartphone video in a sunny festival crowd. The person in the center dances and jumps with arms raised, laughing as colorful confetti rains down, while the crowd around them dances and cheers.",
+   "soundPrompt": "Audio: an energetic festival dance track from the main stage, the crowd cheering, confetti cannons popping, no dialogue.",
+   "local": {
+    "still": "dancing with arms up and a huge smile in a big outdoor music festival crowd in the afternoon: colourful confetti falling, happy festival-goers around them, colourful flags and a big stage in the distance, bright warm sunlight and vivid colours",
+    "motion": "The person dances and jumps with arms raised, laughing as colourful confetti rains down; the crowd dances and cheers around them; the handheld camera bobs with the crowd; realistic natural motion.",
+    "sing": "The person sings the song with feeling right to the camera, moving to the music, realistic."
+   }
+  },
+  {
+   "id": "redcarpet",
+   "name": "Red Carpet",
+   "line": "Pose for the cameras",
+   "badges": [],
+   "audio": "optional",
+   "defaultTrack": "golden",
+   "length": 5,
+   "stillPrompt": "Place this person on a red carpet at a glamorous premiere at night, posing confidently with a warm smile while photographers take pictures. Full-body to three-quarter shot, the person centered on the red carpet. Velvet ropes, a softly lit backdrop and a row of photographers with bright camera flashes. Glamorous warm lighting with flash highlights.",
+   "motion": "Smartphone video at a red carpet premiere. The person in the center walks forward along the red carpet with confident style, stops, turns to pose and waves at the photographers, smiling as camera flashes pop all around.",
+   "soundPrompt": "Audio: rapid camera shutter clicks, an excited crowd cheering, soft glamorous background music, no dialogue.",
+   "local": {
+    "still": "posing confidently with a warm smile on a red carpet at a glamorous premiere at night: velvet ropes, a softly lit backdrop, a row of photographers with bright camera flashes, glamorous warm lighting",
+    "motion": "The person walks forward along the red carpet with confident style, stops, turns to pose and waves at the photographers; camera flashes pop all around; the handheld camera tracks slowly backward; realistic natural motion.",
+    "sing": "The person sings the song with feeling right to the camera, moving to the music, realistic."
+   }
+  }
+ ]
+}
