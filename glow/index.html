@@ -423,7 +423,7 @@
       <div class="ai-own" id="aiOwn" hidden>
         <button type="button" class="ai-own-pick" id="aiOwnEmpty">
           <span class="ai-own-pico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 15V4M8 8l4-4 4 4"/><path d="M5 14v4.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V14"/></svg></span>
-          <span class="ai-own-pt"><b>Choose a song file</b><small>MP3, M4A, WAV or OGG · up to 20 MB</small></span>
+          <span class="ai-own-pt"><b>Choose a song or a video</b><small>MP3, M4A, WAV, OGG · or a video (MP4, MOV) to use its sound</small></span>
         </button>
         <div class="ai-own-box" id="aiOwnBox" hidden>
           <div class="ai-own-h">
@@ -444,7 +444,7 @@
         </div>
         <p class="ai-own-st" id="aiOwnSt" role="status" aria-live="polite"></p>
         <p class="ai-own-rights"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.4v.1"/></svg>Only use music you have the rights to.</p>
-        <input type="file" id="aiOwnFile" accept="audio/*,.mp3,.m4a,.aac,.wav,.ogg,.oga,.opus,.flac" hidden>
+        <input type="file" id="aiOwnFile" accept="audio/*,video/mp4,video/quicktime,video/webm,.mp3,.m4a,.aac,.wav,.ogg,.oga,.opus,.flac,.mp4,.mov,.webm" hidden>
       </div>
       <div class="group ai-len ai-sync" id="aiSyncGroup" hidden>
         <span class="glabel" id="aiSyncL">Sync to the song</span>
@@ -465,6 +465,9 @@
           <button type="button" class="opt" data-quality="fast" aria-pressed="false"><b>Fast</b><small class="ai-len-cost" id="aiQualFast"></small></button>
         </div>
         <p class="ai-qual-note" id="aiQualNote"></p>
+      </div>
+      <div class="group ai-hq" id="aiHqGroup" hidden>
+        <label class="ai-hq-row"><input type="checkbox" id="aiHq"> <span><b>Extra realism</b> <small id="aiHqNote">Smoother movement and clearer lip movement when singing. Takes about twice as long.</small></span></label>
       </div>
       <p class="ai-tier" id="aiTier"></p>
     </article>

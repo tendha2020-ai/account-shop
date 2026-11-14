@@ -512,6 +512,13 @@
   function mult16(v, d) { v = Math.round(num(v, d) / 16) * 16; return clamp(v, 16, 4096); }
   function str(v, d) { return typeof v === 'string' && v.trim() ? v.trim() : d; }
 
+  // Realism wording added to every motion / singing prompt, and the step count of "Extra realism" (opts.realism).
+  var REAL_MOTION = 'Natural, fluid body movement with realistic weight and timing, the face stays the same person, sharp facial detail, photorealistic smartphone footage.';
+  var REAL_SING = 'The lips, jaw and tongue move clearly and naturally with every sung word, teeth visible, expressive eyes and eyebrows, natural blinking, slight head and shoulder movement with the rhythm, sharp detailed face, photorealistic.';
+  var HQ_STEPS = 8;
+  function withRealism(text, extra) { text = String(text || '').trim(); return text.indexOf(extra) >= 0 ? text : (text ? text + ' ' : '') + extra; }
+  function hqSteps(v) { v = Math.round(Number(v) || 0); return v >= 6 ? Math.min(12, v + (v % 2)) : 4; }
+
   var graphs = {
     // still({image, prompt, seed, job, model:'qwen'|'klein', width?, height?})
     still: function (o) {
@@ -534,6 +541,12 @@
       if (str(o.negativePrompt, '')) g['4'].inputs.text = NEG_WAN + '，' + o.negativePrompt.trim(); // inert at cfg 1, kept for parity
       if (o.width || o.height) { g['6'].inputs.width = mult16(o.width, 480); g['6'].inputs.height = mult16(o.height, 832); }
       if (o.length) g['6'].inputs.length = clamp(Math.round((num(o.length, 81) - 1) / 4) * 4 + 1, 5, 161);
+      g['3'].inputs.text = withRealism(g['3'].inputs.text, REAL_MOTION);
+      var vs = hqSteps(o.steps);
+      if (vs > 4) { // "Extra realism": more sampling steps, still split half/half between the two Wan experts
+        g['13'].inputs.steps = vs; g['13'].inputs.end_at_step = vs / 2;
+        g['14'].inputs.steps = vs; g['14'].inputs.start_at_step = vs / 2; g['14'].inputs.end_at_step = vs;
+      }
       if (o.rife === false) {
         // spec variant "No RIFE": delete 16 and 17, 18.images = ["15", 0], fps 16
         delete g['16']; delete g['17'];
@@ -558,10 +571,13 @@
     // s2v({image, audio, offset, prompt, seed, job})
     s2v: function (o) {
       o = o || {};
-      return fill(TEMPLATES.s2v, {
+      var gs = fill(TEMPLATES.s2v, {
         STILL: String(o.image || ''), SONG: String(o.audio || ''), SONG_OFFSET_S: Math.max(0, Math.round(num(o.offset, 0) * 100) / 100),
-        SING_PROMPT: str(o.prompt, DEFAULT_SING_PROMPT), SEED: seedOf(o.seed), JOB: safeJob(o.job)
+        SING_PROMPT: withRealism(str(o.prompt, DEFAULT_SING_PROMPT), REAL_SING), SEED: seedOf(o.seed), JOB: safeJob(o.job)
       });
+      var ss = hqSteps(o.steps);
+      if (ss > 4) gs['14'].inputs.steps = ss; // "Extra realism": clearer mouth shapes
+      return gs;
     },
     templates: TEMPLATES,
     outputNode: OUTPUT_NODE,
@@ -1005,7 +1021,7 @@
   function stageSec(rec, stage) {
     if (stage === 'still') return rec.stillModel === 'klein' ? STAGE_SEC.stillKlein : STAGE_SEC.stillQwen;
     if (stage === 'song') return STAGE_SEC.song;
-    if (stage === 'video') { var vp = videoPlan(rec); return vp.kind === 's2v' ? STAGE_SEC.s2v : (rec.quality === 'fast' ? STAGE_SEC.videoFast : STAGE_SEC.video); }
+    if (stage === 'video') { var vp = videoPlan(rec); return (rec.hq ? 1.9 : 1) * (vp.kind === 's2v' ? STAGE_SEC.s2v : (rec.quality === 'fast' ? STAGE_SEC.videoFast : STAGE_SEC.video)); }
     return STAGE_SEC[stage] || 5;
   }
   function graphFor(rec, stage) {
@@ -1021,10 +1037,10 @@
     var vp = videoPlan(rec);
     var still = annotated(rec.outputs.still);
     if (vp.kind === 's2v') {
-      return { graph: graphs.s2v({ image: still, audio: annotated(rec.outputs.song), offset: rec.singing.offset, prompt: rec.singing.prompt || DEFAULT_SING_PROMPT, seed: rec.seed, job: rec.id }), out: OUTPUT_NODE.s2v,
+      return { graph: graphs.s2v({ image: still, audio: annotated(rec.outputs.song), offset: rec.singing.offset, prompt: rec.singing.prompt || DEFAULT_SING_PROMPT, seed: rec.seed, job: rec.id, steps: rec.hq ? HQ_STEPS : 4 }), out: OUTPUT_NODE.s2v,
         message: 'Making you sing… (this is the slow part)', loadingMessage: 'Loading the singing model…' };
     }
-    return { graph: graphs.video({ image: still, prompt: rec.prompts.motion, negativePrompt: rec.prompts.negative, seed: rec.seed, job: rec.id, width: vp.width, height: vp.height, length: vp.length, rife: vp.rife }), out: OUTPUT_NODE.video,
+    return { graph: graphs.video({ image: still, prompt: rec.prompts.motion, negativePrompt: rec.prompts.negative, seed: rec.seed, job: rec.id, width: vp.width, height: vp.height, length: vp.length, rife: vp.rife, steps: rec.hq ? HQ_STEPS : 4 }), out: OUTPUT_NODE.video,
       message: 'Bringing the scene to life… (this is the slow part)', loadingMessage: 'Loading the video model…' };
   }
 
@@ -1207,7 +1223,7 @@
       }
       var rec = {
         v: 1, id: newJobId(), clientId: 'glow-' + uuid().replace(/-/g, '').slice(0, 20), startedAt: now(), updatedAt: now(),
-        quality: quality, stillModel: quality === 'fast' && packInstalled(s, 'fast') ? 'klein' : 'qwen', seed: seedOf(opts.seed),
+        hq: !!opts.realism, quality: quality, stillModel: quality === 'fast' && packInstalled(s, 'fast') ? 'klein' : 'qwen', seed: seedOf(opts.seed),
         prompts: { still: String(opts.stillPrompt || '').trim(), motion: String(opts.motionPrompt || '').trim(), negative: str(opts.negativePrompt, '') },
         singing: sg, selfie: null, stage: 'upload', promptId: null, outputs: {}, done: {}, timings: {}
       };
@@ -1265,8 +1281,8 @@
   function storyStepSec(rec, key) {
     var st = stepParts(key).stage;
     if (st === 'still') return rec.stillModel === 'klein' ? STAGE_SEC.stillKlein : STAGE_SEC.stillQwen;
-    if (st === 'video') return rec.quality === 'fast' ? STAGE_SEC.videoFast : STAGE_SEC.video;
-    if (st === 'lipsync') return STAGE_SEC.s2v;
+    if (st === 'video') return (rec.hq ? 1.9 : 1) * (rec.quality === 'fast' ? STAGE_SEC.videoFast : STAGE_SEC.video);
+    if (st === 'lipsync') return (rec.hq ? 1.9 : 1) * STAGE_SEC.s2v;
     if (st === 'song') return STAGE_SEC.song;
     if (st === 'upload') return needsAudioFile(rec) ? STAGE_SEC.upload * 2 : STAGE_SEC.upload;
     if (st === 'download') return STAGE_SEC.download * rec.shots.length;
@@ -1302,11 +1318,11 @@
     if (sp.stage === 'lipsync') {
       var fromSong = rec.audioSource === 'song';
       return { graph: graphs.s2v({ image: still, audio: fromSong ? annotated(rec.outputs.song) : rec.audio.file, offset: fromSong ? sh.offset : sh.offset - rec.audio.start,
-        prompt: sh.motion || DEFAULT_SING_PROMPT, seed: shotSeed(rec.seed, i), job: job }),
+        prompt: sh.motion || DEFAULT_SING_PROMPT, seed: shotSeed(rec.seed, i), job: job, steps: rec.hq ? HQ_STEPS : 4 }),
         out: OUTPUT_NODE.s2v, message: 'Making you sing' + (of ? ' in shot' + of : '') + '… (this is the slow part)', loadingMessage: 'Loading the singing model…' };
     }
     var fast = rec.quality === 'fast';
-    return { graph: graphs.video({ image: still, prompt: sh.motion, negativePrompt: sh.negative, seed: shotSeed(rec.seed, i), job: job, width: fast ? 384 : 480, height: fast ? 672 : 832, length: 81, rife: true }),
+    return { graph: graphs.video({ image: still, prompt: sh.motion, negativePrompt: sh.negative, seed: shotSeed(rec.seed, i), job: job, width: fast ? 384 : 480, height: fast ? 672 : 832, length: 81, rife: true, steps: rec.hq ? HQ_STEPS : 4 }),
       out: OUTPUT_NODE.video, message: (of ? 'Bringing shot' + of + ' to life' : 'Bringing the scene to life') + '… (this is the slow part)', loadingMessage: 'Loading the video model…' };
   }
 
@@ -1429,7 +1445,7 @@
       dropFailedStory();
       var rec = {
         v: 1, kind: 'story', id: newJobId(), clientId: 'glow-' + uuid().replace(/-/g, '').slice(0, 20), startedAt: now(), updatedAt: now(),
-        quality: quality, stillModel: quality === 'fast' && packInstalled(st, 'fast') ? 'klein' : 'qwen', seed: seedOf(opts.seed),
+        hq: !!opts.realism, quality: quality, stillModel: quality === 'fast' && packInstalled(st, 'fast') ? 'klein' : 'qwen', seed: seedOf(opts.seed),
         shots: plan.shots, song: plan.song, audioSource: plan.source,
         audio: plan.source === 'user' ? { base: plan.base, start: plan.wav ? plan.wav.start : plan.base, needed: !!plan.wav, file: null } : null,
         selfie: null, stage: 'upload', promptId: null, promptIds: [], outputs: {}, done: {}, timings: {}, failed: null
@@ -1685,8 +1701,9 @@
     add(fast && hasFast ? STORY_MIN.stillKlein : STORY_MIN.stillQwen, n);
     add(STORY_MIN.swap, (song ? 1 : 0) + (n - lip > 0 ? 1 : 0) + (lip > 0 ? 1 : 0));
     if (song) add(STORY_MIN.song);
-    add(fast ? STORY_MIN.videoFast : STORY_MIN.video, n - lip);
-    add(STORY_MIN.s2v, lip);
+    var hqk = o.realism ? 1.9 : 1;
+    add(fast ? STORY_MIN.videoFast : STORY_MIN.video, (n - lip) * hqk);
+    add(STORY_MIN.s2v, lip * hqk);
     var laptop = isLaptop(o);
     if (laptop) { lo *= 1.2; hi *= 1.4; }
     var a = Math.max(1, Math.round(lo)), b = Math.max(a + 1, Math.ceil(hi));
@@ -1821,6 +1838,7 @@
     var key = singing ? (lip ? 'sing' : (fast ? 'songFast' : 'songBest')) : (fast ? (hasFast ? 'fast' : 'fastNoPack') : 'best');
     var laptop = isLaptop(o);
     var m = ESTIMATES[key][laptop ? 'laptop' : 'desktop'];
+    if (o.realism) m = [Math.round(m[0] * 1.6), Math.ceil(m[1] * 1.7)];
     return {
       minutes: [m[0], m[1]], key: key, laptop: laptop,
       note: 'Estimate for an RTX 5060 with 8 GB. The first video after starting the engine takes about a minute longer.'

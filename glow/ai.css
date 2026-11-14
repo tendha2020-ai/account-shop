@@ -808,3 +808,9 @@ html:not([data-guest]) .guest-only { display: none !important; }
 .ai-steps li[data-state="wait"] { background: rgba(250, 204, 21, .07); border-color: rgba(250, 204, 21, .32); }
 .ai-steps li[data-state="wait"] .ai-sn { border-color: rgba(250, 204, 21, .6); }
 .ai-pv[data-wait] .ai-pv-ring, .ai-pv[data-wait] .ai-pv-scan { display: none; }
+
+/* "Extra realism" (free AI on this PC): more sampling steps for motion and lip-sync */
+.ai-hq-row { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 14px; border: 1px solid var(--line, rgba(255,255,255,.12)); background: rgba(255,255,255,.04); cursor: pointer; }
+.ai-hq-row input { width: 20px; height: 20px; margin: 2px 0 0; flex: none; accent-color: #9b5cff; }
+.ai-hq-row b { display: block; font-size: 14px; }
+.ai-hq-row small { display: block; margin-top: 2px; font-size: 12px; line-height: 1.4; color: var(--faint); }

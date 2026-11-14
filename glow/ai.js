@@ -248,7 +248,8 @@
     consent: false,
     memKey: '',                              // used only if localStorage is blocked
     engine: 'fal',                           // 'local' (free, on this PC) or 'fal' (cloud); see decideEngine()
-    quality: prefs.quality === 'fast' ? 'fast' : 'best' // free AI on this PC: Best or Fast
+    quality: prefs.quality === 'fast' ? 'fast' : 'best', // free AI on this PC: Best or Fast
+    hq: prefs.hq === true // "Extra realism": more steps for motion and lip-sync (about twice as long)
   };
   var el = {
     tabs: Array.prototype.slice.call(document.querySelectorAll('.mode-tab')),
@@ -1532,9 +1533,9 @@
     var m = null;
     if (plan.local === 'story') {
       var shots = plan.shots.map(function (x) { return { id: x.shot.id, lipSync: x.lip }; });
-      var o = { shots: shots, quality: plan.quality, song: plan.sound === 'ai', lipSync: plan.lips };
+      var o = { shots: shots, quality: plan.quality, song: plan.sound === 'ai', lipSync: plan.lips, realism: hqOn() };
       try { m = LOC.api.estimateStory(o).minutes; } catch (e) { m = null; }
-      if (!validRange(m)) { try { m = LOC.api.estimateStory({ shots: shots.length, quality: plan.quality, song: plan.sound === 'ai', lipSync: plan.lips }).minutes; } catch (e) { m = null; } }
+      if (!validRange(m)) { try { m = LOC.api.estimateStory({ shots: shots.length, quality: plan.quality, song: plan.sound === 'ai', lipSync: plan.lips, realism: hqOn() }).minutes; } catch (e) { m = null; } }
       if (!validRange(m)) {
         // still + clip: Best about 6–9½ min, Fast 3–5; a lip-synced shot 6–9; the song 1–2 (RTX 5060, from the spec)
         var lo = 0, hi = 0;
@@ -1545,7 +1546,7 @@
       return m;
     }
     m = [5, 8];
-    try { m = LOC.api.estimate({ quality: plan.quality, singing: plan.sound === 'ai' && !!plan.sc.song }).minutes; } catch (e) { /* defaults */ }
+    try { m = LOC.api.estimate({ quality: plan.quality, singing: plan.sound === 'ai' && !!plan.sc.song, realism: hqOn() }).minutes; } catch (e) { /* defaults */ }
     return m;
   }
   function validRange(m) { return Array.isArray(m) && m.length === 2 && m[0] > 0 && m[1] >= m[0] && m[1] < 600; }
@@ -1681,6 +1682,9 @@
     // Quality (this PC). A singing or lip-synced video has one speed: the lip-sync step decides, so Best/Fast would read the same.
     var plan = planFor(sc, { sound: sound });
     if (el.qualGroup) el.qualGroup.hidden = !local || sound === 'ai' || plan.lips > 0;
+    var hqG = document.getElementById('aiHqGroup'), hqC = document.getElementById('aiHq');
+    if (hqG) hqG.hidden = !local || GUEST;
+    if (hqC) hqC.checked = !!S.hq;
     if (local) {
       var fastPack = localPack('fast');
       Array.prototype.forEach.call(el.qual.querySelectorAll('.opt'), function (b) {
@@ -1734,7 +1738,7 @@
     if (el.conn && !el.conn.hidden && connectThen === 'make') el.keySave.textContent = 'Save & make my video · ' + money(falCost(sc, sound, S.duration));
   }
   function updateAll() { updateSceneUI(); updateSoundUI(); updateCost(); renderSee(); }
-  function savePrefs() { lsSet(LS.prefs, JSON.stringify({ sceneId: S.sceneId, sound: S.sound, userSound: S.userSound, userLen: S.userLen, trackId: S.trackId, duration: S.duration, quality: S.quality, sync: S.sync })); }
+  function savePrefs() { lsSet(LS.prefs, JSON.stringify({ sceneId: S.sceneId, sound: S.sound, userSound: S.userSound, userLen: S.userLen, trackId: S.trackId, duration: S.duration, quality: S.quality, hq: !!S.hq, sync: S.sync })); }
 
   /* ------------------------------------------------------------------ *
    * My song: the user's own audio file as the soundtrack (both engines, every scene)
@@ -1744,7 +1748,8 @@
    * downbeat). The file stays on this device (IndexedDB, so a video finishing after a reload still has it) and is only
    * ever sent to this PC's own AI engine when a shot is lip-synced to it. Only music the user has the rights to.
    * ------------------------------------------------------------------ */
-  var OWN_MAX = 20 * 1024 * 1024, OWN_TYPES = /^audio\/(mpeg|mp3|mp4|x-m4a|m4a|aac|wav|x-wav|wave|vnd\.wave|ogg|webm|flac|x-flac)$/i, OWN_EXT = /\.(mp3|m4a|aac|mp4|wav|wave|ogg|oga|opus|webm|flac)$/i;
+  var OWN_MAX = 20 * 1024 * 1024, OWN_TYPES = /^(audio\/(mpeg|mp3|mp4|x-m4a|m4a|aac|wav|x-wav|wave|vnd\.wave|ogg|webm|flac|x-flac)|video\/(mp4|quicktime|webm))$/i, OWN_EXT = /\.(mp3|m4a|aac|mp4|mov|wav|wave|ogg|oga|opus|webm|flac)$/i;
+  var OWN_VIDEO = /^video\//i, OWN_VIDEO_EXT = /\.(mp4|mov|webm)$/i, OWN_VIDEO_MAX = 48 * 1024 * 1024; // "use the sound of a video"
   var OWN = { loading: false, src: null, raf: 0, playAt: 0, playFrom: 0, drag: null, seq: 0 };
   var xdbP = null;
   // a second, small database for the user's song and the scene previews (separate from "My AI videos")
@@ -1781,8 +1786,10 @@
   async function loadOwnFile(file, restore) {
     if (!file) return;
     if (!restore) {
-      if (!looksLikeAudio(file)) { toast('That file doesn’t look like a song. Use an MP3, M4A, WAV or OGG file.', 'warn', 5000); return; }
-      if (file.size > OWN_MAX) { toast('That song file is ' + fmtBytes(file.size) + ' — please use one up to 20 MB (an MP3 or M4A is much smaller than a WAV).', 'warn', 6500); return; }
+      if (!looksLikeAudio(file)) { toast('That file doesn’t look like a song. Use an MP3, M4A, WAV or OGG file, or a video (MP4, MOV) to use its sound.', 'warn', 5500); return; }
+      var isVid = OWN_VIDEO.test(file.type || '') || (!/^audio\//i.test(file.type || '') && OWN_VIDEO_EXT.test(file.name || ''));
+      if (isVid && file.size > OWN_VIDEO_MAX) { toast('That video is ' + fmtBytes(file.size) + ' — please use one up to 48 MB to take its sound.', 'warn', 6500); return; }
+      if (!isVid && file.size > OWN_MAX) { toast('That song file is ' + fmtBytes(file.size) + ' — please use one up to 20 MB (an MP3 or M4A is much smaller than a WAV).', 'warn', 6500); return; }
       if (running() && RUN.job && RUN.job.sound === 'own') { toast('Your video is being made with the current song — change it when it’s done.', 'warn'); return; }
     }
     var ctx = ensureAudio();
@@ -2118,12 +2125,13 @@
   }
   // A singing video on this PC always uses Best: the Quality row is hidden for it, so a Fast choice made earlier for a
   // dance scene must not apply unseen (Fast's photo step keeps the face less well).
+  function hqOn() { return !GUEST && !!S.hq; }
   function effQuality(sound) { return isLocal() && sound === 'ai' ? 'best' : S.quality; }
   function half(x) { return String(x).replace(/\.5$/, '½'); }
   // exact: the quality given as is (the Best/Fast buttons), else the one the video would really get
   function localMinutes(sound, quality, exact) {
     var m = [5, 8], q = exact ? quality : (sound === 'ai' ? 'best' : (quality || S.quality));
-    try { m = LOC.api.estimate({ quality: q, singing: sound === 'ai' }).minutes; } catch (e) { /* defaults */ }
+    try { m = LOC.api.estimate({ quality: q, singing: sound === 'ai', realism: hqOn() }).minutes; } catch (e) { /* defaults */ }
     return 'about ' + half(m[0]) + '–' + half(m[1]) + ' min';
   }
   // While the engine is not running yet, the first video also waits for it to start and load the models.
@@ -4312,7 +4320,7 @@
   function localJob(sc, sound, trackId, quality, thumb, plan) {
     var job = {
       v: 1, id: 'l' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), engine: 'local', createdAt: Date.now(),
-      sceneId: sc.id, sound: sound === 'ai' || sound === 'own' ? sound : 'music', trackId: trackId, duration: 5, quality: quality === 'fast' ? 'fast' : 'best', offset: SONG_OFFSET,
+      sceneId: sc.id, sound: sound === 'ai' || sound === 'own' ? sound : 'music', trackId: trackId, duration: 5, quality: quality === 'fast' ? 'fast' : 'best', hq: hqOn(), offset: SONG_OFFSET,
       thumb: thumb || '', photoSeq: S.photo ? S.photo.seq : 0, stage: 'still', still: null, stillUrl: null, video: null, videoUrl: null, tries: {},
       engineJob: null // GlowLocalAI's job id (its record and files are kept until this page has finished the video)
     };
@@ -4355,7 +4363,7 @@
       return o;
     });
     return {
-      quality: job.quality, shots: shots,
+      quality: job.quality, realism: !!job.hq, shots: shots,
       song: job.sound === 'ai' && sc.song ? { lyrics: sc.song.lyrics, style: sc.song.style, language: SD.local.songLanguage, seconds: job.songSeconds || 22 } : null,
       audio: job.sound === 'own' && anyLip && S.own ? { blob: S.own.blob, start: job.own ? job.own.start : Math.min(S.own.start, ownMaxStart()) } : null
     };
@@ -4428,6 +4436,7 @@
             if (job.sound === 'own' && !S.own) throw finErr('own-missing');
             req = storyRequest(sc, job, localPack('fast'));
           } else req = localRequest(sc, job.sound, job.quality, localPack('fast'), job.shotId && sc.story ? shotById(sc, job.shotId) : null, job.hint);
+          if (req && job.hq) req.realism = true;
           if (!GUEST) req.photo = S.photo.blob;
           req.keep = true;
           if (ctl) req.signal = ctl.signal;
@@ -6370,6 +6379,8 @@
   });
   if (el.qual) Array.prototype.forEach.call(el.qual.querySelectorAll('.opt'), function (b) {
     b.addEventListener('click', function () { S.quality = b.getAttribute('data-quality') === 'fast' ? 'fast' : 'best'; savePrefs(); updateAll(); });
+    var hqBox = document.getElementById('aiHq');
+    if (hqBox && !hqBox._glow) { hqBox._glow = true; hqBox.addEventListener('change', function () { S.hq = !!hqBox.checked; savePrefs(); updateAll(); }); }
   });
   // Coming back to the window (e.g. after updating the driver, finishing the setup, or a video made in another window):
   // ask again, and look again for a video to continue.

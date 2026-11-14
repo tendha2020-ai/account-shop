@@ -62,3 +62,9 @@ The launcher (`desktop/*.go`):
 5. **Signing:** the exe is unsigned, so SmartScreen warns on first launch. Code signing is recommended.
 6. **Two labels on guest videos:** they come out with two different-looking AI labels (pixel font from the PC, smooth from the browser). Unify them.
 7. **Merging:** the PR is still a draft. Merging it to `main` publishes `glow/` on GitHub Pages.
+
+## Added after the first handover
+- **VIP Exit scene** (`glow/scenes.json`): bodyguards walk the person out, fans film, Spanish sing-along; 5/10/20 s.
+- **Extra realism** (host only, local engine): `opts.realism` on `generate`/`generateStory` sets 8 sampling steps (4+4 for Wan I2V, 8 for S2V lip-sync) instead of 4; about twice as long. Not yet run on a real GPU.
+- **Realism wording** is appended to every motion and singing prompt in `local-engine.js` (`REAL_MOTION`, `REAL_SING`). Guest graphs (Go) are unchanged.
+- **Sound from a video:** "My own song" accepts MP4/MOV/WebM (up to 48 MB) and uses its audio track. Users must have the rights to the music; no commercial song is bundled.
