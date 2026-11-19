@@ -249,7 +249,7 @@
     memKey: '',                              // used only if localStorage is blocked
     engine: 'fal',                           // 'local' (free, on this PC) or 'fal' (cloud); see decideEngine()
     quality: prefs.quality === 'fast' ? 'fast' : 'best', // free AI on this PC: Best or Fast
-    look: { hair: '', style: '', eyes: '' }, // "Look": set from prefs once the tables exist (initLook)
+    look: { hair: '', style: '', eyes: '', top: '' }, // "Look": set from prefs once the tables exist (initLook)
     hq: prefs.hq === true // "Extra realism": more steps for motion and lip-sync (about twice as long)
   };
   var el = {
@@ -2137,12 +2137,13 @@
   var LOOKS = {
     hair: [['', 'Keep mine'], ['pink', 'Pink', 'bright pastel pink'], ['blonde', 'Blonde', 'golden blonde'], ['platinum', 'Platinum', 'platinum blonde'], ['black', 'Black', 'jet black'],
       ['brown', 'Brown', 'chestnut brown'], ['red', 'Red', 'copper red'], ['blue', 'Blue', 'deep blue'], ['purple', 'Purple', 'violet purple'], ['silver', 'Silver', 'silver grey'], ['green', 'Green', 'emerald green']],
-    style: [['', 'Keep mine'], ['bob', 'Short bob', 'a short chin-length bob'], ['pixie', 'Pixie cut', 'a short pixie cut'], ['long', 'Long straight', 'long straight hair past the shoulders'],
+    style: [['', 'Keep mine'], ['bob', 'Short bob', 'a short chin-length bob'], ['pixie', 'Pixie cut', 'a short pixie cut'], ['long', 'Long straight', 'a long straight style past the shoulders'], ['centre', 'Long, centre parting', 'a long straight style past the shoulders with a centre parting, the forehead showing'],
       ['wavy', 'Long wavy', 'long soft waves'], ['curly', 'Curly', 'voluminous natural curls'], ['ponytail', 'Ponytail', 'a high ponytail'], ['braids', 'Braids', 'two long braids'], ['buns', 'Two buns', 'two neat buns on top of the head']],
-    eyes: [['', 'Keep mine'], ['green', 'Green', 'vivid emerald green'], ['blue', 'Blue', 'bright blue'], ['brown', 'Brown', 'warm brown'], ['hazel', 'Hazel', 'hazel'], ['grey', 'Grey', 'light grey'], ['violet', 'Violet', 'soft violet'], ['amber', 'Amber', 'amber']]
+    eyes: [['', 'Keep mine'], ['green', 'Green', 'vivid emerald green'], ['blue', 'Blue', 'bright blue'], ['brown', 'Brown', 'warm brown'], ['hazel', 'Hazel', 'hazel'], ['grey', 'Grey', 'light grey'], ['violet', 'Violet', 'soft violet'], ['amber', 'Amber', 'amber']],
+    top: [['', 'Keep mine'], ['red', 'Red', 'a red sleeveless top'], ['black', 'Black', 'a plain black top'], ['white', 'White', 'a plain white top'], ['pink', 'Pink', 'a pink top'], ['blue', 'Blue', 'a blue top'], ['green', 'Green', 'a green top']]
   };
   function lookRow(kind, id) { var r = null; LOOKS[kind].forEach(function (x) { if (x[0] && x[0] === id) r = x; }); return r; }
-  function cleanLook(l) { l = l || {}; return { hair: lookRow('hair', l.hair) ? l.hair : '', style: lookRow('style', l.style) ? l.style : '', eyes: lookRow('eyes', l.eyes) ? l.eyes : '' }; }
+  function cleanLook(l) { l = l || {}; return { hair: lookRow('hair', l.hair) ? l.hair : '', style: lookRow('style', l.style) ? l.style : '', eyes: lookRow('eyes', l.eyes) ? l.eyes : '', top: lookRow('top', l.top) ? l.top : '' }; }
   // -> null, or { text, hair: true when the hair changes } for a job
   function lookFor(l) {
     if (GUEST) return null;
@@ -2152,32 +2153,71 @@
     else if (h) parts.push(h[2] + ' hair in their own hairstyle');
     else if (st) parts.push('their hair styled in ' + st[2] + ', in their own hair colour');
     if (e) parts.push(e[2] + ' eyes');
-    if (!parts.length) return null;
-    return { text: ' New look for the person: ' + parts.join(', and ') + '. Everything else about their face stays exactly the same: the same facial features, face shape and skin tone. The hair and eyes look natural and photorealistic, not a wig or contact lenses.', hair: !!(h || st) };
+    var tp = lookRow('top', l.top);
+    if (!parts.length && !tp) return null;
+    if (!parts.length) return { text: '', hair: false, top: tp[2] };
+    return { top: tp ? tp[2] : '', text: ' New look for the person: ' + parts.join(', and ') + '. Everything else about their face stays exactly the same: the same facial features, face shape and skin tone. The hair and eyes look natural and photorealistic, not a wig or contact lenses.', hair: !!(h || st) };
   }
   function applyLook(text, lk) {
-    if (!lk || !lk.text) return text;
+    if (!lk || (!lk.text && !lk.top)) return text;
     text = String(text || '');
+    if (lk.top) {
+      text = text.replace('Keep their outfit if it suits the scene, otherwise a tasteful casual party outfit;', 'They wear ' + lk.top + ';')                                           // free AI rules
+        .replace('Keep their outfit from the photo if it is visible and suits the scene; otherwise dress them in a tasteful, casual party outfit that fits the scene.', 'They wear ' + lk.top + '.'); // cloud rules
+    }
     if (lk.hair) {
       text = text.replace('face, hairstyle and skin tone', 'face and skin tone').replace(', eye shape, hair colour and age', ', eye shape and age') // free AI rules
         .replace(' skin tone, hairstyle, hair color, body type', ' skin tone, body type');                                                          // cloud rules
     }
-    return text + lk.text;
+    return text + (lk.text || '');
   }
   var lookReady = false;
   function initLook() {
     if (lookReady) return; lookReady = true;
     S.look = cleanLook(prefs.look);
-    [['hair', 'aiLookHair'], ['style', 'aiLookStyle'], ['eyes', 'aiLookEyes']].forEach(function (k) {
+    var pb = document.getElementById('aiPhotoOnly'); if (pb) pb.addEventListener('click', makePhotoOnly);
+    [['hair', 'aiLookHair'], ['style', 'aiLookStyle'], ['eyes', 'aiLookEyes'], ['top', 'aiLookTop']].forEach(function (k) {
       var sel = document.getElementById(k[1]); if (!sel) return;
       LOOKS[k[0]].forEach(function (x) { var o = document.createElement('option'); o.value = x[0]; o.textContent = x[1]; sel.appendChild(o); });
       sel.value = S.look[k[0]];
       sel.addEventListener('change', function () { S.look[k[0]] = sel.value; S.look = cleanLook(S.look); savePrefs(); updateAll(); });
     });
   }
+  // "Photo only": the scene photo with the chosen look, no video (free AI on this PC). The AI label is always drawn on it.
+  var photoBusy = false;
+  async function makePhotoOnly() {
+    var msg = document.getElementById('aiPhotoMsg'), out = document.getElementById('aiPhotoOut'), img = document.getElementById('aiPhotoImg'), dl = document.getElementById('aiPhotoDl'), btn = document.getElementById('aiPhotoOnly');
+    if (photoBusy || !out) return;
+    if (GUEST || !LOC.api || typeof LOC.api.makePhoto !== 'function') { toast('Photo only works in the Glow Studio app with Free AI on this PC.', 'warn', 5000); return; }
+    if (!S.photo) { toast('Add a photo first.', 'warn'); return; }
+    if (!S.consent) { toast('Tick the box under your photo first.', 'warn', 4500); return; }
+    if (running()) { toast('A video is being made right now — make the photo when it’s done.', 'warn'); return; }
+    var sc = sceneById(S.sceneId), loc = sc.local, first = sc.pick && sc.pick['5'] && sc.pick['5'][0];
+    if (sc.shots && sc.shots.length) { var sh0 = (first && shotById(sc, first)) || sc.shots[0]; loc = sh0.local; }
+    if (!loc || !loc.still) { toast('Pick a scene first.', 'warn'); return; }
+    var prompt = applyLook(localStillText('qwen', loc.still, loc.framing), lookFor(S.look));
+    photoBusy = true; out.hidden = false; img.hidden = true; dl.hidden = true; if (btn) btn.disabled = true;
+    msg.textContent = 'Starting… a photo takes about 1–3 minutes.';
+    try {
+      var res = await LOC.api.makePhoto({ photo: S.photo.blob, prompt: prompt }, function (p) { if (p && p.message) msg.textContent = p.message; });
+      var d = await decodeImage(res.stillBlob), c = document.createElement('canvas');
+      c.width = d.w; c.height = d.h;
+      var x = c.getContext('2d'); x.drawImage(d.src, 0, 0); if (d.close) d.close();
+      drawLabel(x, c.width, c.height);
+      var blob = await toBlob(c, 'image/jpeg', 0.93);
+      if (res.stillUrl) { try { URL.revokeObjectURL(res.stillUrl); } catch (e) { /* ignore */ } }
+      if (img.src && img.src.indexOf('blob:') === 0) { try { URL.revokeObjectURL(img.src); } catch (e) { /* ignore */ } }
+      var url = URL.createObjectURL(blob);
+      img.src = url; img.hidden = false; dl.href = url; dl.hidden = false;
+      msg.textContent = 'Your photo is ready.';
+    } catch (e) {
+      msg.textContent = (e && e.message) || 'The photo could not be made. Try again.';
+    } finally { photoBusy = false; if (btn) btn.disabled = false; }
+  }
   function lookSummary(l) {
     l = cleanLook(l); var h = lookRow('hair', l.hair), st = lookRow('style', l.style), e = lookRow('eyes', l.eyes), b = [];
     if (h) b.push(h[1].toLowerCase() + ' hair'); if (st) b.push(st[1].toLowerCase()); if (e) b.push(e[1].toLowerCase() + ' eyes');
+    var tp2 = lookRow('top', l.top); if (tp2) b.push('a ' + tp2[1].toLowerCase() + ' top');
     return b.join(', ');
   }
   function hqOn() { return !GUEST && !!S.hq; }

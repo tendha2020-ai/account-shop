@@ -70,3 +70,4 @@ The launcher (`desktop/*.go`):
 - **Sound from a video:** "My own song" accepts MP4/MOV/WebM (up to 48 MB) and uses its audio track. Users must have the rights to the music; no commercial song is bundled.
 - **Look picker** (`glow/ai.js`: `LOOKS`, `lookFor`, `applyLook`): optional hair colour, hairstyle and eye colour from fixed lists. The choice is appended to the scene-photo prompt and the "keep hairstyle / hair colour" rules are removed from it; host only, both engines. Not yet run on a real GPU.
 - **Video as the photo:** the selfie picker accepts MP4/MOV/WebM and takes one frame (about 1 s in).
+- **Look additions:** a Top colour list and a "Long, centre parting" hairstyle. **Photo only** button: `GlowLocalAI.makePhoto` runs just the still step (local engine, host only), the app draws the AI label on the result and offers a download; the selfie and raw output are removed from the engine afterwards.

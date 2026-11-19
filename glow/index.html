@@ -460,8 +460,15 @@
           <label>Hair colour <select id="aiLookHair"></select></label>
           <label>Hairstyle <select id="aiLookStyle"></select></label>
           <label>Eye colour <select id="aiLookEyes"></select></label>
+          <label>Top <select id="aiLookTop"></select></label>
         </div>
         <p class="ai-qual-note" id="aiLookNote"></p>
+        <button type="button" class="btn glass ai-photo-only" id="aiPhotoOnly">Photo only (no video)</button>
+        <div class="ai-photo-out" id="aiPhotoOut" hidden>
+          <p class="ai-qual-note" id="aiPhotoMsg" role="status" aria-live="polite"></p>
+          <img id="aiPhotoImg" alt="Your AI photo" hidden>
+          <a class="btn pri" id="aiPhotoDl" download="glow-photo.jpg" hidden>Download photo</a>
+        </div>
       </div>
       <div class="group ai-len" id="aiLenGroup">
         <span class="glabel" id="aiLenL">Length</span>

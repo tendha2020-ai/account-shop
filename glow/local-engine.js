@@ -1792,6 +1792,54 @@
     function fin() { if (socket) socket.close(); if (active === token) active = null; }
     return p.then(function (r) { fin(); return r; }, function (e) { fin(); throw e; });
   }
+  // One scene photo only (no video): the same still step a video starts with. opt = { photo: Blob, prompt, quality?, seed?, signal? }
+  function makePhoto(opt, onProgress) {
+    opt = opt || {};
+    if (!opt.photo) return Promise.reject(LocalAIError('bad-photo', MSG.badPhoto, 'no photo'));
+    var signal = opt.signal || null;
+    if (active) return Promise.reject(LocalAIError('busy', MSG.busy));
+    var token = {}, pid = newJobId(), pPrompt = null;
+    active = token;
+    var rec = { clientId: 'glow-' + uuid().replace(/-/g, '').slice(0, 20), stillModel: 'qwen' };
+    var ctx = makeCtx(['starting', 'upload', 'still', 'download'], { starting: STAGE_SEC.starting, upload: 2, still: 90, download: 2 }, onProgress, signal);
+    var socket = null, t0 = now();
+    var p = getStatus({ signal: signal }).then(function (s) {
+      if (opt.quality === 'fast' && packInstalled(s, 'fast')) rec.stillModel = 'klein';
+      return ensureReady(ctx);
+    }).then(function () {
+      socket = openSocket(rec.clientId); ctx.socket = socket; return socket.ready;
+    }).then(function () { ctx.stage('upload', 0.2, 'Sending your photo to the AI on this PC…'); return preparePhoto(opt.photo); }).then(function (pp) {
+      t0 = now();
+      return uploadImage(pp.blob, 'selfie_' + pid + '.' + pp.ext, signal);
+    }).then(function (name) {
+      // A new seed and file prefix every time: ComfyUI caches node results, and the same graph twice would be
+      // answered from that cache without loading or running anything (and the timing would be meaningless).
+      var g = graphs.still({ image: name, prompt: String(opt.prompt || '').trim(), seed: opt.seed != null ? seedOf(opt.seed) : randomSeed(), job: pid, model: rec.stillModel });
+      var promptId = uuid(); pPrompt = promptId;
+      ctx.stage('still', 0, 'Loading the photo model… (1–3 minutes the first time)');
+      return queuePrompt(g, promptId, rec.clientId, signal).then(function () {
+        return track(ctx, { graph: g, promptId: promptId, stage: 'still', expectSec: 90, message: 'Making your photo…', loadingMessage: 'Loading the photo model… (1–3 minutes the first time)' });
+      }, function (e) {
+        if (isAbort(e)) return interruptPrompt(promptId).then(function () { throw e; });
+        throw e;
+      }).then(function (h) {
+        var f = pickFile(h.outputs, OUTPUT_NODE[rec.stillModel === 'klein' ? 'stillKlein' : 'stillQwen']);
+        if (!f) throw LocalAIError('failed', MSG.failed, 'no photo output');
+        rec.cached = cachedInfo(h, g);
+        return fetchFile(f, signal);
+      });
+    }).then(function (b) {
+      ctx.stage('download', 1, 'Your photo is ready.');
+      var c = rec.cached || {};
+      // modelsWereLoaded: every model loader was answered from ComfyUI's cache (an earlier job had loaded them)
+      return { seconds: Math.round((now() - t0) / 100) / 10, stillBlob: b, stillUrl: URL.createObjectURL(b), modelsWereLoaded: !!c.loaders, cached: !!c.all };
+    });
+    function fin() {
+      if (socket) socket.close(); if (active === token) active = null;
+      request('POST', ENGINE + '/cleanup', { job: safeJob(pid), prompts: pPrompt ? [pPrompt] : [] }, { timeout: 15000 }).then(function () {}, function () { /* swept at the next engine start */ });
+    }
+    return p.then(function (r) { fin(); return r; }, function (e) { fin(); throw e; });
+  }
   // Which nodes of graph g ComfyUI answered from its cache ('execution_cached' in the history status messages).
   function cachedInfo(h, g) {
     var cached = {};
@@ -1886,6 +1934,7 @@
     resume: resume,
     release: release,
     warmup: warmup,
+    makePhoto: makePhoto,
     graphs: graphs,
     diskNeededGB: diskNeededGB,
     // plain-words reason (+ code, detail) for an engine in state 'error'
