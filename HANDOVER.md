@@ -68,3 +68,5 @@ The launcher (`desktop/*.go`):
 - **Extra realism** (host only, local engine): `opts.realism` on `generate`/`generateStory` sets 8 sampling steps (4+4 for Wan I2V, 8 for S2V lip-sync) instead of 4; about twice as long. Not yet run on a real GPU.
 - **Realism wording** is appended to every motion and singing prompt in `local-engine.js` (`REAL_MOTION`, `REAL_SING`). Guest graphs (Go) are unchanged.
 - **Sound from a video:** "My own song" accepts MP4/MOV/WebM (up to 48 MB) and uses its audio track. Users must have the rights to the music; no commercial song is bundled.
+- **Look picker** (`glow/ai.js`: `LOOKS`, `lookFor`, `applyLook`): optional hair colour, hairstyle and eye colour from fixed lists. The choice is appended to the scene-photo prompt and the "keep hairstyle / hair colour" rules are removed from it; host only, both engines. Not yet run on a real GPU.
+- **Video as the photo:** the selfie picker accepts MP4/MOV/WebM and takes one frame (about 1 s in).

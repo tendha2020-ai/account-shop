@@ -350,7 +350,7 @@
       </label>
       <p class="ai-guest-privacy guest-only" id="aiGuestPrivacy" hidden></p>
       <p class="ai-status" id="aiPhotoStatus" aria-live="polite"></p>
-      <input type="file" id="aiFile" accept="image/*" hidden>
+      <input type="file" id="aiFile" accept="image/*,video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" hidden>
     </article>
 
     <div class="cta-bar ai-cta-bar">
@@ -453,6 +453,15 @@
           <button type="button" class="opt" data-sync="lips" aria-pressed="false"><b>Lip-sync to the song</b><small class="ai-len-cost"></small></button>
         </div>
         <p class="ai-sync-note" id="aiSyncNote"></p>
+      </div>
+      <div class="group ai-look" id="aiLookGroup">
+        <span class="glabel" id="aiLookL">Look <small>(optional)</small></span>
+        <div class="ai-look-row" role="group" aria-labelledby="aiLookL">
+          <label>Hair colour <select id="aiLookHair"></select></label>
+          <label>Hairstyle <select id="aiLookStyle"></select></label>
+          <label>Eye colour <select id="aiLookEyes"></select></label>
+        </div>
+        <p class="ai-qual-note" id="aiLookNote"></p>
       </div>
       <div class="group ai-len" id="aiLenGroup">
         <span class="glabel" id="aiLenL">Length</span>

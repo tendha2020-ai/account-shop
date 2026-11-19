@@ -249,6 +249,7 @@
     memKey: '',                              // used only if localStorage is blocked
     engine: 'fal',                           // 'local' (free, on this PC) or 'fal' (cloud); see decideEngine()
     quality: prefs.quality === 'fast' ? 'fast' : 'best', // free AI on this PC: Best or Fast
+    look: { hair: '', style: '', eyes: '' }, // "Look": set from prefs once the tables exist (initLook)
     hq: prefs.hq === true // "Extra realism": more steps for motion and lip-sync (about twice as long)
   };
   var el = {
@@ -1685,6 +1686,9 @@
     var hqG = document.getElementById('aiHqGroup'), hqC = document.getElementById('aiHq');
     if (hqG) hqG.hidden = !local || GUEST;
     if (hqC) hqC.checked = !!S.hq;
+    var lkG = document.getElementById('aiLookGroup'), lkN = document.getElementById('aiLookNote');
+    if (lkG) lkG.hidden = GUEST;
+    if (lkN) { var lks = lookSummary(S.look); lkN.textContent = lks ? 'Your video will show ' + lks + '. The face stays the same.' : 'Change the hair or eye colour in your video. The face stays the same.'; }
     if (local) {
       var fastPack = localPack('fast');
       Array.prototype.forEach.call(el.qual.querySelectorAll('.opt'), function (b) {
@@ -1738,7 +1742,7 @@
     if (el.conn && !el.conn.hidden && connectThen === 'make') el.keySave.textContent = 'Save & make my video · ' + money(falCost(sc, sound, S.duration));
   }
   function updateAll() { updateSceneUI(); updateSoundUI(); updateCost(); renderSee(); }
-  function savePrefs() { lsSet(LS.prefs, JSON.stringify({ sceneId: S.sceneId, sound: S.sound, userSound: S.userSound, userLen: S.userLen, trackId: S.trackId, duration: S.duration, quality: S.quality, hq: !!S.hq, sync: S.sync })); }
+  function savePrefs() { lsSet(LS.prefs, JSON.stringify({ sceneId: S.sceneId, sound: S.sound, userSound: S.userSound, userLen: S.userLen, trackId: S.trackId, duration: S.duration, quality: S.quality, hq: !!S.hq, look: S.look, sync: S.sync })); }
 
   /* ------------------------------------------------------------------ *
    * My song: the user's own audio file as the soundtrack (both engines, every scene)
@@ -2125,6 +2129,57 @@
   }
   // A singing video on this PC always uses Best: the Quality row is hidden for it, so a Fast choice made earlier for a
   // dance scene must not apply unseen (Fast's photo step keeps the face less well).
+  /* ------------------------------------------------------------------
+   * "Look" (optional): hair colour, hairstyle and eye colour. Fixed choices only (no free text). The choice is
+   * written into the scene-photo prompt, replacing the "keep the hairstyle / hair colour" rules; the video starts
+   * from that photo, so the look carries through. Host only (a friend's video is built by the host PC from presets).
+   * ------------------------------------------------------------------ */
+  var LOOKS = {
+    hair: [['', 'Keep mine'], ['pink', 'Pink', 'bright pastel pink'], ['blonde', 'Blonde', 'golden blonde'], ['platinum', 'Platinum', 'platinum blonde'], ['black', 'Black', 'jet black'],
+      ['brown', 'Brown', 'chestnut brown'], ['red', 'Red', 'copper red'], ['blue', 'Blue', 'deep blue'], ['purple', 'Purple', 'violet purple'], ['silver', 'Silver', 'silver grey'], ['green', 'Green', 'emerald green']],
+    style: [['', 'Keep mine'], ['bob', 'Short bob', 'a short chin-length bob'], ['pixie', 'Pixie cut', 'a short pixie cut'], ['long', 'Long straight', 'long straight hair past the shoulders'],
+      ['wavy', 'Long wavy', 'long soft waves'], ['curly', 'Curly', 'voluminous natural curls'], ['ponytail', 'Ponytail', 'a high ponytail'], ['braids', 'Braids', 'two long braids'], ['buns', 'Two buns', 'two neat buns on top of the head']],
+    eyes: [['', 'Keep mine'], ['green', 'Green', 'vivid emerald green'], ['blue', 'Blue', 'bright blue'], ['brown', 'Brown', 'warm brown'], ['hazel', 'Hazel', 'hazel'], ['grey', 'Grey', 'light grey'], ['violet', 'Violet', 'soft violet'], ['amber', 'Amber', 'amber']]
+  };
+  function lookRow(kind, id) { var r = null; LOOKS[kind].forEach(function (x) { if (x[0] && x[0] === id) r = x; }); return r; }
+  function cleanLook(l) { l = l || {}; return { hair: lookRow('hair', l.hair) ? l.hair : '', style: lookRow('style', l.style) ? l.style : '', eyes: lookRow('eyes', l.eyes) ? l.eyes : '' }; }
+  // -> null, or { text, hair: true when the hair changes } for a job
+  function lookFor(l) {
+    if (GUEST) return null;
+    l = cleanLook(l);
+    var h = lookRow('hair', l.hair), st = lookRow('style', l.style), e = lookRow('eyes', l.eyes), parts = [];
+    if (h && st) parts.push(h[2] + ' hair styled in ' + st[2]);
+    else if (h) parts.push(h[2] + ' hair in their own hairstyle');
+    else if (st) parts.push('their hair styled in ' + st[2] + ', in their own hair colour');
+    if (e) parts.push(e[2] + ' eyes');
+    if (!parts.length) return null;
+    return { text: ' New look for the person: ' + parts.join(', and ') + '. Everything else about their face stays exactly the same: the same facial features, face shape and skin tone. The hair and eyes look natural and photorealistic, not a wig or contact lenses.', hair: !!(h || st) };
+  }
+  function applyLook(text, lk) {
+    if (!lk || !lk.text) return text;
+    text = String(text || '');
+    if (lk.hair) {
+      text = text.replace('face, hairstyle and skin tone', 'face and skin tone').replace(', eye shape, hair colour and age', ', eye shape and age') // free AI rules
+        .replace(' skin tone, hairstyle, hair color, body type', ' skin tone, body type');                                                          // cloud rules
+    }
+    return text + lk.text;
+  }
+  var lookReady = false;
+  function initLook() {
+    if (lookReady) return; lookReady = true;
+    S.look = cleanLook(prefs.look);
+    [['hair', 'aiLookHair'], ['style', 'aiLookStyle'], ['eyes', 'aiLookEyes']].forEach(function (k) {
+      var sel = document.getElementById(k[1]); if (!sel) return;
+      LOOKS[k[0]].forEach(function (x) { var o = document.createElement('option'); o.value = x[0]; o.textContent = x[1]; sel.appendChild(o); });
+      sel.value = S.look[k[0]];
+      sel.addEventListener('change', function () { S.look[k[0]] = sel.value; S.look = cleanLook(S.look); savePrefs(); updateAll(); });
+    });
+  }
+  function lookSummary(l) {
+    l = cleanLook(l); var h = lookRow('hair', l.hair), st = lookRow('style', l.style), e = lookRow('eyes', l.eyes), b = [];
+    if (h) b.push(h[1].toLowerCase() + ' hair'); if (st) b.push(st[1].toLowerCase()); if (e) b.push(e[1].toLowerCase() + ' eyes');
+    return b.join(', ');
+  }
   function hqOn() { return !GUEST && !!S.hq; }
   function effQuality(sound) { return isLocal() && sound === 'ai' ? 'best' : S.quality; }
   function half(x) { return String(x).replace(/\.5$/, '½'); }
@@ -3217,6 +3272,30 @@
   var photoSeq = 0, decoding = false;
   function looksLikeImage(f) { return (f.type && f.type.indexOf('image/') === 0) || /\.(jpe?g|png|webp|gif|avif|bmp|heic|heif|tiff?)$/i.test(f.name || ''); }
   function isHeic(f) { return /hei[cf]$/i.test(f.type || '') || /\.(heic|heif)$/i.test(f.name || ''); }
+  function looksLikeVideo(f) { return (f.type && f.type.indexOf('video/') === 0) || /\.(mp4|mov|webm|m4v)$/i.test(f.name || ''); }
+  // One clear frame of a video (about a second in), as a JPEG file: "use a video of the person as the photo".
+  function videoFrameFile(file) {
+    return new Promise(function (res, rej) {
+      var url = URL.createObjectURL(file), v = document.createElement('video'), done = false;
+      function end(f, err) { if (done) return; done = true; clearTimeout(tm); try { v.removeAttribute('src'); v.load(); } catch (e) { /* ignore */ } URL.revokeObjectURL(url); f ? res(f) : rej(err || new Error('no frame')); }
+      var tm = setTimeout(function () { end(null, new Error('timeout')); }, 15000);
+      v.muted = true; v.playsInline = true; v.preload = 'auto';
+      v.onerror = function () { end(null, new Error('video decode failed')); };
+      v.onloadeddata = function () { var d = isFinite(v.duration) ? v.duration : 0; try { v.currentTime = d > 2 ? 1 : d / 2; } catch (e) { end(null, e); } };
+      v.onseeked = function () {
+        try {
+          if (!v.videoWidth || !v.videoHeight) { end(null, new Error('no picture')); return; }
+          var c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
+          c.getContext('2d').drawImage(v, 0, 0);
+          c.toBlob(function (b) {
+            if (!b) { end(null, new Error('encode failed')); return; }
+            end(new File([b], String(file.name || 'video').replace(/\.[^.]*$/, '') + '-frame.jpg', { type: 'image/jpeg', lastModified: file.lastModified || 0 }));
+          }, 'image/jpeg', 0.95);
+        } catch (e) { end(null, e); }
+      };
+      v.src = url;
+    });
+  }
   async function decodeImage(file) {
     var bmp = null;
     if (typeof window.createImageBitmap === 'function') {
@@ -3250,6 +3329,14 @@
   }
   async function setPhotoFile(file) {
     if (!file) return;
+    if (file && !looksLikeImage(file) && looksLikeVideo(file)) {
+      if (decoding) return;
+      el.photoStatus.textContent = 'Taking a frame from your video…';
+      var fr = null;
+      try { fr = await videoFrameFile(file); } catch (e) { fr = null; }
+      if (!fr) { el.photoStatus.textContent = ''; toast('This browser couldn’t read that video. Take a screenshot of it and use the screenshot instead.', 'warn', 6500); return; }
+      file = fr;
+    }
     if (!looksLikeImage(file)) { toast('That file doesn’t look like a photo. Try a JPG, PNG or HEIC.', 'warn'); return; }
     if (decoding) return;
     if (running()) { toast('A video is being made right now — you can change the photo when it’s done.', 'warn'); return; }
@@ -3978,7 +4065,10 @@
           var stillEps = [EP.still, EP.stillAlt];
           var k = job.tries.stillEp || 0;
           setStep('still', null, 'Sending to ' + MODEL_NAME[stillEps[k]] + '…');
-          var sh = await submit(job, stillEps[k], stillInput(sc, ref));
+          var stillIn = stillInput(sc, ref);
+          if (job.look === undefined) { job.look = lookFor(S.look); saveJob(job); }
+          if (job.look) stillIn.prompt = applyLook(stillIn.prompt, job.look);
+          var sh = await submit(job, stillEps[k], stillIn);
           if (RUN.cancelled || RUN.job !== job) { cancelRemote(sh); throw CANCELLED; }
           job.still = sh;
           saveJob(job);
@@ -4320,7 +4410,7 @@
   function localJob(sc, sound, trackId, quality, thumb, plan) {
     var job = {
       v: 1, id: 'l' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), engine: 'local', createdAt: Date.now(),
-      sceneId: sc.id, sound: sound === 'ai' || sound === 'own' ? sound : 'music', trackId: trackId, duration: 5, quality: quality === 'fast' ? 'fast' : 'best', hq: hqOn(), offset: SONG_OFFSET,
+      sceneId: sc.id, sound: sound === 'ai' || sound === 'own' ? sound : 'music', trackId: trackId, duration: 5, quality: quality === 'fast' ? 'fast' : 'best', hq: hqOn(), look: lookFor(S.look), offset: SONG_OFFSET,
       thumb: thumb || '', photoSeq: S.photo ? S.photo.seq : 0, stage: 'still', still: null, stillUrl: null, video: null, videoUrl: null, tries: {},
       engineJob: null // GlowLocalAI's job id (its record and files are kept until this page has finished the video)
     };
@@ -4437,6 +4527,10 @@
             req = storyRequest(sc, job, localPack('fast'));
           } else req = localRequest(sc, job.sound, job.quality, localPack('fast'), job.shotId && sc.story ? shotById(sc, job.shotId) : null, job.hint);
           if (req && job.hq) req.realism = true;
+          if (req && !GUEST && job.look) {
+            if (req.stillPrompt) req.stillPrompt = applyLook(req.stillPrompt, job.look);
+            (req.shots || []).forEach(function (x) { if (x && x.stillPrompt) x.stillPrompt = applyLook(x.stillPrompt, job.look); });
+          }
           if (!GUEST) req.photo = S.photo.blob;
           req.keep = true;
           if (ctl) req.signal = ctl.signal;
@@ -6380,6 +6474,7 @@
   if (el.qual) Array.prototype.forEach.call(el.qual.querySelectorAll('.opt'), function (b) {
     b.addEventListener('click', function () { S.quality = b.getAttribute('data-quality') === 'fast' ? 'fast' : 'best'; savePrefs(); updateAll(); });
     var hqBox = document.getElementById('aiHq');
+    initLook();
     if (hqBox && !hqBox._glow) { hqBox._glow = true; hqBox.addEventListener('change', function () { S.hq = !!hqBox.checked; savePrefs(); updateAll(); }); }
   });
   // Coming back to the window (e.g. after updating the driver, finishing the setup, or a video made in another window):

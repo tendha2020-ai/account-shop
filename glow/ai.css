@@ -814,3 +814,11 @@ html:not([data-guest]) .guest-only { display: none !important; }
 .ai-hq-row input { width: 20px; height: 20px; margin: 2px 0 0; flex: none; accent-color: #9b5cff; }
 .ai-hq-row b { display: block; font-size: 14px; }
 .ai-hq-row small { display: block; margin-top: 2px; font-size: 12px; line-height: 1.4; color: var(--faint); }
+
+/* "Look" (optional): hair colour, hairstyle and eye colour applied to the scene photo */
+.ai-look-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.ai-look-row label { display: grid; gap: 4px; font-size: 12px; color: var(--faint); min-width: 0; }
+.ai-look-row select { width: 100%; min-height: 44px; padding: 8px 10px; border-radius: 12px; border: 1px solid var(--line, rgba(255,255,255,.14)); background: rgba(255,255,255,.06); color: inherit; font: inherit; font-size: 14px; }
+.ai-look-row select option { color: #111; }
+.glabel small { font-weight: 500; opacity: .7; }
+@media (max-width: 420px) { .ai-look-row { grid-template-columns: 1fr; } }
