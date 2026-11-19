@@ -114,6 +114,8 @@
     '.gs-empty{font-size:13px;color:var(--gs-mut);margin:0}',
     '.gs .sr-only,.gs-dlg .sr-only{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}',
     '.gs-done{padding:10px 12px;border-radius:12px;background:rgba(94,234,212,.08);border:1px solid rgba(94,234,212,.35);color:#ccfbf1!important;font-size:13.5px!important}',
+    '.gs-admin{margin-top:14px;padding:12px;border-radius:14px;border:1px dashed rgba(255,180,84,.45);background:rgba(255,180,84,.06);display:grid;gap:8px;justify-items:start}',
+    '.gs-admin-t{font-weight:700!important;color:#ffd9a0!important}',
     '.gs-note{padding:10px 12px;border-radius:12px;background:rgba(34,211,238,.07);border:1px solid rgba(34,211,238,.3);color:#cffafe!important;font-size:13px!important}',
     '.gs-dead{position:relative}.gs-dead .gs-qr,.gs-dead .gs-url{opacity:.25;filter:grayscale(1)}',
     '.gs-deadmsg{font-weight:700;color:#fecdd3!important}',
@@ -442,7 +444,7 @@
       var closing = s.state === 'closing';
       var busy = (s.jobs || []).some(function (j) { return j.state === 'running' || j.state === 'queued' || j.state === 'waiting-approval'; });
       var nobody = !((s.guests || []).length || s.unnamed);
-      part('top', [s.state, s.mode, s.link, s.linkReady, s.linkChangedAt, s.tunnel && s.tunnel.state, s.tunnel && s.tunnel.error, s.stopsAt, s.stopsAt && left(s.stopsAt), s.closing, linkChanged(s), st.err, busy, nobody,
+      part('top', [s.state, s.mode, s.link, s.adminLink || '', s.linkReady, s.linkChangedAt, s.tunnel && s.tunnel.state, s.tunnel && s.tunnel.error, s.stopsAt, s.stopsAt && left(s.stopsAt), s.closing, linkChanged(s), st.err, busy, nobody,
         closing && (s.jobs || []).map(function (j) { return j.state + j.guestName + (j.progress ? Math.round((j.progress.overall || 0) * 100) : ''); }).join()], function (el) { viewTop(el, s, closing, busy, nobody); });
       part('jobs', [s.jobs, s.state], function (el) { el.appendChild(viewJobs(s)); });
       part('guests', [s.guests, s.unnamedGuests, s.settings && s.settings.dailyLimit, Math.floor(Date.now() / 60000)], function (el) { el.appendChild(viewGuests(s)); });
@@ -513,6 +515,32 @@
       }
       if (s.mode === 'wifi' && !closing && nobody) {
         top.appendChild(h('p', 'gs-note', 'If Windows asks whether Glow Studio may use networks, tick “Private networks” and press Allow. Only Glow Studio’s friend page is reachable on your Wi-Fi — nothing else on this PC.'));
+      }
+      // Admin link (launcher admin.go): the owner's own full Glow Studio on their phone, through the same link host
+      if (!closing && s.link) {
+        var ad = h('div', 'gs-admin');
+        ad.appendChild(h('p', 'gs-admin-t', 'Admin link — only for you'));
+        if (s.adminLink) {
+          ad.appendChild(h('p', '', 'Open this on your own phone to use the full Glow Studio there: every scene, Look, Photo only and this sharing panel. Never send it to anyone — whoever has it controls Glow Studio on this PC.'));
+          var aq = h('div', 'gs-qr'), acv = h('canvas'); acv.setAttribute('role', 'img'); acv.setAttribute('aria-label', 'QR code of your admin link');
+          aq.appendChild(acv); ad.appendChild(aq);
+          var au = h('div', 'gs-url', s.adminLink); au.id = 'gsAdminLink'; ad.appendChild(au);
+          var ar = h('div', 'gs-btns');
+          var acp = b('Copy admin link', 'small', function () {
+            function ok() { acp.textContent = 'Copied'; say('Admin link copied'); }
+            try { if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(s.adminLink).then(ok, function () { window.prompt('Copy your admin link:', s.adminLink); }); return; } } catch (e) { /* fall back */ }
+            window.prompt('Copy your admin link:', s.adminLink);
+          }, 'copyadmin');
+          ar.appendChild(acp);
+          ar.appendChild(armed('adminoff', 'Turn off admin link', AGAIN + ' to turn it off', function () { act('admin-off', {}).then(function () { say('The admin link is off.'); }); }));
+          ad.appendChild(ar);
+          ad.appendChild(h('p', 'gs-empty', 'It stops working when you stop sharing or turn it off. If the friends’ link changes, scan this code again.'));
+          try { if (window.GlowQR) window.GlowQR.draw(acv, s.adminLink, { px: 200 }); } catch (e) { aq.remove(); }
+        } else {
+          ad.appendChild(h('p', '', 'Want the full Glow Studio on your own phone? Make a private admin link.'));
+          ad.appendChild(b('Make my admin link', 'small', function () { act('admin-link', {}).then(function () { say('Your admin link is ready.'); }); }, 'adminlink'));
+        }
+        top.appendChild(ad);
       }
       var tl = h('div', 'gs-row');
       if (s.stopsAt && !closing) tl.appendChild(h('p', '', 'Sharing stops at ' + clock(s.stopsAt) + ' (in ' + left(s.stopsAt) + ').'));

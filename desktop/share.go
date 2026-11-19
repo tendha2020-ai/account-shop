@@ -94,6 +94,11 @@ type Share struct {
 	settingsPath string
 	settings     shareSettings
 
+	// admin link (admin.go): the owner's full Glow Studio through the friends' listener
+	admin    adminState
+	hostMux  http.Handler
+	hostAddr string
+
 	// knobs (env hooks; tests set them directly)
 	guestPort      int // preferred guest port (0: any)
 	pollEvery      time.Duration
@@ -542,6 +547,7 @@ func (s *Share) stopWith(reason string, grace time.Duration) {
 		return
 	}
 	s.state, s.stopReason = "off", reason
+	s.adminOffLocked("sharing stopped")
 	s.stoppedAt = time.Now()
 	cancel, done := s.cancel, s.periodDone
 	srv, lanSrv := s.srv, s.lanSrv
@@ -816,6 +822,11 @@ func (s *Share) hostAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, code, s.Status())
 	}
 	switch {
+	case path == "admin-link":
+		reply(s.adminOn(), http.StatusOK)
+	case path == "admin-off":
+		s.adminOff()
+		reply(nil, http.StatusOK)
 	case path == "start":
 		var req startRequest
 		if e := decodeStrict(body, &req); e != nil {
@@ -1069,6 +1080,7 @@ type shareStatusJSON struct {
 	Closing       map[string]any    `json:"closing"`
 	Link          *string           `json:"link"`
 	LinkReady     bool              `json:"linkReady"`
+	AdminLink     string            `json:"adminLink,omitempty"`
 	LinkChangedAt *string           `json:"linkChangedAt"`
 	Tunnel        *tunnelStatusJSON `json:"tunnel"`
 	LAN           map[string]any    `json:"lan"`
@@ -1143,6 +1155,7 @@ func (s *Share) Status() shareStatusJSON {
 	} else if s.lan != nil {
 		st.LinkReady = true
 	}
+	st.AdminLink = s.adminURLLocked()
 	if s.lan != nil {
 		st.LAN = map[string]any{"ip": s.lan.IP.String(), "port": s.gport, "subnet": s.lan.Net.String()}
 	}

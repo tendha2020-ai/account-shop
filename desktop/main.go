@@ -105,6 +105,7 @@ func main() {
 
 	files := http.FileServer(http.FS(app))
 	mux := http.NewServeMux()
+	share.hostMux, share.hostAddr = mux, fmt.Sprintf("127.0.0.1:%d", myPort) // the admin link (admin.go)
 	mux.HandleFunc("/__glow/ping", func(w http.ResponseWriter, r *http.Request) {
 		lastPing.Store(time.Now().UnixNano())
 		w.Header().Set("Cache-Control", "no-store")

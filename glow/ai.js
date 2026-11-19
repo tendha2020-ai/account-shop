@@ -6773,7 +6773,7 @@
     // The Windows launcher injects a keep-alive ping into the page it serves.
     if (!LOC.inApp) return;
     Array.prototype.forEach.call(document.querySelectorAll('a.more-apps'), function (a) { a.href = 'https://tendha2020-ai.github.io/account-shop/'; a.target = '_blank'; a.rel = 'noopener'; });
-    if (location.port && location.port !== String(TEST.appPort || 47821)) {
+    if (location.port && location.port !== String(TEST.appPort || 47821) && /^(127\.0\.0\.1|localhost)$/.test(location.hostname)) { // (not on a phone using the admin link)
       setTimeout(function () { toast('Glow Studio opened on a different address than usual, so your saved fal.ai key and videos may not show. Close other copies of Glow Studio and start it again.', 'warn', 9000); }, 900);
     }
   })();

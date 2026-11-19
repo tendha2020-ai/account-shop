@@ -322,6 +322,9 @@ func (s *Share) guestHandler(kind string) http.Handler {
 			}
 			return
 		}
+		if s.adminServe(ri, w, r) { // the owner's admin link (admin.go)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/__glow/guest/") {
 			s.guestAPI(ri, w, r)
 			return
