@@ -139,6 +139,9 @@ func (s *Share) adminServe(ri reqInfo, w http.ResponseWriter, r *http.Request) b
 		s.logf("admin signed in from %s", ri.ip)
 		http.SetCookie(w, &http.Cookie{Name: adminCookie, Value: id, Path: "/", HttpOnly: true, Secure: ri.scheme == "https",
 			SameSite: http.SameSiteStrictMode, MaxAge: int(adminSessionTTL.Seconds())})
+		// (a marker the page's script can read: "this is the owner's admin page"; it grants nothing by itself)
+		http.SetCookie(w, &http.Cookie{Name: adminCookie + "_ui", Value: "1", Path: "/", Secure: ri.scheme == "https",
+			SameSite: http.SameSiteStrictMode, MaxAge: int(adminSessionTTL.Seconds())})
 		// A small page, not a redirect: a link opened from another app is a cross-site navigation, and a
 		// SameSite=Strict cookie would not be sent on a redirect that follows it. It also takes the token out of the URL.
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

@@ -773,7 +773,7 @@
   });
 
   /* ---------------- start ---------------- */
-  function isLoopback() { var h = (location.hostname || '').toLowerCase(); return location.protocol === 'http:' && (h === '127.0.0.1' || h === 'localhost' || h === '[::1]' || h === '::1'); }
+  function isLoopback() { try { if (/(?:^|;\s*)glow_admin_ui=1(?:;|$)/.test(document.cookie || '')) return true; } catch (e) { /* ignore */ } var h = (location.hostname || '').toLowerCase(); return location.protocol === 'http:' && (h === '127.0.0.1' || h === 'localhost' || h === '[::1]' || h === '::1'); }
   function begin(s) {
     S = s; ui.connecting = false;
     heartbeat();

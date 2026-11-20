@@ -345,6 +345,8 @@
   var lastStatus = null;
   function isLoopbackPage() {
     if (T.forceProbe) return true;
+    // (the owner's phone on the admin link: the launcher serves the same page and API there; it sets this marker at sign-in)
+    try { if (/(?:^|;\s*)glow_admin_ui=1(?:;|$)/.test(document.cookie || '')) return true; } catch (e) { /* ignore */ }
     var h = (location.hostname || '').toLowerCase();
     return location.protocol === 'http:' && (h === '127.0.0.1' || h === 'localhost' || h === '[::1]' || h === '::1');
   }
